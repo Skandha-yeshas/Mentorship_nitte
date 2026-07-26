@@ -58,6 +58,7 @@ export const DatabaseProvider = ({ children }) => {
     meetings: [],
     groupSessions: [],
     resources: [],
+    mentorSessionRecords: [],
     systemLogs: []
   });
 
@@ -188,6 +189,19 @@ export const DatabaseProvider = ({ children }) => {
     }
   };
 
+  const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes) => {
+    try {
+      await fetch('/api/mentor/session-records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mentorId, topic, sessionDate, studentsAttended, notes })
+      });
+      await fetchDbState();
+    } catch (err) {
+      console.error('Error submitting mentor session record:', err);
+    }
+  };
+
   // 3. RO ACTIONS
   const updateMeetingStatus = async (meetId, status) => {
     try {
@@ -282,6 +296,7 @@ export const DatabaseProvider = ({ children }) => {
       submitFeedback,
       addResource,
       addGroupSession,
+      submitMentorSessionRecord,
       updateMeetingStatus,
       resolveIssue,
       escalateIssue,

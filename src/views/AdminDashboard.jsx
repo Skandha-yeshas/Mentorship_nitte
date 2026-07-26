@@ -1,7 +1,7 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
 import { BarChart, DonutChart } from '../components/CustomChart';
-import { Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, Download, RefreshCw } from 'lucide-react';
+import { Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, Download, RefreshCw, FileText } from 'lucide-react';
 
 export const AdminDashboard = () => {
   const { db, adminResolveIssue, reassignIssue } = useContext(DatabaseContext);
@@ -129,6 +129,14 @@ export const AdminDashboard = () => {
         >
           <Users size={18} />
           <span>System Audit Trail ({db.systemLogs.length})</span>
+        </button>
+
+        <button 
+          className={`panel-btn ${activeTab === 'session-reports' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('session-reports')}
+        >
+          <FileText size={18} />
+          <span>Mentor Session Logs ({(db.mentorSessionRecords || []).length})</span>
         </button>
 
         {/* Action Panel for PDF/CSV downloads */}
@@ -348,6 +356,66 @@ export const AdminDashboard = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* TAB 4: MENTOR SESSION RECORDS AUDIT */}
+        {activeTab === 'session-reports' && (
+          <div className="glass-card">
+            <h2 className="section-title">Faculty Mentoring Sessions Audit</h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              A centralized list of all mentoring sessions and progress reports filed by faculty mentors.
+            </p>
+
+            {(!db.mentorSessionRecords || db.mentorSessionRecords.length === 0) ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
+                <FileText size={48} style={{ marginBottom: '12px', opacity: 0.5 }} />
+                <p>No mentoring sessions have been logged by faculty yet.</p>
+              </div>
+            ) : (
+              <div className="custom-table-container">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Mentor Name</th>
+                      <th>Session Date</th>
+                      <th>Topic / Discussion Title</th>
+                      <th>Mentees Attended</th>
+                      <th>Progress Summary Notes</th>
+                      <th>Logged Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {db.mentorSessionRecords.map((rec, idx) => {
+                      const mentorName = db.users.mentors.find(m => m.id === rec.mentorId)?.name || rec.mentorId;
+                      return (
+                        <tr key={idx}>
+                          <td><strong>{mentorName}</strong></td>
+                          <td>{new Date(rec.sessionDate).toLocaleDateString()}</td>
+                           <td>{rec.topic}</td>
+                           <td>
+                             <span style={{ 
+                               padding: '2px 8px', 
+                               borderRadius: '10px', 
+                               background: 'rgba(244, 63, 94, 0.15)',
+                               color: '#fca5a5',
+                               fontSize: '0.8rem',
+                               fontWeight: '600'
+                             }}>
+                               {rec.studentsAttended} Students
+                             </span>
+                           </td>
+                           <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rec.notes}</td>
+                           <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                             {new Date(rec.createdAt).toLocaleString()}
+                           </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

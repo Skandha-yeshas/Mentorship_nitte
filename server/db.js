@@ -145,6 +145,17 @@ const createTables = async () => {
       timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       user_role VARCHAR(50) NOT NULL,
       user_id VARCHAR(50) NOT NULL
+    )`,
+
+    // 9. Mentor Session Records
+    `CREATE TABLE IF NOT EXISTS mentor_session_records (
+      id SERIAL PRIMARY KEY,
+      mentor_id VARCHAR(50) REFERENCES mentors(id) ON DELETE CASCADE,
+      session_date DATE NOT NULL,
+      students_attended INT NOT NULL,
+      topic VARCHAR(200) NOT NULL,
+      notes TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   ];
 
@@ -257,6 +268,6 @@ export const query = (text, params) => pool.query(text, params);
 export const getPool = () => pool;
 export const shutdown = () => pool.end();
 export const dropAllTables = async () => {
-  await pool.query(`DROP TABLE IF EXISTS system_logs, resources, group_sessions, meetings, issues, students, ros, mentors CASCADE`);
+  await pool.query(`DROP TABLE IF EXISTS system_logs, resources, group_sessions, meetings, issues, students, ros, mentors, mentor_session_records CASCADE`);
   console.log('All database tables dropped.');
 };

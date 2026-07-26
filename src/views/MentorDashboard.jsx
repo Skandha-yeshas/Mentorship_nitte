@@ -1,10 +1,10 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck } from 'lucide-react';
+import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck, FileText } from 'lucide-react';
 
 export const MentorDashboard = ({ mentorId }) => {
-  const { db, addResource, addGroupSession } = useContext(DatabaseContext);
-  const [activeTab, setActiveTab] = useState('roster'); // 'roster', 'schedule-session', 'add-resource'
+  const { db, addResource, addGroupSession, submitMentorSessionRecord } = useContext(DatabaseContext);
+  const [activeTab, setActiveTab] = useState('roster'); // 'roster', 'schedule-session', 'add-resource', 'session-records'
   
   // Mentor form states
   const [sessionTitle, setSessionTitle] = useState('');
@@ -17,6 +17,12 @@ export const MentorDashboard = ({ mentorId }) => {
   const [resContent, setResContent] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
+  // Mentor session record form states
+  const [recordTopic, setRecordTopic] = useState('');
+  const [recordDate, setRecordDate] = useState(new Date().toISOString().split('T')[0]);
+  const [recordNotes, setRecordNotes] = useState('');
+  const [recordCount, setRecordCount] = useState(25);
+
   // Fetch current mentor details
   const mentor = db.users.mentors.find(m => m.id === mentorId) || db.users.mentors[0];
 
@@ -26,6 +32,30 @@ export const MentorDashboard = ({ mentorId }) => {
   // Mentor's shared sessions & resources
   const mySessions = db.groupSessions.filter(s => s.mentorId === mentor.id);
   const myResources = db.resources.filter(r => r.mentorId === mentor.id);
+  const myRecords = (db.mentorSessionRecords || []).filter(r => r.mentorId === mentor.id);
+
+  // Auto-initialize recordCount when mentees load
+  React.useEffect(() => {
+    if (mentees.length > 0) {
+      setRecordCount(mentees.length);
+    }
+  }, [mentees.length]);
+
+  const handleAddSessionRecord = (e) => {
+    e.preventDefault();
+    if (!recordTopic || !recordDate || !recordCount) return;
+
+    submitMentorSessionRecord(mentor.id, recordTopic, recordDate, parseInt(recordCount), recordNotes);
+    setSuccessMessage('Session attendance and progress report filed successfully!');
+    setRecordTopic('');
+    setRecordNotes('');
+    setRecordDate(new Date().toISOString().split('T')[0]);
+    setRecordCount(mentees.length || 25);
+
+    setTimeout(() => {
+      setSuccessMessage('');
+    }, 2000);
+  };
 
   const handleAddSession = (e) => {
     e.preventDefault();
@@ -101,6 +131,14 @@ export const MentorDashboard = ({ mentorId }) => {
         >
           <BookOpen size={18} />
           <span>Share Resource ({myResources.length})</span>
+        </button>
+
+        <button 
+          className={`panel-btn ${activeTab === 'session-records' ? 'active Mentor' : ''}`}
+          onClick={() => setActiveTab('session-records')}
+        >
+          <FileText size={18} />
+          <span>File Session Report ({myRecords.length})</span>
         </button>
 
         {/* Informative Alert for Mentors */}
@@ -335,6 +373,119 @@ export const MentorDashboard = ({ mentorId }) => {
                 <Send size={16} /> Share Resource with Mentees
               </button>
             </form>
+          </div>
+        )}
+
+        {/* TAB 4: FILE SESSION RECORD */}
+        {activeTab === 'session-records' && (
+          <div className="glass-card">
+            <h2 className="section-title">Log Mentoring Session Record</h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+              File a regular report after hosting a mentoring session to record student attendance and progress notes.
+            </p>
+            
+            <form onSubmit={handleAddSessionRecord} style={{ marginBottom: '32px' }}>
+              <div className="form-group">
+                <label className="form-label">Session Topic / Agenda</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="e.g. Discussing supplementary exam preparation and time management"
+                  value={recordTopic}
+                  onChange={(e) => setRecordTopic(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
+                <div className="form-group">
+                  <label className="form-label">Session Date</label>
+                  <input 
+                    type="date" 
+                    className="form-control" 
+                    value={recordDate}
+                    onChange={(e) => setRecordDate(e.target.value)}
+                    required
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label">Number of Students Handled</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    min="1"
+                    max="100"
+                    value={recordCount}
+                    onChange={(e) => setRecordCount(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Session Progress Notes / Action Summary</label>
+                <textarea 
+                  className="form-textarea"
+                  value={recordNotes}
+                  onChange={(e) => setRecordNotes(e.target.value)}
+                  placeholder="Summarize the discussion, list common pain points raised, or log students who need special guidance..."
+                  required
+                />
+              </div>
+
+              <button type="submit" className="btn btn-success">
+                <Send size={16} /> Submit Session Report
+              </button>
+            </form>
+
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '12px' }}>Session History Logs ({myRecords.length})</h3>
+            
+            {myRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                <p>No session reports filed yet.</p>
+              </div>
+            ) : (
+              <div className="custom-table-container">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Topic / Title</th>
+                      <th>Students Attended</th>
+                      <th>Progress Notes Summary</th>
+                      <th>Filed Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myRecords.map((rec, idx) => (
+                      <tr key={idx}>
+                        <td><strong>{new Date(rec.sessionDate).toLocaleDateString()}</strong></td>
+                        <td>{rec.topic}</td>
+                        <td>
+                          <span style={{ 
+                            padding: '2px 8px', 
+                            borderRadius: '10px', 
+                            background: 'rgba(99, 102, 241, 0.15)',
+                            color: 'rgb(129, 140, 248)',
+                            fontSize: '0.8rem',
+                            fontWeight: '600'
+                          }}>
+                            {rec.studentsAttended} Students
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          {rec.notes}
+                        </td>
+                        <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {new Date(rec.createdAt).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
