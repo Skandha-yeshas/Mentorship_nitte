@@ -78,13 +78,28 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile }) => {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Profile:</span>
               <select
                 className="form-select"
-                style={{ padding: '6px 12px', width: 'auto', fontSize: '0.8rem', minWidth: '150px' }}
+                style={{ padding: '6px 12px', width: 'auto', fontSize: '0.8rem', minWidth: '220px' }}
                 value={selectedSubProfile}
                 onChange={(e) => setSelectedSubProfile(e.target.value)}
               >
-                {activeSubProfiles.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
+                {currentUser === 'RO' ? (
+                  <>
+                    {['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'].map(dept => {
+                      const deptROs = db.users.ros.filter(r => r.region && r.region.startsWith(dept));
+                      return (
+                        <optgroup key={dept} label={`${dept} Helpdesks`}>
+                          {deptROs.map(r => (
+                            <option key={r.id} value={r.id}>{r.name.replace('RO - ', '')}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  </>
+                ) : (
+                  activeSubProfiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))
+                )}
               </select>
             </div>
           )}

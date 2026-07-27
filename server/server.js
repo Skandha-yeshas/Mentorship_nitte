@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { initDb, query, dropAllTables, seedTables } from './db.js';
+import { initDb, query, dropAllTables, seedTables, ALL_CATEGORIES } from './db.js';
 
 dotenv.config();
 
@@ -93,10 +93,13 @@ app.get('/api/db-state', async (req, res) => {
 
 // 2. SUBMIT AN ISSUE
 app.post('/api/issues', async (req, res) => {
-  const { studentId, category, description, priority, roId, studentName } = req.body;
+  const { studentId, category, description, priority, studentName } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
+
+  const idx = ALL_CATEGORIES.indexOf(category);
+  const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
 
   const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
   const timestamp = new Date().toISOString();
@@ -106,7 +109,7 @@ app.post('/api/issues', async (req, res) => {
     await query(
       `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
        VALUES ($1, $2, $3, $4, $5, $6, 'Assigned to RO', $7, $8, $9)`,
-      [issueId, studentId, studentName, category, description, priority, roId, timestamp, initialLogs]
+      [issueId, studentId, studentName, category, description, priority, calculatedRoId, timestamp, initialLogs]
     );
 
     await logSystemEvent(`Student ${studentName} submitted a new issue: ${category}`, 'Student', studentId);

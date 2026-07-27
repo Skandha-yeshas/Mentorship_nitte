@@ -2,7 +2,7 @@ import React, { createContext, useState, useEffect } from 'react';
 
 export const DatabaseContext = createContext();
 
-// Define realistic issue categories representing the 50 possible categories
+// Define realistic issue categories representing the 49 possible categories
 const ISSUE_CATEGORIES = {
   Academic: [
     'Course Enrollment issues', 'Attendance shortage clarification',
@@ -13,22 +13,26 @@ const ISSUE_CATEGORIES = {
   Exams: [
     'Hall ticket download errors', 'Exam schedule conflicts',
     'Revaluation/Re-totalling requests', 'Make-up exam eligibility',
-    'Results withholding issues', 'Supplementary exam fees'
+    'Results withholding issues', 'Supplementary exam fees',
+    'Answer sheet copy request', 'Grace marks query'
   ],
   Financial: [
     'Tuition fee installment requests', 'Scholarship application delay',
     'Hostel fee payment extension', 'Exam fee payment failure',
-    'Refund of caution deposits'
+    'Refund of caution deposits', 'Bank loan bonafide certificate',
+    'Fine waiver appeals', 'Late fee penalty queries'
   ],
   Hostels: [
     'Room maintenance & repairs', 'Mess food quality/hygiene',
     'Wi-Fi connectivity issues', 'Water supply shortage',
-    'Roommate conflicts', 'Hostel curfew permissions'
+    'Roommate conflicts', 'Hostel curfew permissions',
+    'Laundry services issues', 'Pest control requests'
   ],
   Placements: [
     'Resume verification delay', 'Eligibility criteria appeals',
     'Interview scheduling clashes', 'Placement training portal bugs',
-    'Company registration issues'
+    'Company registration issues', 'NOC certificate delay',
+    'Internship credits validation', 'Mock interview slots'
   ],
   Facilities: [
     'Library book renewal limits', 'Canteen hygiene & pricing',
@@ -105,8 +109,7 @@ export const DatabaseProvider = ({ children }) => {
           studentName: student.name,
           category,
           description,
-          priority,
-          roId: student.roId
+          priority
         })
       });
       const data = await res.json();
@@ -119,7 +122,8 @@ export const DatabaseProvider = ({ children }) => {
 
   const bookMeeting = async (issueId, studentId, date, time, mode) => {
     const student = db.users.students.find(s => s.id === studentId);
-    if (!student) return;
+    const issue = db.issues.find(i => i.id === issueId);
+    if (!student || !issue) return;
 
     try {
       await fetch('/api/meetings', {
@@ -129,7 +133,7 @@ export const DatabaseProvider = ({ children }) => {
           issueId,
           studentId,
           studentName: student.name,
-          roId: student.roId,
+          roId: issue.roId,
           date,
           time,
           mode

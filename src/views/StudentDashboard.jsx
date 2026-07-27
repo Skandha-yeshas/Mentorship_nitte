@@ -26,8 +26,12 @@ export const StudentDashboard = ({ studentId }) => {
 
   // Fetch current student profile & assigned RO
   const student = db.users.students.find(s => s.id === studentId) || db.users.students[0];
-  const myRO = db.users.ros.find(r => r.id === student.roId);
   const myMentor = db.users.mentors.find(m => m.id === student.mentorId);
+
+  // Determine active RO dynamically based on category selection
+  const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
+  const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
+  const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
 
   // Issues raised by this student
   const myIssues = db.issues.filter(i => i.studentId === student.id);
@@ -112,17 +116,15 @@ export const StudentDashboard = ({ studentId }) => {
           <span>Mentorship Hub</span>
         </button>
 
-        {/* RO assigned details card */}
-        {myRO && (
-          <div className="glass-card" style={{ marginTop: 'auto', padding: '16px', fontSize: '0.8rem', background: 'rgba(255,255,255,0.01)' }}>
-            <h4 style={{ color: 'var(--accent-amber)', fontWeight: '600', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <User size={14} /> Assigned support officer (RO)
-            </h4>
-            <p style={{ fontWeight: '600' }}>{myRO.name}</p>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{myRO.email}</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '4px' }}>Scope: {myRO.region}</p>
-          </div>
-        )}
+        {/* Routing Explanation Card */}
+        <div className="glass-card" style={{ marginTop: 'auto', padding: '16px', fontSize: '0.8rem', background: 'rgba(59,130,246,0.02)', borderLeft: '3px solid var(--accent-blue)' }}>
+          <h4 style={{ color: 'var(--accent-blue)', fontWeight: '600', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            ℹ️ Problem-Based Routing
+          </h4>
+          <p style={{ color: 'var(--text-secondary)' }}>
+            Your issues are routed dynamically to one of our 49 specialized Relationship Officers (RO) depending on the problem category you choose.
+          </p>
+        </div>
       </div>
 
       {/* Main Content Pane */}
@@ -177,7 +179,7 @@ export const StudentDashboard = ({ studentId }) => {
                     className="form-control" 
                     readOnly 
                     disabled 
-                    value={myRO ? `${myRO.name} (${myRO.region})` : 'System Auto-routing'} 
+                    value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
                   />
                 </div>
               </div>
