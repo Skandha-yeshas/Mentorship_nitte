@@ -29,7 +29,7 @@ const logSystemEvent = async (text, userRole, userId) => {
 // 1. GET FULL APP STATE (For quick frontend loading)
 app.get('/api/db-state', async (req, res) => {
   try {
-    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", ro_id AS "roId", phone, branch, sem FROM students`);
+    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem FROM students`);
     const mentorsRes = await query(`SELECT id, name, email, dept, class FROM mentors`);
     const rosRes = await query(`SELECT id, name, email, region FROM ros`);
     const issuesRes = await query(`
