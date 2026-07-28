@@ -166,62 +166,37 @@ export const MentorDashboard = ({ mentorId }) => {
         {/* TAB 1: MENTEE ROSTER */}
         {activeTab === 'roster' && (
           <div className="glass-card">
-            <h2 className="section-title">Assigned Mentees & Issue Status</h2>
+            <h2 className="section-title">Assigned Mentees</h2>
             
             <div className="custom-table-container">
               <table className="custom-table">
                 <thead>
                   <tr>
                     <th>Student Name</th>
-                    <th>ID</th>
+                    <th>Student ID</th>
                     <th>Email Address</th>
-                    <th>Active Issues</th>
-                    <th>Last Issue Category</th>
-                    <th>Status Badge</th>
+                    <th>Academic Program</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {mentees.map(student => {
-                    // Check if this student has active issues
-                    const studentIssues = db.issues.filter(i => i.studentId === student.id);
-                    const activeIssues = studentIssues.filter(i => i.status !== 'Resolved');
-                    const lastIssue = studentIssues[0]; // issues are sorted newest first
-
-                    return (
-                      <tr key={student.id}>
-                        <td>
-                          <strong>{student.name}</strong>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Sem {student.sem} | {student.branch}</div>
-                        </td>
-                        <td><code>{student.id}</code></td>
-                        <td>{student.email}</td>
-                        <td style={{ textAlign: 'center' }}>
-                          <span style={{ 
-                            padding: '2px 8px', 
-                            borderRadius: '10px', 
-                            fontSize: '0.8rem',
-                            fontWeight: '700',
-                            background: activeIssues.length > 0 ? 'rgba(244,63,94,0.15)' : 'rgba(16,185,129,0.15)',
-                            color: activeIssues.length > 0 ? '#f43f5e' : '#10b981'
-                          }}>
-                            {activeIssues.length}
-                          </span>
-                        </td>
-                        <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                          {lastIssue ? lastIssue.category.split(' - ')[1] : 'No issues reported'}
-                        </td>
-                        <td>
-                          {lastIssue ? (
-                            <span className={`badge badge-${lastIssue.status.toLowerCase().replace(' ', '-')}`}>
-                              {lastIssue.status}
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {mentees.map(student => (
+                    <tr key={student.id}>
+                      <td><strong>{student.name}</strong></td>
+                      <td><code>{student.id}</code></td>
+                      <td>{student.email}</td>
+                      <td>
+                        <span style={{ 
+                          padding: '4px 10px', 
+                          borderRadius: '6px', 
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          fontSize: '0.8rem',
+                          color: 'var(--text-secondary)'
+                        }}>
+                          Semester {student.sem} — {student.branch}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
