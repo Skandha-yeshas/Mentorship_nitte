@@ -1,9 +1,9 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext, ALL_CATEGORIES } from '../context/DatabaseContext';
-import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User } from 'lucide-react';
+import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw } from 'lucide-react';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, bookMeeting, submitFeedback } = useContext(DatabaseContext);
+  const { db, submitIssue, submitFeedback, reopenIssue } = useContext(DatabaseContext);
   
   // Tabs within Student Dashboard
   const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
@@ -15,14 +15,11 @@ export const StudentDashboard = ({ studentId }) => {
   const [priority, setPriority] = useState('Medium');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Meeting form states
-  const [meetDate, setMeetDate] = useState('');
-  const [meetTime, setMeetTime] = useState('');
-  const [meetMode, setMeetMode] = useState('Offline');
-
-  // Rating state
+  // Rating & Re-open form states
   const [rating, setRating] = useState(5);
   const [feedbackComments, setFeedbackComments] = useState('');
+  const [showReopenForm, setShowReopenForm] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
 
   // Fetch current student profile & assigned RO
   const student = db.users.students.find(s => s.id === studentId) || db.users.students[0];
@@ -59,20 +56,20 @@ export const StudentDashboard = ({ studentId }) => {
     }, 2000);
   };
 
-  const handleBookMeeting = (e) => {
-    e.preventDefault();
-    if (!meetDate || !meetTime || !selectedIssueId) return;
-
-    bookMeeting(selectedIssueId, student.id, meetDate, meetTime, meetMode);
-    setMeetDate('');
-    setMeetTime('');
-  };
-
   const handleFeedbackSubmit = (e) => {
     e.preventDefault();
     if (!selectedIssueId) return;
     submitFeedback(selectedIssueId, rating, feedbackComments);
     setFeedbackComments('');
+  };
+
+  const handleReopenSubmit = (e) => {
+    e.preventDefault();
+    if (!selectedIssueId) return;
+
+    reopenIssue(selectedIssueId, student.id, reopenReason);
+    setReopenReason('');
+    setShowReopenForm(false);
   };
 
   return (
@@ -82,7 +79,7 @@ export const StudentDashboard = ({ studentId }) => {
         {/* Student Profile Card */}
         <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(var(--role-student-rgb), 0.15)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'rgb(167, 139, 250)' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--nitte-blue-light)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'var(--nitte-blue)' }}>
               <User size={24} />
             </div>
             <div>
@@ -282,72 +279,44 @@ export const StudentDashboard = ({ studentId }) => {
                   </div>
                 )}
 
-                {/* MEETING BOOKING FORM OR CONFIRMED DETAILS */}
+                {/* RO ASSIGNED MEETING DETAILS */}
                 {selectedIssue.status !== 'Resolved' && (
-                  <div style={{ border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.01)', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
-                    <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Calendar size={15} /> Book a Session with your RO
+                  <div style={{ border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
+                    <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Calendar size={16} /> Meeting Scheduled by Relationship Officer
                     </h4>
 
-                    {/* Find if a meeting already exists for this issue */}
                     {db.meetings.some(m => m.issueId === selectedIssue.id) ? (
                       <div>
                         {db.meetings.filter(m => m.issueId === selectedIssue.id).map(meet => (
-                          <div key={meet.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                            <div>
-                              <p style={{ fontSize: '0.85rem', fontWeight: '600' }}>Slot: {meet.date} at {meet.time}</p>
-                              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Mode: {meet.mode}</p>
+                          <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                              <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                                📅 {meet.date} at ⏰ {meet.time}
+                              </span>
+                              <span className="badge badge-scheduled">{meet.status || 'Scheduled'}</span>
                             </div>
-                            <span style={{ 
-                              fontSize: '0.75rem', 
-                              padding: '2px 8px', 
-                              borderRadius: '4px', 
-                              background: meet.status === 'Confirmed' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
-                              color: meet.status === 'Confirmed' ? '#34d399' : '#fbbf24'
-                            }}>{meet.status}</span>
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                              <strong>Location / Venue:</strong> 📍 {meet.location || 'RO Office Desk (Admin Block)'}
+                            </p>
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                              <strong>Mode:</strong> {meet.mode || 'Offline (In-Person)'}
+                            </p>
+                            {meet.notes && (
+                              <p style={{ fontSize: '0.82rem', color: 'var(--nitte-blue)', marginTop: '8px', background: 'var(--nitte-blue-light)', border: '1px solid var(--nitte-blue-soft)', padding: '8px 12px', borderRadius: '6px' }}>
+                                📌 <strong>RO Instructions for Student:</strong> {meet.notes}
+                              </p>
+                            )}
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <form onSubmit={handleBookMeeting}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                          <div>
-                            <label className="form-label">Date</label>
-                            <input 
-                              type="date" 
-                              required 
-                              className="form-control" 
-                              style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                              value={meetDate}
-                              onChange={(e) => setMeetDate(e.target.value)}
-                            />
-                          </div>
-                          <div>
-                            <label className="form-label">Time Slot</label>
-                            <input 
-                              type="time" 
-                              required 
-                              className="form-control" 
-                              style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                              value={meetTime}
-                              onChange={(e) => setMeetTime(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', gap: '12px' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                              <input type="radio" name="mode" value="Offline" checked={meetMode === 'Offline'} onChange={() => setMeetMode('Offline')} /> Offline
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                              <input type="radio" name="mode" value="Online" checked={meetMode === 'Online'} onChange={() => setMeetMode('Online')} /> Online (Meet)
-                            </label>
-                          </div>
-                          <button type="submit" className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                            Submit Slot Request
-                          </button>
-                        </div>
-                      </form>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
+                        <p>No meeting has been scheduled by your Relationship Officer yet.</p>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          Your assigned RO will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}
@@ -401,6 +370,42 @@ export const StudentDashboard = ({ studentId }) => {
                         </button>
                       </form>
                     )}
+
+                    {/* RE-OPEN TICKET OPTION IF DISSATISFIED */}
+                    <div style={{ marginTop: '14px', borderTop: '1px dashed var(--border-color)', paddingTop: '12px' }}>
+                      {!showReopenForm ? (
+                        <button 
+                          onClick={() => setShowReopenForm(true)}
+                          className="btn btn-secondary" 
+                          style={{ width: '100%', fontSize: '0.8rem', color: 'var(--accent-amber)', borderColor: 'rgba(217, 119, 6, 0.3)' }}
+                        >
+                          <RotateCcw size={14} /> Not Satisfied? Re-open Ticket with RO
+                        </button>
+                      ) : (
+                        <form onSubmit={handleReopenSubmit} style={{ background: '#ffffff', border: '1px solid #fde68a', padding: '12px', borderRadius: '6px' }}>
+                          <h5 style={{ fontSize: '0.82rem', fontWeight: '700', color: 'var(--accent-amber)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <RotateCcw size={14} /> Re-open Ticket for RO Attention
+                          </h5>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                            Explain why you are dissatisfied or what advice/help you still need. Your RO will be notified to schedule a meeting again.
+                          </p>
+                          <div className="form-group" style={{ marginBottom: '8px' }}>
+                            <textarea 
+                              className="form-textarea"
+                              style={{ minHeight: '65px', fontSize: '0.8rem' }}
+                              placeholder="e.g., The internal marks calculation issue is still pending on my portal. I need an in-person meeting to show my marksheet."
+                              required
+                              value={reopenReason}
+                              onChange={(e) => setReopenReason(e.target.value)}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button type="button" onClick={() => setShowReopenForm(false)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
+                            <button type="submit" className="btn btn-warning" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>Confirm & Re-open Ticket</button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
                   </div>
                 )}
 

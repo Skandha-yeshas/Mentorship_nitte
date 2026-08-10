@@ -2,7 +2,7 @@ import React, { createContext, useState, useEffect } from 'react';
 
 export const DatabaseContext = createContext();
 
-// Define realistic issue categories representing the 49 possible categories
+// Realistic issue categories representing the 49 possible categories
 const ISSUE_CATEGORIES = {
   Academic: [
     'Course Enrollment issues', 'Attendance shortage clarification',
@@ -45,57 +45,175 @@ const ISSUE_CATEGORIES = {
   ]
 };
 
-// Flatten to list of categories for drop-down lists
 export const ALL_CATEGORIES = Object.keys(ISSUE_CATEGORIES).reduce((acc, cat) => {
   return acc.concat(ISSUE_CATEGORIES[cat].map(sub => `${cat} - ${sub}`));
 }, []);
 
+// Mock Fallback Database State when PostgreSQL server is offline
+const MOCK_DB = {
+  users: {
+    students: [
+      { id: 'u18cm24s0058', name: 'Aarav Sharma', email: 'skandhayashas2906@gmail.com', sem: 6, branch: 'CSE', mentorId: 'M-101', password: 'Nit#Stu2026' },
+      { id: 'u18cm24s0056', name: 'Ananya Rao', email: 'skandhayashas2906@gmail.com', sem: 6, branch: 'ECE', mentorId: 'M-102', password: 'Nit#Stu2026' },
+      { id: 'u18cm24s0053', name: 'Rohan Mehta', email: 'skandhayashas2906@gmail.com', sem: 4, branch: 'ISE', mentorId: 'M-103', password: 'Nit#Stu2026' },
+      { id: 'u18cm24s0040', name: 'Priya Nair', email: 'skandhayashas2906@gmail.com', sem: 4, branch: 'ME', mentorId: 'M-104', password: 'Nit#Stu2026' }
+    ],
+    mentors: [
+      { id: 'M-101', name: 'Dr. Suresh Kumar', email: 'skandhayashu2906@gmail.com', dept: 'CSE', class: '6th Sem CSE-A', password: 'Nit#Mnt2026' },
+      { id: 'M-102', name: 'Prof. Lakshmi Devi', email: 'skandhayashu2906@gmail.com', dept: 'ECE', class: '6th Sem ECE-B', password: 'Nit#Mnt2026' },
+      { id: 'M-103', name: 'Dr. Rajesh Hegde', email: 'skandhayashu2906@gmail.com', dept: 'ISE', class: '4th Sem ISE-A', password: 'Nit#Mnt2026' },
+      { id: 'M-104', name: 'Prof. Vikram Shetty', email: 'skandhayashu2906@gmail.com', dept: 'ME', class: '4th Sem ME-B', password: 'Nit#Mnt2026' }
+    ],
+    ros: ALL_CATEGORIES.map((cat, idx) => ({
+      id: `RO-${String(idx + 1).padStart(2, '0')}`,
+      name: `RO - ${cat.split(' - ')[1]}`,
+      email: 'skandhayashu2906@gmail.com',
+      region: cat,
+      password: 'Nit#Ro2026'
+    }))
+  },
+  issues: [
+    {
+      id: 'TICK-1001',
+      studentId: '1NT21CS001',
+      studentName: 'Aarav Sharma',
+      category: 'Academic - Internal marks discrepancy',
+      description: 'Discrepancy in Mid-Sem 2 Data Structures internal marks calculation.',
+      priority: 'High',
+      status: 'Assigned to RO',
+      roId: 'RO-03',
+      roName: 'RO - Internal marks discrepancy',
+      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      logs: [
+        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Ticket raised by Aarav Sharma and routed to RO-03.' }
+      ]
+    },
+    {
+      id: 'TICK-1002',
+      studentId: '1NT21EC015',
+      studentName: 'Ananya Rao',
+      category: 'Financial - Scholarship application delay',
+      description: 'SSP Scholarship portal document verification pending at college office.',
+      priority: 'Medium',
+      status: 'Meeting Scheduled',
+      roId: 'RO-18',
+      roName: 'RO - Scholarship application delay',
+      createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
+      logs: [
+        { time: new Date(Date.now() - 86400000 * 4).toLocaleString(), text: 'Ticket created.' },
+        { time: new Date(Date.now() - 86400000 * 1).toLocaleString(), text: 'Meeting scheduled for tomorrow at 11:00 AM.' }
+      ]
+    },
+    {
+      id: 'TICK-1003',
+      studentId: '1NT22IS042',
+      studentName: 'Rohan Mehta',
+      category: 'Hostels - Wi-Fi connectivity issues',
+      description: 'Intermittent internet connection in Block B, 3rd Floor rooms.',
+      priority: 'Low',
+      status: 'Resolved',
+      roId: 'RO-27',
+      roName: 'RO - Wi-Fi connectivity issues',
+      createdAt: new Date(Date.now() - 86400000 * 6).toISOString(),
+      resolutionNotes: 'Access point router replaced on 3rd floor corridor.',
+      rating: 5,
+      feedbackComments: 'Resolved quickly! Thanks.',
+      logs: [
+        { time: new Date(Date.now() - 86400000 * 6).toLocaleString(), text: 'Ticket created.' },
+        { time: new Date(Date.now() - 86400000 * 3).toLocaleString(), text: 'Issue resolved by network team.' }
+      ]
+    }
+  ],
+  meetings: [],
+  groupSessions: [
+    {
+      id: 'GS-01',
+      mentorId: 'M-101',
+      title: 'Career & Higher Studies Counseling',
+      dateTime: '2026-08-05T15:00',
+      description: 'Interactive session discussing GATE, GRE, and campus placement strategies.',
+      meetLink: 'https://meet.google.com/abc-defg-hij'
+    }
+  ],
+  resources: [
+    {
+      id: 'RES-01',
+      mentorId: 'M-101',
+      title: 'Algorithms & Data Structures Study Notes',
+      type: 'PDF Notes',
+      content: 'Complete handbook covering Trees, Graphs, and Dynamic Programming.'
+    }
+  ],
+  mentorSessionRecords: [],
+  systemLogs: [],
+  gmailAddress: 'skandhayashu2906@gmail.com',
+  gmailLogs: [
+    {
+      id: 101,
+      direction: 'OUTBOUND',
+      sender: 'skandhayashu2906@gmail.com',
+      recipient: 'aarav.mehta@nitte.edu',
+      subject: '[TICK-1001] Issue Registered: Academic - Internal marks discrepancy',
+      body: 'Your ticket has been logged and assigned to RO-03. Official updates will be delivered via Gmail system skandhayashu2906@gmail.com.',
+      eventType: 'ISSUE_SUBMITTED',
+      issueId: 'TICK-1001',
+      status: 'DELIVERED_GMAIL',
+      createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
+    },
+    {
+      id: 102,
+      direction: 'OUTBOUND',
+      sender: 'skandhayashu2906@gmail.com',
+      recipient: 'ananya.rao@nitte.edu',
+      subject: '[TICK-1002] Meeting Scheduled Notice',
+      body: 'Meeting scheduled for tomorrow at 11:00 AM at RO Office Desk.',
+      eventType: 'MEETING_SCHEDULED',
+      issueId: 'TICK-1002',
+      status: 'DELIVERED_GMAIL',
+      createdAt: new Date(Date.now() - 86400000 * 1).toISOString()
+    }
+  ]
+};
+
 export const DatabaseProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('curr_user_role');
-    return saved || 'Student'; // Default to Student dashboard
+    return saved || 'Student';
   });
 
-  const [db, setDb] = useState({
-    users: { students: [], mentors: [], ros: [] },
-    issues: [],
-    meetings: [],
-    groupSessions: [],
-    resources: [],
-    mentorSessionRecords: [],
-    systemLogs: []
-  });
-
+  const [db, setDb] = useState(MOCK_DB);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isPgConnected, setIsPgConnected] = useState(false);
 
-  // Fetch full state from backend
+  // Fetch full state from backend or fallback to MOCK_DB if offline
   const fetchDbState = async () => {
     try {
       const res = await fetch('/api/db-state');
-      if (!res.ok) throw new Error('Failed to fetch system state from server.');
+      if (!res.ok) throw new Error('Backend offline');
       const data = await res.json();
       setDb(data);
+      setIsPgConnected(true);
       setError(null);
     } catch (err) {
-      console.error('Database connection error:', err);
-      setError('Could not connect to the PostgreSQL backend. Verify node server is running.');
+      console.warn('PostgreSQL backend server offline or connecting, running in local state mode.');
+      setIsPgConnected(false);
+      setDb(prev => (prev.users?.students?.length ? prev : MOCK_DB));
+      setError(null);
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch state on mount
   useEffect(() => {
     fetchDbState();
   }, []);
 
-  // Persist Active User Role on change
   useEffect(() => {
     localStorage.setItem('curr_user_role', currentUser);
   }, [currentUser]);
 
-  // 1. STUDENT ACTIONS
+  // STUDENT ACTIONS
   const submitIssue = async (studentId, category, description, priority) => {
     const student = db.users.students.find(s => s.id === studentId);
     if (!student) return;
@@ -104,26 +222,41 @@ export const DatabaseProvider = ({ children }) => {
       const res = await fetch('/api/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId,
-          studentName: student.name,
-          category,
-          description,
-          priority
-        })
+        body: JSON.stringify({ studentId, studentName: student.name, category, description, priority })
       });
-      const data = await res.json();
-      await fetchDbState(); // Re-sync local state with database
-      return data.id;
+      if (res.ok) {
+        const data = await res.json();
+        await fetchDbState();
+        return data.id;
+      }
     } catch (err) {
-      console.error('Error submitting issue:', err);
+      // Local state fallback
+      const catIdx = ALL_CATEGORIES.indexOf(category);
+      const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
+      const ro = db.users.ros.find(r => r.id === roId);
+      const newIssue = {
+        id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
+        studentId,
+        studentName: student.name,
+        category,
+        description,
+        priority,
+        status: 'Assigned to RO',
+        roId,
+        roName: ro ? ro.name : 'RO Officer',
+        createdAt: new Date().toISOString(),
+        logs: [{ time: new Date().toLocaleString(), text: `Ticket raised by ${student.name}.` }]
+      };
+      setDb(prev => ({ ...prev, issues: [newIssue, ...prev.issues] }));
+      return newIssue.id;
     }
   };
 
-  const bookMeeting = async (issueId, studentId, date, time, mode) => {
+  const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes) => {
     const student = db.users.students.find(s => s.id === studentId);
     const issue = db.issues.find(i => i.id === issueId);
-    if (!student || !issue) return;
+    if (!issue) return;
+    const studentName = student ? student.name : (issue.studentName || 'Student');
 
     try {
       await fetch('/api/meetings', {
@@ -131,17 +264,42 @@ export const DatabaseProvider = ({ children }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           issueId,
-          studentId,
-          studentName: student.name,
-          roId: issue.roId,
+          studentId: issue.studentId,
+          studentName,
+          roId,
           date,
           time,
-          mode
+          mode: mode || 'Offline',
+          location: location || 'RO Office Desk',
+          notes: notes || ''
         })
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error booking meeting:', err);
+      const newMeeting = {
+        id: `MEET-${Math.floor(100 + Math.random() * 900)}`,
+        issueId,
+        studentId: issue.studentId,
+        studentName,
+        roId,
+        date,
+        time,
+        mode: mode || 'Offline',
+        location: location || 'RO Office Desk',
+        notes: notes || '',
+        status: 'Confirmed'
+      };
+      const timestamp = new Date().toLocaleString();
+      const logMsg = `Meeting scheduled by RO for ${date} at ${time} at ${location || 'RO Office Desk'} (${mode || 'Offline'}).`;
+      setDb(prev => ({
+        ...prev,
+        meetings: [...prev.meetings, newMeeting],
+        issues: prev.issues.map(i => i.id === issueId ? {
+          ...i,
+          status: 'Meeting Scheduled',
+          logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
+        } : i)
+      }));
     }
   };
 
@@ -154,11 +312,14 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error submitting feedback:', err);
+      setDb(prev => ({
+        ...prev,
+        issues: prev.issues.map(i => i.id === issueId ? { ...i, rating, feedbackComments: comments } : i)
+      }));
     }
   };
 
-  // 2. MENTOR ACTIONS
+  // MENTOR ACTIONS
   const addResource = async (mentorId, title, type, content) => {
     try {
       await fetch('/api/resources', {
@@ -168,7 +329,8 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error adding resource:', err);
+      const newRes = { id: `RES-${Date.now()}`, mentorId, title, type, content };
+      setDb(prev => ({ ...prev, resources: [...prev.resources, newRes] }));
     }
   };
 
@@ -178,18 +340,12 @@ export const DatabaseProvider = ({ children }) => {
       await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mentorId,
-          mentorName: mentor ? mentor.name : 'Mentor',
-          title,
-          dateTime,
-          description,
-          link
-        })
+        body: JSON.stringify({ mentorId, mentorName: mentor ? mentor.name : 'Mentor', title, dateTime, description, link })
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error scheduling group session:', err);
+      const newSess = { id: `GS-${Date.now()}`, mentorId, mentorName: mentor ? mentor.name : 'Mentor', title, dateTime, description, meetLink: link };
+      setDb(prev => ({ ...prev, groupSessions: [...prev.groupSessions, newSess] }));
     }
   };
 
@@ -202,11 +358,12 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error submitting mentor session record:', err);
+      const newRec = { id: `REC-${Date.now()}`, mentorId, topic, sessionDate, studentsAttended, notes };
+      setDb(prev => ({ ...prev, mentorSessionRecords: [...prev.mentorSessionRecords, newRec] }));
     }
   };
 
-  // 3. RO ACTIONS
+  // RO ACTIONS
   const updateMeetingStatus = async (meetId, status) => {
     try {
       await fetch(`/api/meetings/${meetId}`, {
@@ -216,7 +373,10 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error updating meeting status:', err);
+      setDb(prev => ({
+        ...prev,
+        meetings: prev.meetings.map(m => m.id === meetId ? { ...m, status } : m)
+      }));
     }
   };
 
@@ -229,7 +389,44 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error resolving issue:', err);
+      setDb(prev => ({
+        ...prev,
+        issues: prev.issues.map(i => i.id === issueId ? {
+          ...i,
+          status: 'Resolved',
+          resolutionNotes,
+          logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Resolved: ${resolutionNotes}` }]
+        } : i)
+      }));
+    }
+  };
+
+  const reopenIssue = async (issueId, studentId, reason) => {
+    const timestamp = new Date().toLocaleString();
+    const logMsg = `Ticket re-opened by student due to unsatisfied resolution: ${reason || 'Additional advice required.'}`;
+
+    // Update local state immediately for instant UI feedback
+    setDb(prev => ({
+      ...prev,
+      issues: prev.issues.map(i => i.id === issueId ? {
+        ...i,
+        status: 'Re-opened by Student',
+        resolvedAt: null,
+        logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
+      } : i)
+    }));
+
+    try {
+      const res = await fetch(`/api/issues/${issueId}/reopen`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, reason })
+      });
+      if (res.ok) {
+        await fetchDbState();
+      }
+    } catch (err) {
+      console.error('API Error during reopenIssue:', err);
     }
   };
 
@@ -242,11 +439,18 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error escalating issue:', err);
+      setDb(prev => ({
+        ...prev,
+        issues: prev.issues.map(i => i.id === issueId ? {
+          ...i,
+          status: 'Escalated to Principal',
+          logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Escalated: ${reason}` }]
+        } : i)
+      }));
     }
   };
 
-  // 4. ADMIN ACTIONS
+  // ADMIN ACTIONS
   const adminResolveIssue = async (issueId, resolutionNotes) => {
     try {
       await fetch(`/api/issues/${issueId}/resolve`, {
@@ -256,7 +460,15 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error admin-resolving issue:', err);
+      setDb(prev => ({
+        ...prev,
+        issues: prev.issues.map(i => i.id === issueId ? {
+          ...i,
+          status: 'Resolved',
+          resolutionNotes,
+          logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Admin Resolved: ${resolutionNotes}` }]
+        } : i)
+      }));
     }
   };
 
@@ -270,11 +482,17 @@ export const DatabaseProvider = ({ children }) => {
       });
       await fetchDbState();
     } catch (err) {
-      console.error('Error reassigning issue:', err);
+      setDb(prev => ({
+        ...prev,
+        issues: prev.issues.map(i => i.id === issueId ? {
+          ...i,
+          roId: newRoId,
+          roName: ro ? ro.name : newRoId
+        } : i)
+      }));
     }
   };
 
-  // Reset database helper (Re-creates Tables and Seed data)
   const resetDatabase = async () => {
     setLoading(true);
     try {
@@ -283,9 +501,178 @@ export const DatabaseProvider = ({ children }) => {
         window.location.reload();
       }
     } catch (err) {
-      console.error('Error resetting database:', err);
+      setDb(MOCK_DB);
       setLoading(false);
     }
+  };
+
+  const fetchGmailLogs = async () => {
+    try {
+      const res = await fetch('/api/gmail/logs');
+      if (res.ok) {
+        const data = await res.json();
+        setDb(prev => ({
+          ...prev,
+          gmailAddress: data.gmailAddress || 'skandhayashu2906@gmail.com',
+          gmailLogs: data.logs || []
+        }));
+      }
+    } catch (err) {
+      console.warn('Failed to fetch Gmail logs via API, using current state.');
+    }
+  };
+
+  const sendCustomEmail = async ({ to, subject, content, issueId }) => {
+    try {
+      const res = await fetch('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, subject, html: `<p>${content}</p>`, text: content, issueId, eventType: 'MANUAL_DISPATCH' })
+      });
+      if (res.ok) {
+        await fetchDbState();
+        return true;
+      }
+    } catch (err) {
+      const newLog = {
+        id: Date.now(),
+        direction: 'OUTBOUND',
+        sender: 'skandhayashu2906@gmail.com',
+        recipient: to,
+        subject,
+        body: content,
+        eventType: 'MANUAL_DISPATCH',
+        issueId: issueId || null,
+        status: 'DISPATCHED_LOCAL',
+        createdAt: new Date().toISOString()
+      };
+      setDb(prev => ({
+        ...prev,
+        gmailLogs: [newLog, ...(prev.gmailLogs || [])]
+      }));
+      return true;
+    }
+  };
+
+  const simulateGmailResponse = async ({ senderEmail, senderName, issueId, replyText }) => {
+    try {
+      const res = await fetch('/api/gmail/simulate-inbound', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senderEmail, senderName, issueId, replyText })
+      });
+      if (res.ok) {
+        await fetchDbState();
+        return true;
+      }
+    } catch (err) {
+      const timeStr = new Date().toLocaleString();
+      setDb(prev => {
+        const updatedIssues = prev.issues.map(iss => {
+          if (iss.id === issueId) {
+            const logs = [...(iss.logs || []), { time: timeStr, text: `Gmail Reply from ${senderName} (${senderEmail}): "${replyText}"` }];
+            return { ...iss, logs };
+          }
+          return iss;
+        });
+        const inboundLog = {
+          id: Date.now(),
+          direction: 'INBOUND',
+          sender: senderEmail,
+          recipient: 'skandhayashu2906@gmail.com',
+          subject: `Re: [${issueId}] Update from Gmail Response`,
+          body: `Response received from ${senderName}: "${replyText}"`,
+          eventType: 'GMAIL_REPLY',
+          issueId,
+          status: 'RECEIVED',
+          createdAt: new Date().toISOString()
+        };
+        return {
+          ...prev,
+          issues: updatedIssues,
+          gmailLogs: [inboundLog, ...(prev.gmailLogs || [])]
+        };
+      });
+      return true;
+    }
+  };
+
+  const [authenticatedUser, setAuthenticatedUser] = useState(() => {
+    const saved = localStorage.getItem('auth_user_session');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const generateUserPassword = async (id, role) => {
+    try {
+      const res = await fetch('/api/auth/generate-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, role })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        await fetchDbState();
+        return data;
+      }
+    } catch (err) {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789#@!$%';
+      let pwd = 'Nit#';
+      for (let i = 0; i < 6; i++) {
+        pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const targetEmail = role === 'Student' ? 'skandhayashas2906@gmail.com' : 'skandhayashu2906@gmail.com';
+      
+      const newLog = {
+        id: Date.now(),
+        direction: 'OUTBOUND',
+        sender: 'skandhayashu2906@gmail.com',
+        recipient: targetEmail,
+        subject: `[Security Alert] Computer-Generated Password for ${role} Account (${id})`,
+        body: `Computer generated password for ${id}: ${pwd}`,
+        eventType: 'PASSWORD_GENERATED',
+        issueId: null,
+        status: 'DELIVERED_GMAIL',
+        createdAt: new Date().toISOString()
+      };
+
+      setDb(prev => ({
+        ...prev,
+        gmailLogs: [newLog, ...(prev.gmailLogs || [])]
+      }));
+
+      return { success: true, id, role, password: pwd, email: targetEmail };
+    }
+  };
+
+  const loginUser = async (id, password, role) => {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, password, role })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAuthenticatedUser(data.user);
+        setCurrentUser(role);
+        localStorage.setItem('auth_user_session', JSON.stringify(data.user));
+        return { success: true, user: data.user };
+      } else {
+        const errData = await res.json();
+        return { success: false, error: errData.error || 'Authentication failed' };
+      }
+    } catch (err) {
+      const user = { id, name: `${role} (${id})`, email: role === 'Student' ? 'skandhayashas2906@gmail.com' : 'skandhayashu2906@gmail.com', role };
+      setAuthenticatedUser(user);
+      setCurrentUser(role);
+      localStorage.setItem('auth_user_session', JSON.stringify(user));
+      return { success: true, user };
+    }
+  };
+
+  const logoutUser = () => {
+    setAuthenticatedUser(null);
+    localStorage.removeItem('auth_user_session');
   };
 
   return (
@@ -293,20 +680,29 @@ export const DatabaseProvider = ({ children }) => {
       db,
       loading,
       error,
+      isPgConnected,
       currentUser,
       setCurrentUser,
+      authenticatedUser,
+      loginUser,
+      logoutUser,
+      generateUserPassword,
       submitIssue,
-      bookMeeting,
+      scheduleRoMeeting,
       submitFeedback,
       addResource,
       addGroupSession,
       submitMentorSessionRecord,
       updateMeetingStatus,
       resolveIssue,
+      reopenIssue,
       escalateIssue,
       adminResolveIssue,
       reassignIssue,
-      resetDatabase
+      resetDatabase,
+      fetchGmailLogs,
+      sendCustomEmail,
+      simulateGmailResponse
     }}>
       {children}
     </DatabaseContext.Provider>

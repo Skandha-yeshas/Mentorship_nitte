@@ -1,9 +1,10 @@
 import React, { useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers } from 'lucide-react';
+import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers, Mail, Key } from 'lucide-react';
+import { NitteLogo } from './NitteLogo';
 
-export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile }) => {
-  const { currentUser, setCurrentUser, db, resetDatabase } = useContext(DatabaseContext);
+export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpenLoginModal }) => {
+  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser } = useContext(DatabaseContext);
 
   const roles = [
     { name: 'Student', icon: GraduationCap, label: 'Student (Mentee)' },
@@ -51,28 +52,51 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile }) => {
       <div className="header-container">
         {/* Logo & Branding */}
         <div className="app-branding">
-          <div className="app-logo">
-            <Layers size={22} />
-          </div>
-          <div className="app-title-group">
-            <h1>SMART MENTORSHIP & STUDENT SUPPORT</h1>
-            <p>Nitte Meenakshi Institute of Technology</p>
+          <NitteLogo height={38} />
+          <div className="portal-badge">
+            <span>MENTORSHIP PORTAL</span>
           </div>
         </div>
 
         {/* System Ribbon */}
         <div className="system-ribbon">
           <div className="ribbon-item">
-            <span className="ribbon-dot"></span>
-            <span>System Live</span>
+            <span 
+              className="ribbon-dot" 
+              style={{ backgroundColor: isPgConnected ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}
+            />
+            <span>{isPgConnected ? 'PostgreSQL Live' : 'Local Demo Mode'}</span>
           </div>
-          <div className="ribbon-item" style={{ borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: '12px' }}>
+          <div className="ribbon-item" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px' }}>
             <span>Active Issues: <strong>{activeIssues}</strong></span>
           </div>
         </div>
 
         {/* Profile Details Select & Role Switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* Computer Password Login Button */}
+          <button
+            onClick={onOpenLoginModal}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: authenticatedUser ? '#10b981' : '#2563eb',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '6px 12px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+            }}
+            title="Log in or Generate Computer Password"
+          >
+            <Key size={14} />
+            <span>{authenticatedUser ? `Auth: ${authenticatedUser.id}` : 'Login / Generate Password'}</span>
+          </button>
+
           {activeSubProfiles.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Profile:</span>

@@ -118,26 +118,29 @@ const createTables = async () => {
       name VARCHAR(100) NOT NULL,
       email VARCHAR(100) NOT NULL,
       dept VARCHAR(50),
-      class VARCHAR(150)
+      class VARCHAR(150),
+      password VARCHAR(100) DEFAULT 'Nit#Mnt2026'
     )`,
     
-    // 2. ROs (49 dedicated ones)
+    // 2. ROs (49 dedicated ones - all using skandhayashu2906@gmail.com)
     `CREATE TABLE IF NOT EXISTS ros (
       id VARCHAR(50) PRIMARY KEY,
       name VARCHAR(100) NOT NULL,
-      email VARCHAR(100) NOT NULL,
-      region VARCHAR(200)
+      email VARCHAR(100) NOT NULL DEFAULT 'skandhayashu2906@gmail.com',
+      region VARCHAR(200),
+      password VARCHAR(100) DEFAULT 'Nit#Ro2026'
     )`,
 
-    // 3. Students (Removed ro_id column - routing is now dynamic based on issue category)
+    // 3. Students (All using skandhayashas2906@gmail.com)
     `CREATE TABLE IF NOT EXISTS students (
       id VARCHAR(50) PRIMARY KEY,
       name VARCHAR(100) NOT NULL,
-      email VARCHAR(100) NOT NULL,
+      email VARCHAR(100) NOT NULL DEFAULT 'skandhayashas2906@gmail.com',
       mentor_id VARCHAR(50) REFERENCES mentors(id) ON DELETE SET NULL,
       phone VARCHAR(20),
       branch VARCHAR(20),
-      sem INT
+      sem INT,
+      password VARCHAR(100) DEFAULT 'Nit#Stu2026'
     )`,
 
     // 4. Issues
@@ -168,6 +171,8 @@ const createTables = async () => {
       date VARCHAR(20) NOT NULL,
       time VARCHAR(20) NOT NULL,
       mode VARCHAR(20) NOT NULL,
+      location VARCHAR(200) DEFAULT 'RO Office Desk',
+      notes TEXT DEFAULT '',
       status VARCHAR(50) NOT NULL
     )`,
 
@@ -210,12 +215,40 @@ const createTables = async () => {
       topic VARCHAR(200) NOT NULL,
       notes TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    // 10. Email Logs (Gmail skandhayashu2906@gmail.com)
+    `CREATE TABLE IF NOT EXISTS email_logs (
+      id SERIAL PRIMARY KEY,
+      direction VARCHAR(10) NOT NULL,
+      sender VARCHAR(150) NOT NULL,
+      recipient VARCHAR(150) NOT NULL,
+      subject VARCHAR(300) NOT NULL,
+      body TEXT NOT NULL,
+      event_type VARCHAR(100) NOT NULL,
+      issue_id VARCHAR(50),
+      status VARCHAR(50) NOT NULL DEFAULT 'SENT',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   ];
 
   for (const q of queries) {
     await pool.query(q);
   }
+
+  // Ensure newer columns exist for existing databases
+  try {
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS location VARCHAR(200) DEFAULT 'RO Office Desk'`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''`);
+    await pool.query(`ALTER TABLE mentors ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Mnt2026'`);
+    await pool.query(`ALTER TABLE ros ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Ro2026'`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Stu2026'`);
+    await pool.query(`UPDATE ros SET email = 'skandhayashu2906@gmail.com' WHERE email IS NOT NULL`);
+    await pool.query(`UPDATE students SET email = 'skandhayashas2906@gmail.com' WHERE email IS NOT NULL`);
+  } catch (err) {
+    console.log('Column alter & email sync check complete.');
+  }
+
   console.log('PostgreSQL database tables verified/created.');
 };
 
@@ -231,39 +264,39 @@ export const seedTables = async () => {
 
   // 1. Seed Mentors
   await pool.query(`
-    INSERT INTO mentors (id, name, email, dept, class) VALUES
-    ('M01', 'Dr. Rajesh Kumar', 'rajesh.kumar@nitte.edu', 'CSE', '5th Sem CSE - Section A (28 Mentees)'),
-    ('M02', 'Prof. Sunita Sharma', 'sunita.sharma@nitte.edu', 'ISE', '3rd Sem ISE - Section B (26 Mentees)')
+    INSERT INTO mentors (id, name, email, dept, class, password) VALUES
+    ('M01', 'Dr. Rajesh Kumar', 'rajesh.kumar@nitte.edu', 'CSE', '5th Sem CSE - Section A (28 Mentees)', 'Nit#Mnt2026'),
+    ('M02', 'Prof. Sunita Sharma', 'sunita.sharma@nitte.edu', 'ISE', '3rd Sem ISE - Section B (26 Mentees)', 'Nit#Mnt2026')
   `);
 
-  // 2. Seed 49 ROs Dynamically based on the Categories
+  // 2. Seed 49 ROs Dynamically based on the Categories (All assigned skandhayashu2906@gmail.com)
   for (let i = 0; i < ALL_CATEGORIES.length; i++) {
     const cat = ALL_CATEGORIES[i];
     const roId = `RO-${String(i + 1).padStart(2, '0')}`;
     const dept = cat.split(' - ')[0];
     const subcat = cat.split(' - ')[1];
     const name = `RO - ${subcat}`;
-    const email = `ro.${subcat.toLowerCase().replace(/[^a-z0-9]/g, '')}@nitte.edu`;
+    const email = 'skandhayashu2906@gmail.com';
     const region = `${dept} Support Desk`;
     
     await pool.query(
-      `INSERT INTO ros (id, name, email, region) VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO ros (id, name, email, region, password) VALUES ($1, $2, $3, $4, 'Nit#Ro2026')`,
       [roId, name, email, region]
     );
   }
-  console.log('Seeded 49 dedicated Relationship Officers.');
+  console.log('Seeded 49 dedicated Relationship Officers with email skandhayashu2906@gmail.com.');
 
-  // 3. Seed Students
+  // 3. Seed Students (All assigned skandhayashas2906@gmail.com)
   await pool.query(`
-    INSERT INTO students (id, name, email, mentor_id, phone, branch, sem) VALUES
-    ('S101', 'Aarav Mehta', 'aarav.mehta@nitte.edu', 'M01', '9876543210', 'CSE', 5),
-    ('S102', 'Bhavana Rao', 'bhavana.rao@nitte.edu', 'M01', '9876543211', 'CSE', 5),
-    ('S103', 'Chaitra Hegde', 'chaitra.hegde@nitte.edu', 'M01', '9876543212', 'CSE', 5),
-    ('S104', 'Daniel Dsouza', 'daniel.d@nitte.edu', 'M01', '9876543213', 'CSE', 5),
-    ('S105', 'Esha Sharma', 'esha.s@nitte.edu', 'M02', '9876543214', 'ISE', 3),
-    ('S106', 'Farhan Khan', 'farhan.k@nitte.edu', 'M02', '9876543215', 'ISE', 3),
-    ('S107', 'Gautam Shenoy', 'gautam.s@nitte.edu', 'M02', '9876543216', 'ISE', 3),
-    ('S108', 'Harshita Pai', 'harshita.p@nitte.edu', 'M02', '9876543217', 'ISE', 3)
+    INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password) VALUES
+    ('S101', 'Aarav Mehta', 'skandhayashas2906@gmail.com', 'M01', '9876543210', 'CSE', 5, 'Nit#Stu2026'),
+    ('S102', 'Bhavana Rao', 'skandhayashas2906@gmail.com', 'M01', '9876543211', 'CSE', 5, 'Nit#Stu2026'),
+    ('S103', 'Chaitra Hegde', 'skandhayashas2906@gmail.com', 'M01', '9876543212', 'CSE', 5, 'Nit#Stu2026'),
+    ('S104', 'Daniel Dsouza', 'skandhayashas2906@gmail.com', 'M01', '9876543213', 'CSE', 5, 'Nit#Stu2026'),
+    ('S105', 'Esha Sharma', 'skandhayashas2906@gmail.com', 'M02', '9876543214', 'ISE', 3, 'Nit#Stu2026'),
+    ('S106', 'Farhan Khan', 'skandhayashas2906@gmail.com', 'M02', '9876543215', 'ISE', 3, 'Nit#Stu2026'),
+    ('S107', 'Gautam Shenoy', 'skandhayashas2906@gmail.com', 'M02', '9876543216', 'ISE', 3, 'Nit#Stu2026'),
+    ('S108', 'Harshita Pai', 'skandhayashas2906@gmail.com', 'M02', '9876543217', 'ISE', 3, 'Nit#Stu2026')
   `);
 
   // 4. Seed Issues (Routing RO IDs match the index positions of categories in ALL_CATEGORIES)
@@ -336,6 +369,6 @@ export const query = (text, params) => pool.query(text, params);
 export const getPool = () => pool;
 export const shutdown = () => pool.end();
 export const dropAllTables = async () => {
-  await pool.query(`DROP TABLE IF EXISTS system_logs, resources, group_sessions, meetings, issues, students, ros, mentors, mentor_session_records CASCADE`);
+  await pool.query(`DROP TABLE IF EXISTS email_logs, system_logs, resources, group_sessions, meetings, issues, students, ros, mentors, mentor_session_records CASCADE`);
   console.log('All database tables dropped.');
 };

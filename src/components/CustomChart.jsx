@@ -63,7 +63,7 @@ export const DonutChart = ({ data, title }) => {
     const dashOffset = (accumulatedPercent / 100) * 157.08; // Circumference of 50r circle is 2*pi*r, for r=25 it is 157.08
     accumulatedPercent += percent;
     
-    const colors = ['#8b5cf6', '#10b981', '#f59e0b', '#f43f5e', '#3b82f6'];
+    const colors = ['#253494', '#059669', '#d97706', '#e11d48', '#7c3aed'];
     return {
       ...item,
       color: colors[idx % colors.length],
@@ -81,7 +81,7 @@ export const DonutChart = ({ data, title }) => {
         <div style={{ position: 'relative', width: '140px', height: '140px' }}>
           <svg viewBox="0 0 64 64" width="100%" height="100%">
             {/* Gray background track */}
-            <circle cx="32" cy="32" r="25" fill="transparent" stroke="rgba(255,255,255,0.03)" strokeWidth="8" />
+            <circle cx="32" cy="32" r="25" fill="transparent" stroke="#e2e8f0" strokeWidth="8" />
             
             {/* Segments */}
             {segments.map((seg, idx) => (

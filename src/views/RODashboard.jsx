@@ -1,12 +1,12 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send } from 'lucide-react';
+import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw } from 'lucide-react';
 
 export const RODashboard = ({ roId }) => {
-  const { db, updateMeetingStatus, resolveIssue, escalateIssue } = useContext(DatabaseContext);
+  const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting } = useContext(DatabaseContext);
   
   // RO filters
-  const [statusFilter, setStatusFilter] = useState('All'); // 'All', 'Assigned to RO', 'Meeting Scheduled', 'Resolved', 'Escalated'
+  const [statusFilter, setStatusFilter] = useState('All'); // 'All', 'Assigned to RO', 'Meeting Scheduled', 'Re-opened by Student', 'Resolved', 'Escalated'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   
   // Search query
@@ -15,10 +15,18 @@ export const RODashboard = ({ roId }) => {
   // Modals visibility
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [showEscalateModal, setShowEscalateModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
 
   // Form states
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [escalationReason, setEscalationReason] = useState('');
+
+  // Schedule meeting form states
+  const [meetDate, setMeetDate] = useState('');
+  const [meetTime, setMeetTime] = useState('10:00');
+  const [meetMode, setMeetMode] = useState('Offline');
+  const [meetLocation, setMeetLocation] = useState('RO Office Desk 1 (Admin Block)');
+  const [meetNotes, setMeetNotes] = useState('Bring student ID card and relevant documents.');
 
   // Fetch current RO profile
   const ro = db.users.ros.find(r => r.id === roId) || db.users.ros[0];
@@ -40,18 +48,10 @@ export const RODashboard = ({ roId }) => {
 
   // Meetings assigned to this RO
   const myMeetings = db.meetings.filter(m => m.roId === ro.id);
-  const pendingMeetings = myMeetings.filter(m => m.status === 'Pending');
+  const scheduledMeetings = myMeetings.filter(m => m.status !== 'Cancelled');
 
   // Find if selected issue has a meeting scheduled
   const activeMeeting = selectedIssue ? db.meetings.find(m => m.issueId === selectedIssue.id) : null;
-
-  const handleConfirmMeeting = (meetId) => {
-    updateMeetingStatus(meetId, 'Confirmed');
-  };
-
-  const handleCancelMeeting = (meetId) => {
-    updateMeetingStatus(meetId, 'Cancelled');
-  };
 
   const handleResolveSubmit = (e) => {
     e.preventDefault();
@@ -71,6 +71,14 @@ export const RODashboard = ({ roId }) => {
     setShowEscalateModal(false);
   };
 
+  const handleScheduleSubmit = (e) => {
+    e.preventDefault();
+    if (!meetDate || !meetTime || !selectedIssueId) return;
+
+    scheduleRoMeeting(selectedIssueId, selectedIssue.studentId, ro.id, meetDate, meetTime, meetMode, meetLocation, meetNotes);
+    setShowScheduleModal(false);
+  };
+
   return (
     <div className="dashboard-layout">
       {/* Sidebar Panel */}
@@ -78,7 +86,7 @@ export const RODashboard = ({ roId }) => {
         {/* RO Header */}
         <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(var(--role-ro-rgb), 0.15)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'rgb(252, 211, 77)' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(217, 119, 6, 0.1)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'var(--accent-amber)' }}>
               <Inbox size={24} />
             </div>
             <div>
@@ -111,6 +119,11 @@ export const RODashboard = ({ roId }) => {
             <span>Scheduled Meetings ({roIssues.filter(i => i.status === 'Meeting Scheduled').length})</span>
           </button>
 
+          <button className={`panel-btn ${statusFilter === 'Re-opened by Student' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Re-opened by Student')}>
+            <RotateCcw size={16} />
+            <span>Re-opened Tickets ({roIssues.filter(i => i.status === 'Re-opened by Student').length})</span>
+          </button>
+
           <button className={`panel-btn ${statusFilter === 'Resolved' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Resolved')}>
             <CheckCircle2 size={16} />
             <span>Resolved Tickets ({roIssues.filter(i => i.status === 'Resolved').length})</span>
@@ -122,33 +135,21 @@ export const RODashboard = ({ roId }) => {
           </button>
         </div>
 
-        {/* Quick Meetings Panel */}
-        {pendingMeetings.length > 0 && (
-          <div className="glass-card" style={{ marginTop: 'auto', padding: '16px', background: 'rgba(245,158,11,0.02)', borderLeft: '3px solid var(--accent-amber)', fontSize: '0.8rem' }}>
-            <h4 style={{ fontWeight: '600', color: 'var(--accent-amber)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Calendar size={14} /> Pending Bookings ({pendingMeetings.length})
+        {/* Scheduled Meetings Overview Panel */}
+        {scheduledMeetings.length > 0 && (
+          <div className="glass-card" style={{ marginTop: 'auto', padding: '14px', background: 'var(--nitte-blue-light)', borderLeft: '3px solid var(--nitte-blue)', fontSize: '0.8rem' }}>
+            <h4 style={{ fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Calendar size={14} /> Assigned Meetings ({scheduledMeetings.length})
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {pendingMeetings.map(meet => (
-                <div key={meet.id} style={{ background: 'rgba(255,255,255,0.03)', padding: '8px', borderRadius: '4px' }}>
-                  <p><strong>{meet.studentName}</strong></p>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{meet.date} at {meet.time} ({meet.mode})</p>
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-                    <button 
-                      onClick={() => handleConfirmMeeting(meet.id)}
-                      className="btn btn-success" 
-                      style={{ padding: '2px 8px', fontSize: '0.7rem' }}
-                    >
-                      Confirm
-                    </button>
-                    <button 
-                      onClick={() => handleCancelMeeting(meet.id)}
-                      className="btn btn-secondary" 
-                      style={{ padding: '2px 8px', fontSize: '0.7rem' }}
-                    >
-                      Decline
-                    </button>
+              {scheduledMeetings.map(meet => (
+                <div key={meet.id} style={{ background: '#ffffff', padding: '8px 10px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <p style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{meet.studentName}</p>
+                    <span className="badge badge-resolved" style={{ fontSize: '0.65rem', padding: '1px 6px' }}>Confirmed</span>
                   </div>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '2px' }}>📅 {meet.date} at ⏰ {meet.time}</p>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', marginTop: '1px' }}>📍 {meet.location || 'RO Office Desk'}</p>
                 </div>
               ))}
             </div>
@@ -247,32 +248,19 @@ export const RODashboard = ({ roId }) => {
                 </p>
               </div>
 
-              {/* Active Meeting Slot approval */}
+              {/* Active Meeting Details */}
               {activeMeeting && (
-                <div style={{ border: '1px solid rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.02)', padding: '12px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                  <h4 style={{ fontWeight: '600', color: 'var(--accent-amber)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Calendar size={14} /> Scheduled Session Details
+                <div style={{ border: '1px solid var(--nitte-blue-soft)', background: 'var(--nitte-blue-light)', padding: '14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
+                  <h4 style={{ fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Calendar size={15} /> Assigned Meeting Session
                   </h4>
-                  <p><strong>Date:</strong> {activeMeeting.date} | <strong>Time:</strong> {activeMeeting.time}</p>
-                  <p><strong>Mode:</strong> {activeMeeting.mode} | <strong>Status:</strong> {activeMeeting.status}</p>
-                  
-                  {activeMeeting.status === 'Pending' && (
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                      <button 
-                        onClick={() => handleConfirmMeeting(activeMeeting.id)}
-                        className="btn btn-success" 
-                        style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                      >
-                        Approve Booking
-                      </button>
-                      <button 
-                        onClick={() => handleCancelMeeting(activeMeeting.id)}
-                        className="btn btn-secondary" 
-                        style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                      >
-                        Reschedule / Cancel
-                      </button>
-                    </div>
+                  <p><strong>Date & Time:</strong> 📅 {activeMeeting.date} at ⏰ {activeMeeting.time}</p>
+                  <p style={{ marginTop: '4px' }}><strong>Location / Venue:</strong> 📍 {activeMeeting.location || 'RO Office Desk'}</p>
+                  <p style={{ marginTop: '4px' }}><strong>Mode:</strong> {activeMeeting.mode || 'Offline'} | <strong>Status:</strong> {activeMeeting.status || 'Confirmed'}</p>
+                  {activeMeeting.notes && (
+                    <p style={{ marginTop: '6px', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
+                      <strong>RO Notes:</strong> "{activeMeeting.notes}"
+                    </p>
                   )}
                 </div>
               )}
@@ -291,20 +279,39 @@ export const RODashboard = ({ roId }) => {
                 </div>
               )}
 
-              {/* ACTION BUTTONS IF ACTIVE */}
+              {/* RE-OPENED BY STUDENT WARNING ALERT */}
+              {selectedIssue.status === 'Re-opened by Student' && (
+                <div style={{ borderLeft: '4px solid var(--accent-amber)', background: 'rgba(217,119,6,0.08)', padding: '12px 14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
+                  <h4 style={{ fontWeight: '800', color: 'var(--accent-amber)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <RotateCcw size={16} /> Re-opened by Student (Unsatisfied Resolution)
+                  </h4>
+                  <p style={{ color: 'var(--text-primary)' }}>
+                    The student indicated that the previous resolution was incomplete or that additional advice is required. Please review their log feedback below and click <strong>Schedule Meeting</strong> to set up a follow-up guidance session.
+                  </p>
+                </div>
+              )}
+
+              {/* ACTION BUTTONS FOR RO */}
               {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && (
-                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button 
+                    onClick={() => setShowScheduleModal(true)}
+                    className="btn btn-primary" 
+                    style={{ flex: 1, minWidth: '140px' }}
+                  >
+                    <Calendar size={15} /> Schedule Meeting
+                  </button>
                   <button 
                     onClick={() => setShowResolveModal(true)}
                     className="btn btn-success" 
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, minWidth: '140px' }}
                   >
                     Mark as Resolved
                   </button>
                   <button 
                     onClick={() => setShowEscalateModal(true)}
                     className="btn btn-danger" 
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, minWidth: '140px' }}
                   >
                     Escalate to Admin
                   </button>
@@ -348,17 +355,14 @@ export const RODashboard = ({ roId }) => {
             </div>
             <form onSubmit={handleResolveSubmit}>
               <div className="modal-body">
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Please detail the actions taken to resolve <strong>{selectedIssue?.studentName}'s</strong> issue. This will log in the student history and invite them to rate the support quality.
-                </p>
                 <div className="form-group">
-                  <label className="form-label">Resolution Details / Actions Taken</label>
+                  <label className="form-label">Resolution Summary / Actions Taken</label>
                   <textarea 
                     className="form-textarea"
                     required
                     value={resolutionNotes}
                     onChange={(e) => setResolutionNotes(e.target.value)}
-                    placeholder="e.g. Contacted the finance office, processed the caution deposit refund which will reflect in 3 working days."
+                    placeholder="Detail the steps taken to resolve this student issue (e.g. Updated internal marks sheet, issued hall ticket, verified fee receipt)."
                   />
                 </div>
               </div>
@@ -398,6 +402,87 @@ export const RODashboard = ({ roId }) => {
               <div className="modal-footer">
                 <button type="button" onClick={() => setShowEscalateModal(false)} className="btn btn-secondary">Cancel</button>
                 <button type="submit" className="btn btn-danger">Escalate Ticket</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* SCHEDULE MEETING MODAL FOR RO */}
+      {showScheduleModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3 style={{ fontWeight: '700', color: 'var(--nitte-blue)' }}>Schedule Meeting with Student</h3>
+              <button onClick={() => setShowScheduleModal(false)} className="btn-icon-only">✕</button>
+            </div>
+            <form onSubmit={handleScheduleSubmit}>
+              <div className="modal-body">
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Assign a specific date, time, and location to meet with <strong>{selectedIssue?.studentName}</strong> to discuss ticket <code>{selectedIssue?.id}</code>.
+                </p>
+
+                <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '0' }}>
+                  <div className="form-group">
+                    <label className="form-label">Meeting Date</label>
+                    <input 
+                      type="date" 
+                      required 
+                      className="form-control"
+                      value={meetDate}
+                      onChange={(e) => setMeetDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Time Slot</label>
+                    <input 
+                      type="time" 
+                      required 
+                      className="form-control"
+                      value={meetTime}
+                      onChange={(e) => setMeetTime(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Meeting Mode</label>
+                  <select 
+                    className="form-select"
+                    value={meetMode}
+                    onChange={(e) => setMeetMode(e.target.value)}
+                  >
+                    <option value="Offline">In-Person (Offline on Campus)</option>
+                    <option value="Online">Online Video Meeting (Google Meet / Zoom)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Meeting Location / Venue</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control"
+                    placeholder="e.g. RO Office Desk 3, Admin Building 1st Floor"
+                    value={meetLocation}
+                    onChange={(e) => setMeetLocation(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">RO Instructions / Documents Required</label>
+                  <textarea 
+                    className="form-textarea"
+                    style={{ minHeight: '70px' }}
+                    placeholder="e.g. Bring original fee receipts, hall ticket copy, or USN ID card."
+                    value={meetNotes}
+                    onChange={(e) => setMeetNotes(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" onClick={() => setShowScheduleModal(false)} className="btn btn-secondary">Cancel</button>
+                <button type="submit" className="btn btn-primary">Confirm & Assign Meeting</button>
               </div>
             </form>
           </div>
