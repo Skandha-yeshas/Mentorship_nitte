@@ -7,6 +7,15 @@ import { startImapListener, getImapStatus } from './gmailImapService.js';
 
 dotenv.config();
 
+// Prevent network socket resets (like ECONNRESET) from crashing server process
+process.on('uncaughtException', (err) => {
+  console.warn('[Server] Uncaught exception caught safely:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Server] Unhandled rejection caught safely:', reason?.message || reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

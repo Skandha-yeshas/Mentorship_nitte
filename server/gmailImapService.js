@@ -48,53 +48,62 @@ export const pollGmailInbox = async () => {
 
   try {
     const connection = await imapSimple.connect(config);
-    await connection.openBox('INBOX');
+    
+    // Attach error listener to prevent uncaught ECONNRESET process crashes
+    connection.on('error', (err) => {
+      console.warn(`[Gmail IMAP] Socket/Connection notice caught safely: ${err.message}`);
+    });
 
-    const searchCriteria = ['UNSEEN'];
-    const fetchOptions = {
-      bodies: ['HEADER', 'TEXT', ''],
-      markSeen: true
-    };
+    try {
+      await connection.openBox('INBOX');
 
-    const messages = await connection.search(searchCriteria, fetchOptions);
-    imapStatus.active = true;
-    imapStatus.lastPoll = new Date().toISOString();
-    imapStatus.lastError = null;
+      const searchCriteria = ['UNSEEN'];
+      const fetchOptions = {
+        bodies: ['HEADER', 'TEXT', ''],
+        markSeen: true
+      };
 
-    for (const item of messages) {
-      const allParts = item.parts.find(part => part.which === '');
-      const id = item.attributes.uid;
-      const idHeader = `ImapMessageID: ${id}`;
+      const messages = await connection.search(searchCriteria, fetchOptions);
+      imapStatus.active = true;
+      imapStatus.lastPoll = new Date().toISOString();
+      imapStatus.lastError = null;
 
-      if (allParts && allParts.body) {
-        const parsed = await simpleParser(allParts.body);
-        const subject = parsed.subject || '';
-        const senderEmail = parsed.from?.value?.[0]?.address || 'unknown@gmail.com';
-        const senderName = parsed.from?.value?.[0]?.name || senderEmail.split('@')[0];
-        const bodyText = parsed.text || parsed.html || '';
+      for (const item of messages) {
+        const allParts = item.parts.find(part => part.which === '');
+        const id = item.attributes.uid;
 
-        // Extract Issue ID (matches ISS-xxx, TICK-xxx, ISS-101, etc.)
-        const issueMatch = subject.match(/(ISS-\d+|TICK-\d+)/i) || bodyText.match(/(ISS-\d+|TICK-\d+)/i);
+        if (allParts && allParts.body) {
+          const parsed = await simpleParser(allParts.body);
+          const subject = parsed.subject || '';
+          const senderEmail = parsed.from?.value?.[0]?.address || 'unknown@gmail.com';
+          const senderName = parsed.from?.value?.[0]?.name || senderEmail.split('@')[0];
+          const bodyText = parsed.text || parsed.html || '';
 
-        if (issueMatch) {
-          const issueId = issueMatch[0].toUpperCase();
-          console.log(`[Gmail IMAP] Real unread email received from ${senderEmail} for Ticket ${issueId}`);
-          
-          await processInboundGmailReply({
-            senderEmail,
-            senderName,
-            issueId,
-            replyText: bodyText.trim().substring(0, 500)
-          });
+          // Extract Issue ID (matches ISS-xxx, TICK-xxx, ISS-101, etc.)
+          const issueMatch = subject.match(/(ISS-\d+|TICK-\d+)/i) || bodyText.match(/(ISS-\d+|TICK-\d+)/i);
 
-          imapStatus.processedCount += 1;
-        } else {
-          console.log(`[Gmail IMAP] Unread email received from ${senderEmail} but no Issue ID found in subject: "${subject}"`);
+          if (issueMatch) {
+            const issueId = issueMatch[0].toUpperCase();
+            console.log(`[Gmail IMAP] Real unread email received from ${senderEmail} for Ticket ${issueId}`);
+            
+            await processInboundGmailReply({
+              senderEmail,
+              senderName,
+              issueId,
+              replyText: bodyText.trim().substring(0, 500)
+            });
+
+            imapStatus.processedCount += 1;
+          }
         }
       }
+    } finally {
+      try {
+        connection.end();
+      } catch (closeErr) {
+        // Silently ignore connection end errors
+      }
     }
-
-    connection.end();
   } catch (err) {
     console.warn(`[Gmail IMAP Listener] Polling warning/notice (${err.message}). Real IMAP ready when credentials supplied.`);
     imapStatus.active = false;
