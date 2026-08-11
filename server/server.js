@@ -259,7 +259,9 @@ app.post('/api/issues', async (req, res) => {
     // 1. Dispatch email to RO Officer (skandhayashu2906@gmail.com)
     await sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
-      subject: `[NEW ISSUE ALERT - ${calculatedRoId}] ${category} (${issueId})`,
+      replyTo: 'skandhayashas2906@gmail.com',
+      fromName: `NITTE Portal (${studentName})`,
+      subject: `[RO ACTION REQUIRED - ${calculatedRoId}] New Issue: ${category} (${issueId})`,
       html: `<h3>New Student Issue Registered for RO Office</h3>
              <p>Hello RO Officer (<strong>${calculatedRoId}</strong>),</p>
              <p>Student <strong>${studentName}</strong> (from skandhayashas2906@gmail.com) has submitted a new issue:</p>
@@ -281,6 +283,8 @@ app.post('/api/issues', async (req, res) => {
     // 2. Dispatch confirmation to Student (skandhayashas2906@gmail.com)
     await sendGmailNotification({
       to: 'skandhayashas2906@gmail.com',
+      replyTo: 'skandhayashu2906@gmail.com',
+      fromName: 'NITTE Mentorship Support',
       subject: `[TICKET CONFIRMATION - ${issueId}] Issue Submitted: ${category}`,
       html: `<h3>NITTE Student Support Ticket Registered</h3>
              <p>Dear <strong>${studentName}</strong>,</p>
@@ -341,10 +345,12 @@ app.post('/api/meetings', async (req, res) => {
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashas2906@gmail.com',
-      subject: `[${issueId}] Meeting Scheduled on ${date} at ${time}`,
+      replyTo: 'skandhayashu2906@gmail.com',
+      fromName: `RO Officer (${roId})`,
+      subject: `[MEETING CONFIRMATION - ${issueId}] Scheduled on ${date} at ${time}`,
       html: `<h3>Meeting Confirmation Notice</h3>
              <p>Dear <strong>${studentName}</strong>,</p>
-             <p>Relationship Officer <strong>${roId}</strong> has scheduled a meeting regarding Ticket <strong>${issueId}</strong>.</p>
+             <p>Relationship Officer <strong>${roId}</strong> (skandhayashu2906@gmail.com) has scheduled a meeting regarding Ticket <strong>${issueId}</strong>.</p>
              <ul>
                <li><strong>Date:</strong> ${date}</li>
                <li><strong>Time:</strong> ${time}</li>
@@ -353,7 +359,7 @@ app.post('/api/meetings', async (req, res) => {
                <li><strong>Notes:</strong> ${notes || 'None'}</li>
              </ul>
              <hr/>
-             <p><em>Dispatched automatically via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
+             <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
       issueId,
       eventType: 'MEETING_SCHEDULED',
       recipientName: studentName
@@ -411,13 +417,15 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashas2906@gmail.com',
-      subject: `[${issueId}] Ticket Marked as RESOLVED`,
+      replyTo: 'skandhayashu2906@gmail.com',
+      fromName: `RO Officer (${roId})`,
+      subject: `[TICKET RESOLVED - ${issueId}] Marked as Resolved`,
       html: `<h3>Ticket Resolution Notice</h3>
              <p>Your ticket <strong>${issueId}</strong> has been marked as <strong>Resolved</strong> by ${userRole} (${roId}).</p>
              <p><strong>Resolution Notes:</strong> ${resolutionNotes}</p>
              <p>Please log in to your portal to review, provide feedback rating, or request re-opening if needed.</p>
              <hr/>
-             <p><em>Dispatched automatically via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
+             <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
       issueId,
       eventType: 'ISSUE_RESOLVED'
     });
@@ -462,12 +470,14 @@ app.put('/api/issues/:id/reopen', async (req, res) => {
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
-      subject: `[${issueId}] Ticket RE-OPENED by Student`,
-      html: `<h3>Alert: Ticket Re-opened</h3>
-             <p>Student <strong>${studentId}</strong> has re-opened ticket <strong>${issueId}</strong> routed to RO <strong>${roId}</strong>.</p>
+      replyTo: 'skandhayashas2906@gmail.com',
+      fromName: `Student Portal (${studentId})`,
+      subject: `[RO URGENT - TICKET REOPENED] Ticket ${issueId} Re-opened by Student`,
+      html: `<h3>Alert: Ticket Re-opened by Student</h3>
+             <p>Student <strong>${studentId}</strong> (skandhayashas2906@gmail.com) has re-opened ticket <strong>${issueId}</strong> routed to RO <strong>${roId}</strong>.</p>
              <p><strong>Reason:</strong> ${reason || 'Unsatisfied resolution'}</p>
              <hr/>
-             <p><em>Dispatched automatically via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
+             <p><em>Dispatched to RO Office email: skandhayashu2906@gmail.com</em></p>`,
       issueId,
       eventType: 'ISSUE_REOPENED'
     });
@@ -548,13 +558,15 @@ app.put('/api/issues/:id/feedback', async (req, res) => {
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
-      subject: `[${issueId}] Student Feedback Received (${rating} Stars)`,
+      replyTo: 'skandhayashas2906@gmail.com',
+      fromName: 'Student Feedback System',
+      subject: `[RO FEEDBACK ALERT] Feedback Received for Ticket ${issueId} (${rating} Stars)`,
       html: `<h3>Student Resolution Feedback</h3>
-             <p>Feedback for ticket <strong>${issueId}</strong> has been logged.</p>
+             <p>Feedback for ticket <strong>${issueId}</strong> has been logged by student.</p>
              <p><strong>Rating:</strong> ${rating} / 5 Stars</p>
              <p><strong>Comments:</strong> "${comments}"</p>
              <hr/>
-             <p><em>Dispatched automatically via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
+             <p><em>Dispatched to RO Office email: skandhayashu2906@gmail.com</em></p>`,
       issueId,
       eventType: 'FEEDBACK_SUBMITTED'
     });

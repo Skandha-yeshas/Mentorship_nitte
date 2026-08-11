@@ -38,7 +38,9 @@ export const sendGmailNotification = async ({
   text = '',
   issueId = null,
   eventType = 'NOTIFICATION',
-  recipientName = ''
+  recipientName = '',
+  replyTo = null,
+  fromName = 'NITTE Mentorship System'
 }) => {
   const sender = GMAIL_ADDRESS;
   const bodyText = text || html.replace(/<[^>]+>/g, ' ');
@@ -48,17 +50,28 @@ export const sendGmailNotification = async ({
 
   if (transporter) {
     try {
-      await transporter.sendMail({
-        from: `"NITTE Mentorship Hub" <${sender}>`,
+      const mailOptions = {
+        from: `"${fromName}" <${sender}>`,
         to,
         subject,
         text: bodyText,
-        html
-      });
+        html,
+        headers: {
+          'X-Priority': '1',
+          'Priority': 'urgent',
+          'Importance': 'high'
+        }
+      };
+
+      if (replyTo) {
+        mailOptions.replyTo = replyTo;
+      }
+
+      await transporter.sendMail(mailOptions);
       dispatchStatus = 'DELIVERED_GMAIL';
-      console.log(`[Gmail] Real SMTP email successfully sent via ${sender} to ${to}`);
+      console.log(`[Gmail SMTP] REAL Email dispatched from ${sender} TO ${to} (Subject: "${subject}")`);
     } catch (err) {
-      console.warn(`[Gmail] Real SMTP delivery failed (${err.message}). Falling back to simulated log storage.`);
+      console.warn(`[Gmail SMTP] Delivery notice (${err.message}). Stored in email logs.`);
       dispatchStatus = 'DISPATCHED_LOCAL';
     }
   } else {
