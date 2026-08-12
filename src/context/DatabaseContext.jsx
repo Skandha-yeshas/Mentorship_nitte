@@ -602,71 +602,75 @@ export const DatabaseProvider = ({ children }) => {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const generateUserPassword = async (id, role) => {
+  const registerStudent = async ({ name, email, usn, password, branch, sem }) => {
     try {
-      const res = await fetch('/api/auth/generate-password', {
+      const res = await fetch('/api/auth/register-student', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, role })
+        body: JSON.stringify({ name, email, usn, password, branch, sem })
       });
       if (res.ok) {
         const data = await res.json();
         await fetchDbState();
-        return data;
+        return { success: true, student: data.student };
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Registration failed');
       }
     } catch (err) {
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789#@!$%';
-      let pwd = 'Nit#';
-      for (let i = 0; i < 6; i++) {
-        pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+      if (err.message && !err.message.includes('fetch')) {
+        throw err;
       }
-      const targetEmail = role === 'Student' ? 'skandhayashas2906@gmail.com' : 'skandhayashu2906@gmail.com';
-      
-      const newLog = {
-        id: Date.now(),
-        direction: 'OUTBOUND',
-        sender: 'skandhayashu2906@gmail.com',
-        recipient: targetEmail,
-        subject: `[Security Alert] Computer-Generated Password for ${role} Account (${id})`,
-        body: `Computer generated password for ${id}: ${pwd}`,
-        eventType: 'PASSWORD_GENERATED',
-        issueId: null,
-        status: 'DELIVERED_GMAIL',
-        createdAt: new Date().toISOString()
+      const newStudent = {
+        id: (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`,
+        name: name.trim(),
+        email: email.trim(),
+        branch: branch || 'CSE',
+        sem: parseInt(sem) || 4,
+        mentorId: 'M101'
       };
-
       setDb(prev => ({
         ...prev,
-        gmailLogs: [newLog, ...(prev.gmailLogs || [])]
+        users: {
+          ...prev.users,
+          students: [...(prev.users?.students || []), newStudent]
+        }
       }));
-
-      return { success: true, id, role, password: pwd, email: targetEmail };
+      return { success: true, student: newStudent };
     }
   };
 
-  const loginUser = async (id, password, role) => {
+  const loginUser = async (identifier, password, role) => {
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, password, role })
+        body: JSON.stringify({ id: identifier, email: identifier, password, role })
       });
       if (res.ok) {
         const data = await res.json();
         setAuthenticatedUser(data.user);
-        setCurrentUser(role);
+        setCurrentUser(role || 'Student');
         localStorage.setItem('auth_user_session', JSON.stringify(data.user));
         return { success: true, user: data.user };
       } else {
         const errData = await res.json();
-        return { success: false, error: errData.error || 'Authentication failed' };
+        throw new Error(errData.error || 'Authentication failed');
       }
     } catch (err) {
-      const user = { id, name: `${role} (${id})`, email: role === 'Student' ? 'skandhayashas2906@gmail.com' : 'skandhayashu2906@gmail.com', role };
-      setAuthenticatedUser(user);
-      setCurrentUser(role);
-      localStorage.setItem('auth_user_session', JSON.stringify(user));
-      return { success: true, user };
+      if (err.message && !err.message.includes('fetch')) {
+        throw err;
+      }
+      const dummyUser = {
+        id: identifier || 'S101',
+        name: 'Logged-in Student',
+        email: identifier.includes('@') ? identifier : 'skandhayashas2906@gmail.com',
+        role: role || 'Student'
+      };
+      setAuthenticatedUser(dummyUser);
+      setCurrentUser(role || 'Student');
+      localStorage.setItem('auth_user_session', JSON.stringify(dummyUser));
+      return { success: true, user: dummyUser };
     }
   };
 
@@ -686,7 +690,7 @@ export const DatabaseProvider = ({ children }) => {
       authenticatedUser,
       loginUser,
       logoutUser,
-      generateUserPassword,
+      registerStudent,
       submitIssue,
       scheduleRoMeeting,
       submitFeedback,

@@ -94,7 +94,7 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
             title="Log in or Generate Computer Password"
           >
             <Key size={14} />
-            <span>{authenticatedUser ? `Auth: ${authenticatedUser.id}` : 'Login / Generate Password'}</span>
+            <span>{authenticatedUser ? `Auth: ${authenticatedUser.id}` : 'Student Sign-Up / Login'}</span>
           </button>
 
           {activeSubProfiles.length > 0 && (

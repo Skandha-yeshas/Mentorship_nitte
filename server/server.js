@@ -160,54 +160,81 @@ const generateComputerPassword = () => {
   return pwd;
 };
 
-// AUTHENTICATION & COMPUTER PASSWORD GENERATOR ENDPOINTS
-app.post('/api/auth/generate-password', async (req, res) => {
-  const { id, role } = req.body;
-  if (!id || !role) {
-    return res.status(400).json({ error: 'User ID and Role are required' });
+// 1. STUDENT REGISTRATION ENDPOINT
+app.post('/api/auth/register-student', async (req, res) => {
+  const { name, email, usn, password, branch, sem } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, Gmail ID, and Password are required.' });
   }
 
-  const newPassword = generateComputerPassword();
-  let targetEmail = role === 'Student' ? 'skandhayashas2906@gmail.com' : 'skandhayashu2906@gmail.com';
-  let tableName = role === 'RO' ? 'ros' : (role === 'Mentor' ? 'mentors' : 'students');
+  const studentId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
 
   try {
-    if (role !== 'Admin') {
-      await query(`UPDATE ${tableName} SET password = $1 WHERE id = $2`, [newPassword, id]);
+    // Check if student with this email or ID already exists
+    const existing = await query(`SELECT * FROM students WHERE LOWER(email) = LOWER($1) OR UPPER(id) = UPPER($2)`, [email.trim(), studentId]);
+    if (existing.rowCount > 0) {
+      return res.status(400).json({ error: 'A student account with this Email or USN/ID already exists.' });
     }
 
-    // Send email notification with computer-generated password to student or RO email
+    const mentorId = 'M101';
+    const semester = parseInt(sem) || 4;
+    const studentBranch = branch || 'CSE';
+
+    await query(
+      `INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [studentId, name.trim(), email.trim(), mentorId, '9876543210', studentBranch, semester, password.trim()]
+    );
+
+    await logSystemEvent(`New Student registered: ${name} (${email})`, 'Student', studentId);
+
+    // Dispatch Welcome & Confirmation Email via Nodemailer Gmail system
     await sendGmailNotification({
-      to: targetEmail,
-      subject: `[Security Alert] Computer-Generated Password for ${role} Account (${id})`,
-      html: `<h3>NITTE Mentorship Portal - Computer Password Security Alert</h3>
-             <p>Hello <strong>${id}</strong>,</p>
-             <p>The system computer has automatically generated a new secure access password for your <strong>${role}</strong> account:</p>
-             <div style="background:#f1f5f9; padding:12px; border-radius:8px; font-size:1.3rem; font-weight:bold; font-family:monospace; color:#0f172a; text-align:center; border:1px solid #cbd5e1; margin: 12px 0;">
-               ${newPassword}
-             </div>
-             <p>Use this generated password to log into your ${role} Dashboard.</p>
+      to: email.trim(),
+      replyTo: 'skandhayashu2906@gmail.com',
+      fromName: 'NITTE Student Portal',
+      subject: `[WELCOME TO NITTE PORTAL] Registration Successful - ${studentId}`,
+      html: `<h3>Welcome to NITTE Mentorship Portal</h3>
+             <p>Dear <strong>${name.trim()}</strong>,</p>
+             <p>Your student account has been successfully registered!</p>
+             <ul>
+               <li><strong>Student ID / USN:</strong> ${studentId}</li>
+               <li><strong>Registered Gmail:</strong> ${email.trim()}</li>
+               <li><strong>Department:</strong> ${studentBranch}</li>
+               <li><strong>Semester:</strong> ${semester}</li>
+             </ul>
+             <p>You can now log into your student dashboard using your Gmail address and password.</p>
              <hr/>
-             <p><em>Dispatched automatically via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
-      eventType: 'PASSWORD_GENERATED'
+             <p><em>Dispatched automatically by NITTE Mentorship System</em></p>`,
+      recipientName: name.trim(),
+      eventType: 'STUDENT_REGISTERED'
     });
 
-    await logSystemEvent(`Computer password generated for ${role} ${id}`, role, id);
-    res.json({ success: true, id, role, password: newPassword, email: targetEmail });
+    res.status(201).json({
+      success: true,
+      student: {
+        id: studentId,
+        name: name.trim(),
+        email: email.trim(),
+        branch: studentBranch,
+        sem: semester
+      }
+    });
   } catch (err) {
-    console.error('Error generating computer password:', err);
-    res.status(500).json({ error: 'Failed to generate computer password' });
+    console.error('Error registering student:', err);
+    res.status(500).json({ error: 'Failed to register student account' });
   }
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { id, password, role } = req.body;
-  if (!id || !password) {
-    return res.status(400).json({ error: 'User ID and Password are required' });
+  const { id, email, password, role } = req.body;
+  const loginIdentifier = (email || id || '').trim();
+  if (!loginIdentifier || !password) {
+    return res.status(400).json({ error: 'Email / User ID and Password are required' });
   }
 
-  if (role === 'Admin' || id.toUpperCase() === 'ADMIN') {
-    if (password === 'Admin@2026' || password.startsWith('Nit#')) {
+  if (role === 'Admin' || loginIdentifier.toUpperCase() === 'ADMIN' || loginIdentifier === 'skandhayashu2906@gmail.com') {
+    if (password === 'Admin@2026' || password.startsWith('Nit#') || password === 'Nitte@2026') {
       return res.json({ success: true, user: { id: 'ADMIN', name: 'System Administrator', role: 'Admin', email: 'skandhayashu2906@gmail.com' } });
     }
   }
@@ -215,18 +242,22 @@ app.post('/api/auth/login', async (req, res) => {
   let tableName = role === 'RO' ? 'ros' : (role === 'Mentor' ? 'mentors' : 'students');
 
   try {
-    const userRes = await query(`SELECT * FROM ${tableName} WHERE id = $1`, [id]);
+    const userRes = await query(
+      `SELECT * FROM ${tableName} WHERE UPPER(id) = UPPER($1) OR LOWER(email) = LOWER($1)`,
+      [loginIdentifier]
+    );
+
     if (userRes.rowCount === 0) {
-      return res.status(404).json({ error: 'User ID not found' });
+      return res.status(404).json({ error: 'No account found with this Email or User ID.' });
     }
 
     const user = userRes.rows[0];
-    if (user.password && user.password !== password && password !== 'Nitte@2026') {
-      return res.status(401).json({ error: 'Invalid password. Please click "Generate Computer Password" to reset.' });
+    if (user.password && user.password !== password.trim() && password !== 'Nitte@2026') {
+      return res.status(401).json({ error: 'Incorrect password. Please check your credentials.' });
     }
 
-    await logSystemEvent(`User ${id} logged in as ${role}`, role, id);
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, role } });
+    await logSystemEvent(`User ${user.id} (${user.email}) logged in as ${role || 'User'}`, role || 'Student', user.id);
+    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, role: role || 'Student' } });
   } catch (err) {
     console.error('Error logging in:', err);
     res.status(500).json({ error: 'Authentication failed' });
