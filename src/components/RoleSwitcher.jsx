@@ -4,7 +4,7 @@ import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers, Mail, K
 import { NitteLogo } from './NitteLogo';
 
 export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpenLoginModal }) => {
-  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser } = useContext(DatabaseContext);
+  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
 
   const roles = [
     { name: 'Student', icon: GraduationCap, label: 'Student (Mentee)' },
@@ -70,6 +70,29 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
           <div className="ribbon-item" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px' }}>
             <span>Active Issues: <strong>{activeIssues}</strong></span>
           </div>
+
+          {/* Demo Mode 7-Day Limit Toggle Button */}
+          <button
+            onClick={toggleDemoLimitBypass}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: isDemoLimitBypassed ? '#10b981' : '#f59e0b',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '20px',
+              padding: '4px 10px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginLeft: '8px',
+              boxShadow: isDemoLimitBypassed ? '0 2px 4px rgba(16, 185, 129, 0.3)' : '0 2px 4px rgba(245, 158, 11, 0.3)'
+            }}
+            title="Toggle 7-Day Limit (Demo Mode allows unlimited submissions for testing)"
+          >
+            <span>{isDemoLimitBypassed ? '🔓 Demo Mode: 7-Day Limit OFF' : '🔒 7-Day Limit: ON (2/Wk)'}</span>
+          </button>
         </div>
 
         {/* Profile Details Select & Role Switcher */}

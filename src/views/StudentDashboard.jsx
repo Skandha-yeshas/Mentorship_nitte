@@ -3,7 +3,7 @@ import { DatabaseContext, ALL_CATEGORIES } from '../context/DatabaseContext';
 import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw } from 'lucide-react';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue } = useContext(DatabaseContext);
+  const { db, submitIssue, submitFeedback, reopenIssue, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
   
   // Tabs within Student Dashboard
   const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
@@ -38,18 +38,24 @@ export const StudentDashboard = ({ studentId }) => {
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
   const mySessions = db.groupSessions.filter(s => s.mentorId === student.mentorId);
 
-  // 7-Day Weekly Issue Limit Calculation (1 Issue per 7 days)
+  // 7-Day Weekly Issue Quota Calculation (Allows up to 2 Issues per 7 days)
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  const recentStudentIssues = myIssues
+  const recentStudentTimestamps = myIssues
     .map(i => new Date(i.createdAt || Date.now()).getTime())
-    .filter(t => !isNaN(t))
-    .sort((a, b) => b - a);
+    .filter(t => !isNaN(t) && (Date.now() - t) < SEVEN_DAYS_MS)
+    .sort((a, b) => a - b); // oldest recent timestamp first
 
-  const lastSubmittedTime = recentStudentIssues.length > 0 ? recentStudentIssues[0] : null;
-  const timeSinceLastIssue = lastSubmittedTime ? Date.now() - lastSubmittedTime : SEVEN_DAYS_MS + 1000;
-  const isWeeklyLimitReached = lastSubmittedTime && timeSinceLastIssue < SEVEN_DAYS_MS;
+  const recentCount = recentStudentTimestamps.length;
+  const maxWeeklyQuota = 2;
+  const isQuotaExceeded = recentCount >= maxWeeklyQuota;
+  
+  // Active lock state is true ONLY IF 2 issues used AND demo bypass is OFF
+  const isFormLocked = isQuotaExceeded && !isDemoLimitBypassed;
 
-  const cooldownMsRemaining = isWeeklyLimitReached ? (SEVEN_DAYS_MS - timeSinceLastIssue) : 0;
+  const oldestRecentTime = recentStudentTimestamps.length > 0 ? recentStudentTimestamps[0] : null;
+  const timeSinceOldest = oldestRecentTime ? Date.now() - oldestRecentTime : SEVEN_DAYS_MS + 1000;
+  const cooldownMsRemaining = isQuotaExceeded ? Math.max(0, SEVEN_DAYS_MS - timeSinceOldest) : 0;
+  
   const cooldownDays = Math.floor(cooldownMsRemaining / (1000 * 60 * 60 * 24));
   const cooldownHours = Math.floor((cooldownMsRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
   const cooldownMinutes = Math.floor((cooldownMsRemaining % (1000 * 60 * 60)) / (1000 * 60));
@@ -61,8 +67,8 @@ export const StudentDashboard = ({ studentId }) => {
     if (!description.trim()) return;
     setErrorMessage('');
 
-    if (isWeeklyLimitReached) {
-      setErrorMessage(`Weekly Limit Reached: Students can submit only 1 issue per 7 days. Your next submission opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}.`);
+    if (isFormLocked) {
+      setErrorMessage(`Weekly Quota Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next submission opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}. (Turn on Demo Mode to bypass)`);
       return;
     }
 
@@ -164,17 +170,45 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
-        {/* 7-DAY WEEKLY LIMIT BANNER */}
-        {isWeeklyLimitReached && (
+        {/* DEMO MODE ACTIVE BANNER */}
+        {isDemoLimitBypassed && (
+          <div className="glass-card" style={{ borderLeft: '4px solid #10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifySelf: 'space-between', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#047857' }}>
+                <span style={{ fontSize: '1.25rem' }}>🔓</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                  <strong>Demo Mode Active:</strong> 7-Day Rate Limit is Bypassed. Unlimited issue submissions allowed for testing.
+                </span>
+              </div>
+              <button
+                onClick={toggleDemoLimitBypass}
+                style={{ backgroundColor: '#ffffff', color: '#047857', border: '1px solid #a7f3d0', padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Turn Limit ON
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 7-DAY WEEKLY LIMIT BANNER (2 ISSUES PER WEEK QUOTA) */}
+        {!isDemoLimitBypassed && isQuotaExceeded && (
           <div className="glass-card" style={{ borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.12)', padding: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ fontSize: '1.5rem' }}>⏳</div>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#b45309' }}>
-                  Weekly Issue Limit Reached (1 Issue per 7 Days)
-                </h4>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#b45309' }}>
+                    Weekly Quota Reached (2 / 2 Issues Used)
+                  </h4>
+                  <button
+                    onClick={toggleDemoLimitBypass}
+                    style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    ⚡ Enable Demo Mode (Bypass Limit)
+                  </button>
+                </div>
                 <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#92400e' }}>
-                  You have already submitted an issue within the last 7 days. Your next issue submission opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
+                  You have used your 2 issue submissions for this 7-day period. Your next submission opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
                 </p>
               </div>
             </div>
@@ -196,14 +230,19 @@ export const StudentDashboard = ({ studentId }) => {
           <div className="glass-card">
             <h2 className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>Raise an Issue / Support Request</span>
-              {isWeeklyLimitReached && (
-                <span style={{ fontSize: '0.8rem', color: '#b45309', backgroundColor: '#fef3c7', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
-                  🔒 Locked (1 Issue / 7 Days)
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.8rem', color: isFormLocked ? '#b45309' : '#047857', backgroundColor: isFormLocked ? '#fef3c7' : '#d1fae5', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
+                  {isFormLocked ? '🔒 Quota Reached (2/2 Used)' : `Quota: ${recentCount} / 2 Used`}
                 </span>
-              )}
+                {isDemoLimitBypassed && (
+                  <span style={{ fontSize: '0.75rem', color: '#047857', backgroundColor: '#ecfdf5', padding: '4px 8px', borderRadius: '12px', fontWeight: 700, border: '1px solid #a7f3d0' }}>
+                    ⚡ Demo Mode ON
+                  </span>
+                )}
+              </div>
             </h2>
             <form onSubmit={handleSubmitIssue}>
-              <fieldset disabled={isWeeklyLimitReached} style={{ border: 'none', padding: 0, margin: 0 }}>
+              <fieldset disabled={isFormLocked} style={{ border: 'none', padding: 0, margin: 0 }}>
                 <div className="form-group">
                   <label className="form-label">Issue Category (from 50 support domains)</label>
                   <select 
@@ -249,7 +288,7 @@ export const StudentDashboard = ({ studentId }) => {
                     className="form-textarea"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder={isWeeklyLimitReached ? "Submission locked. You can submit 1 issue every 7 days." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
+                    placeholder={isFormLocked ? "Weekly quota reached (2 / 2 used). Turn on Demo Mode in header to bypass." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
                     required
                   />
                 </div>
@@ -257,13 +296,13 @@ export const StudentDashboard = ({ studentId }) => {
                 <button 
                   type="submit" 
                   className="btn btn-primary"
-                  disabled={isWeeklyLimitReached}
-                  style={{ opacity: isWeeklyLimitReached ? 0.6 : 1, cursor: isWeeklyLimitReached ? 'not-allowed' : 'pointer' }}
+                  disabled={isFormLocked}
+                  style={{ opacity: isFormLocked ? 0.6 : 1, cursor: isFormLocked ? 'not-allowed' : 'pointer' }}
                 >
-                  {isWeeklyLimitReached ? (
-                    <>🔒 Weekly Limit Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
+                  {isFormLocked ? (
+                    <>🔒 Weekly Quota Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
                   ) : (
-                    <><Send size={16} /> Submit Support Request</>
+                    <><Send size={16} /> Submit Support Request ({2 - recentCount} remaining this week)</>
                   )}
                 </button>
               </fieldset>

@@ -264,32 +264,42 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1b. GET STUDENT ISSUE LIMIT STATUS
+// 1b. GET STUDENT ISSUE LIMIT STATUS (2 Issues Per 7 Days Quota)
 app.get('/api/students/:id/issue-limit', async (req, res) => {
   const studentId = req.params.id;
   try {
     const checkRes = await query(
       `SELECT created_at FROM issues 
        WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-       ORDER BY created_at DESC LIMIT 1`,
+       ORDER BY created_at ASC`,
       [studentId]
     );
 
-    if (checkRes.rowCount > 0) {
-      const lastCreated = new Date(checkRes.rows[0].created_at);
-      const nextAllowed = new Date(lastCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const recentCount = checkRes.rowCount;
+    const maxQuota = 2;
+    const isEligible = recentCount < maxQuota;
+
+    if (recentCount > 0) {
+      const oldestCreated = new Date(checkRes.rows[0].created_at);
+      const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
       const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
 
       res.json({
-        isEligible: diffMs <= 0,
-        lastSubmittedAt: lastCreated.toISOString(),
+        isEligible,
+        recentCount,
+        maxQuota,
+        remainingQuota: Math.max(0, maxQuota - recentCount),
+        oldestSubmittedAt: oldestCreated.toISOString(),
         nextAllowedAt: nextAllowed.toISOString(),
         cooldownMs: diffMs
       });
     } else {
       res.json({
         isEligible: true,
-        lastSubmittedAt: null,
+        recentCount: 0,
+        maxQuota,
+        remainingQuota: maxQuota,
+        oldestSubmittedAt: null,
         nextAllowedAt: null,
         cooldownMs: 0
       });
@@ -300,36 +310,38 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
   }
 });
 
-// 2. SUBMIT AN ISSUE (With 7-Day Limit Enforcement)
+// 2. SUBMIT AN ISSUE (Allows 2 Issues per 7 Days & Supports Demo Bypass)
 app.post('/api/issues', async (req, res) => {
-  const { studentId, category, description, priority, studentName } = req.body;
+  const { studentId, category, description, priority, studentName, bypassLimit } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
-    // Check 7-day weekly issue limit for this student
-    const checkRes = await query(
-      `SELECT created_at FROM issues 
-       WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-       ORDER BY created_at DESC LIMIT 1`,
-      [studentId]
-    );
+    // Check 7-day 2-issue quota for this student unless Demo Bypass is active
+    if (!bypassLimit) {
+      const checkRes = await query(
+        `SELECT created_at FROM issues 
+         WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+         ORDER BY created_at ASC`,
+        [studentId]
+      );
 
-    if (checkRes.rowCount > 0) {
-      const lastCreated = new Date(checkRes.rows[0].created_at);
-      const nextAllowed = new Date(lastCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const diffMs = nextAllowed.getTime() - Date.now();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      if (checkRes.rowCount >= 2) {
+        const oldestCreated = new Date(checkRes.rows[0].created_at);
+        const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
-      const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
+        const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
 
-      return res.status(400).json({
-        error: `Weekly Limit Reached: Students can submit only 1 issue per 7 days. Your next issue submission opens in ${timeText}.`,
-        nextAllowedDate: nextAllowed.toISOString(),
-        cooldownRemainingMs: diffMs
-      });
+        return res.status(400).json({
+          error: `Weekly Quota Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
+          nextAllowedDate: nextAllowed.toISOString(),
+          cooldownRemainingMs: diffMs
+        });
+      }
     }
 
     const idx = ALL_CATEGORIES.indexOf(category);

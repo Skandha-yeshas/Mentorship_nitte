@@ -213,16 +213,27 @@ export const DatabaseProvider = ({ children }) => {
     localStorage.setItem('curr_user_role', currentUser);
   }, [currentUser]);
 
-  // STUDENT ACTIONS
+  const [isDemoLimitBypassed, setIsDemoLimitBypassed] = useState(() => {
+    return localStorage.getItem('demo_limit_bypassed') === 'true';
+  });
+
+  const toggleDemoLimitBypass = () => {
+    setIsDemoLimitBypassed(prev => {
+      const nextVal = !prev;
+      localStorage.setItem('demo_limit_bypassed', String(nextVal));
+      return nextVal;
+    });
+  };
+
+  // ISSUE SUBMISSION (Supports 2 Issues / Week Quota & Demo Mode Bypass)
   const submitIssue = async (studentId, category, description, priority) => {
-    const student = db.users.students.find(s => s.id === studentId);
-    if (!student) return;
+    const student = db.users.students.find(s => s.id === studentId) || { name: 'Student' };
 
     try {
       const res = await fetch('/api/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId, studentName: student.name, category, description, priority })
+        body: JSON.stringify({ studentId, studentName: student.name, category, description, priority, bypassLimit: isDemoLimitBypassed })
       });
       if (res.ok) {
         const data = await res.json();
@@ -694,6 +705,8 @@ export const DatabaseProvider = ({ children }) => {
       currentUser,
       setCurrentUser,
       authenticatedUser,
+      isDemoLimitBypassed,
+      toggleDemoLimitBypass,
       loginUser,
       logoutUser,
       registerStudent,
