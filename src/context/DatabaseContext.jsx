@@ -228,8 +228,14 @@ export const DatabaseProvider = ({ children }) => {
         const data = await res.json();
         await fetchDbState();
         return data.id;
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to submit issue');
       }
     } catch (err) {
+      if (err.message && !err.message.includes('fetch')) {
+        throw err;
+      }
       // Local state fallback
       const catIdx = ALL_CATEGORIES.indexOf(category);
       const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';

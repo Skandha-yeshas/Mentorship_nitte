@@ -38,22 +38,49 @@ export const StudentDashboard = ({ studentId }) => {
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
   const mySessions = db.groupSessions.filter(s => s.mentorId === student.mentorId);
 
-  const handleSubmitIssue = (e) => {
+  // 7-Day Weekly Issue Limit Calculation (1 Issue per 7 days)
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const recentStudentIssues = myIssues
+    .map(i => new Date(i.createdAt || Date.now()).getTime())
+    .filter(t => !isNaN(t))
+    .sort((a, b) => b - a);
+
+  const lastSubmittedTime = recentStudentIssues.length > 0 ? recentStudentIssues[0] : null;
+  const timeSinceLastIssue = lastSubmittedTime ? Date.now() - lastSubmittedTime : SEVEN_DAYS_MS + 1000;
+  const isWeeklyLimitReached = lastSubmittedTime && timeSinceLastIssue < SEVEN_DAYS_MS;
+
+  const cooldownMsRemaining = isWeeklyLimitReached ? (SEVEN_DAYS_MS - timeSinceLastIssue) : 0;
+  const cooldownDays = Math.floor(cooldownMsRemaining / (1000 * 60 * 60 * 24));
+  const cooldownHours = Math.floor((cooldownMsRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const cooldownMinutes = Math.floor((cooldownMsRemaining % (1000 * 60 * 60)) / (1000 * 60));
+
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const handleSubmitIssue = async (e) => {
     e.preventDefault();
     if (!description.trim()) return;
+    setErrorMessage('');
 
-    const newIssueId = submitIssue(student.id, category, description, priority);
-    setSuccessMessage(`Issue successfully submitted! Ticket ID: ${newIssueId}`);
-    setDescription('');
-    setCategory(ALL_CATEGORIES[0]);
-    setPriority('Medium');
-    
-    // Switch to view list
-    setTimeout(() => {
-      setSuccessMessage('');
-      setActiveTab('my-issues');
-      setSelectedIssueId(newIssueId);
-    }, 2000);
+    if (isWeeklyLimitReached) {
+      setErrorMessage(`Weekly Limit Reached: Students can submit only 1 issue per 7 days. Your next submission opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}.`);
+      return;
+    }
+
+    try {
+      const newIssueId = await submitIssue(student.id, category, description, priority);
+      setSuccessMessage(`Issue successfully submitted! Ticket ID: ${newIssueId}`);
+      setDescription('');
+      setCategory(ALL_CATEGORIES[0]);
+      setPriority('Medium');
+      
+      setTimeout(() => {
+        setSuccessMessage('');
+        setActiveTab('my-issues');
+        setSelectedIssueId(newIssueId);
+      }, 2000);
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to submit issue');
+    }
   };
 
   const handleFeedbackSubmit = (e) => {
@@ -127,6 +154,33 @@ export const StudentDashboard = ({ studentId }) => {
       {/* Main Content Pane */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         
+        {/* ERROR / RATE LIMIT MESSAGE */}
+        {errorMessage && (
+          <div className="glass-card" style={{ borderLeft: '4px solid #ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#dc2626' }}>
+              <AlertCircle size={20} />
+              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{errorMessage}</span>
+            </div>
+          </div>
+        )}
+
+        {/* 7-DAY WEEKLY LIMIT BANNER */}
+        {isWeeklyLimitReached && (
+          <div className="glass-card" style={{ borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.12)', padding: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ fontSize: '1.5rem' }}>⏳</div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#b45309' }}>
+                  Weekly Issue Limit Reached (1 Issue per 7 Days)
+                </h4>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#92400e' }}>
+                  You have already submitted an issue within the last 7 days. Your next issue submission opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* SUCCESS MESSAGE */}
         {successMessage && (
           <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '16px' }}>
@@ -140,61 +194,79 @@ export const StudentDashboard = ({ studentId }) => {
         {/* TAB 1: RAISE ISSUE */}
         {activeTab === 'raise-issue' && (
           <div className="glass-card">
-            <h2 className="section-title">Raise an Issue / Support Request</h2>
+            <h2 className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Raise an Issue / Support Request</span>
+              {isWeeklyLimitReached && (
+                <span style={{ fontSize: '0.8rem', color: '#b45309', backgroundColor: '#fef3c7', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
+                  🔒 Locked (1 Issue / 7 Days)
+                </span>
+              )}
+            </h2>
             <form onSubmit={handleSubmitIssue}>
-              <div className="form-group">
-                <label className="form-label">Issue Category (from 50 support domains)</label>
-                <select 
-                  className="form-select"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                >
-                  {ALL_CATEGORIES.map((cat, idx) => (
-                    <option key={idx} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
+              <fieldset disabled={isWeeklyLimitReached} style={{ border: 'none', padding: 0, margin: 0 }}>
                 <div className="form-group">
-                  <label className="form-label">Priority Level</label>
+                  <label className="form-label">Issue Category (from 50 support domains)</label>
                   <select 
                     className="form-select"
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value)}
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
                   >
-                    <option value="Low">🟢 Low (General queries)</option>
-                    <option value="Medium">🟡 Medium (Academic details, forms)</option>
-                    <option value="High">🔴 High (Urgent food, health, exam issues)</option>
+                    {ALL_CATEGORIES.map((cat, idx) => (
+                      <option key={idx} value={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
-                
+
+                <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
+                  <div className="form-group">
+                    <label className="form-label">Priority Level</label>
+                    <select 
+                      className="form-select"
+                      value={priority}
+                      onChange={(e) => setPriority(e.target.value)}
+                    >
+                      <option value="Low">🟢 Low (General queries)</option>
+                      <option value="Medium">🟡 Medium (Academic details, forms)</option>
+                      <option value="High">🔴 High (Urgent food, health, exam issues)</option>
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="form-label">Assigned Relationship Officer (RO)</label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      readOnly 
+                      disabled 
+                      value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
+                    />
+                  </div>
+                </div>
+
                 <div className="form-group">
-                  <label className="form-label">Assigned Relationship Officer (RO)</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
-                    readOnly 
-                    disabled 
-                    value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
+                  <label className="form-label">Describe your issue in detail</label>
+                  <textarea 
+                    className="form-textarea"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder={isWeeklyLimitReached ? "Submission locked. You can submit 1 issue every 7 days." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
+                    required
                   />
                 </div>
-              </div>
 
-              <div className="form-group">
-                <label className="form-label">Describe your issue in detail</label>
-                <textarea 
-                  className="form-textarea"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."
-                  required
-                />
-              </div>
-
-              <button type="submit" className="btn btn-primary">
-                <Send size={16} /> Submit Support Request
-              </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                  disabled={isWeeklyLimitReached}
+                  style={{ opacity: isWeeklyLimitReached ? 0.6 : 1, cursor: isWeeklyLimitReached ? 'not-allowed' : 'pointer' }}
+                >
+                  {isWeeklyLimitReached ? (
+                    <>🔒 Weekly Limit Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
+                  ) : (
+                    <><Send size={16} /> Submit Support Request</>
+                  )}
+                </button>
+              </fieldset>
             </form>
           </div>
         )}

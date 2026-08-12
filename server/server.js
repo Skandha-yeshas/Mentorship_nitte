@@ -264,21 +264,81 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 2. SUBMIT AN ISSUE
+// 1b. GET STUDENT ISSUE LIMIT STATUS
+app.get('/api/students/:id/issue-limit', async (req, res) => {
+  const studentId = req.params.id;
+  try {
+    const checkRes = await query(
+      `SELECT created_at FROM issues 
+       WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+       ORDER BY created_at DESC LIMIT 1`,
+      [studentId]
+    );
+
+    if (checkRes.rowCount > 0) {
+      const lastCreated = new Date(checkRes.rows[0].created_at);
+      const nextAllowed = new Date(lastCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
+
+      res.json({
+        isEligible: diffMs <= 0,
+        lastSubmittedAt: lastCreated.toISOString(),
+        nextAllowedAt: nextAllowed.toISOString(),
+        cooldownMs: diffMs
+      });
+    } else {
+      res.json({
+        isEligible: true,
+        lastSubmittedAt: null,
+        nextAllowedAt: null,
+        cooldownMs: 0
+      });
+    }
+  } catch (err) {
+    console.error('Error checking student issue limit:', err);
+    res.status(500).json({ error: 'Failed to check issue limit' });
+  }
+});
+
+// 2. SUBMIT AN ISSUE (With 7-Day Limit Enforcement)
 app.post('/api/issues', async (req, res) => {
   const { studentId, category, description, priority, studentName } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  const idx = ALL_CATEGORIES.indexOf(category);
-  const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
-
-  const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
-  const timestamp = new Date().toISOString();
-  const initialLogs = JSON.stringify([{ text: `Issue submitted by ${studentName}`, time: timestamp }]);
-
   try {
+    // Check 7-day weekly issue limit for this student
+    const checkRes = await query(
+      `SELECT created_at FROM issues 
+       WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+       ORDER BY created_at DESC LIMIT 1`,
+      [studentId]
+    );
+
+    if (checkRes.rowCount > 0) {
+      const lastCreated = new Date(checkRes.rows[0].created_at);
+      const nextAllowed = new Date(lastCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const diffMs = nextAllowed.getTime() - Date.now();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+
+      const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
+
+      return res.status(400).json({
+        error: `Weekly Limit Reached: Students can submit only 1 issue per 7 days. Your next issue submission opens in ${timeText}.`,
+        nextAllowedDate: nextAllowed.toISOString(),
+        cooldownRemainingMs: diffMs
+      });
+    }
+
+    const idx = ALL_CATEGORIES.indexOf(category);
+    const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
+
+    const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
+    const timestamp = new Date().toISOString();
+    const initialLogs = JSON.stringify([{ text: `Issue submitted by ${studentName}`, time: timestamp }]);
+
     await query(
       `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
        VALUES ($1, $2, $3, $4, $5, $6, 'Assigned to RO', $7, $8, $9)`,
