@@ -62,24 +62,24 @@ app.get('/api/db-state', async (req, res) => {
     // Map issues database columns to camelCase matching frontend layout
     const mappedIssues = issuesRes.rows.map(issue => {
       let feedback = null;
-      if (issue.feedbackRating !== null) {
+      if (issue.feedback_rating !== null && issue.feedback_rating !== undefined) {
         feedback = {
-          rating: issue.feedbackRating,
-          comments: issue.feedbackComments || ''
+          rating: issue.feedback_rating,
+          comments: issue.feedback_comments || ''
         };
       }
       return {
         id: issue.id,
-        studentId: issue.studentId,
-        studentName: issue.studentName,
+        studentId: issue.student_id || issue.studentId,
+        studentName: issue.student_name || issue.studentName,
         category: issue.category,
         description: issue.description,
         priority: issue.priority,
         status: issue.status,
-        roId: issue.roId,
-        createdAt: issue.createdAt,
-        resolvedAt: issue.resolvedAt,
-        resolutionNotes: issue.resolutionNotes,
+        roId: issue.ro_id || issue.roId,
+        createdAt: issue.created_at || issue.createdAt,
+        resolvedAt: issue.resolved_at || issue.resolvedAt,
+        resolutionNotes: issue.resolution_notes || issue.resolutionNotes,
         feedback,
         logs: issue.logs
       };

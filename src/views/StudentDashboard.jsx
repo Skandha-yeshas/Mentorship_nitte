@@ -30,8 +30,8 @@ export const StudentDashboard = ({ studentId }) => {
   const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
   const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
 
-  // Issues raised by this student
-  const myIssues = db.issues.filter(i => i.studentId === student.id);
+  // Issues raised by this student (handles both studentId and student_id safely)
+  const myIssues = db.issues.filter(i => (i.studentId || i.student_id) === student.id);
   const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
 
   // Resources and sessions from their mentor
@@ -41,8 +41,13 @@ export const StudentDashboard = ({ studentId }) => {
   // 7-Day Weekly Issue Quota Calculation (Allows up to 2 Issues per 7 days)
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
   const recentStudentTimestamps = myIssues
-    .map(i => new Date(i.createdAt || Date.now()).getTime())
-    .filter(t => !isNaN(t) && (Date.now() - t) < SEVEN_DAYS_MS)
+    .map(i => {
+      const rawDate = i.createdAt || i.created_at;
+      if (!rawDate) return null;
+      const t = new Date(rawDate).getTime();
+      return isNaN(t) ? null : t;
+    })
+    .filter(t => t !== null && (Date.now() - t) < SEVEN_DAYS_MS)
     .sort((a, b) => a - b); // oldest recent timestamp first
 
   const recentCount = recentStudentTimestamps.length;
