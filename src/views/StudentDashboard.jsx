@@ -30,8 +30,9 @@ export const StudentDashboard = ({ studentId }) => {
   const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
   const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
 
-  // Issues raised by this student (handles both studentId and student_id safely)
-  const myIssues = db.issues.filter(i => (i.studentId || i.student_id) === student.id);
+  // Issues raised by this student (handles studentId and student_id safely and deduplicates by ID)
+  const rawMyIssues = db.issues.filter(i => (i.studentId || i.student_id) === student.id);
+  const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
   const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
 
   // Resources and sessions from their mentor

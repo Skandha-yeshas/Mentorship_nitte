@@ -359,8 +359,8 @@ app.post('/api/issues', async (req, res) => {
 
     await logSystemEvent(`Student ${studentName} submitted a new issue: ${category}`, 'Student', studentId);
     
-    // 1. Dispatch email to RO Officer (skandhayashu2906@gmail.com)
-    await sendGmailNotification({
+    // 1. Dispatch email to RO Officer (skandhayashu2906@gmail.com) in background
+    sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
       replyTo: 'skandhayashas2906@gmail.com',
       fromName: `NITTE Portal (${studentName})`,
@@ -381,10 +381,10 @@ app.post('/api/issues', async (req, res) => {
       issueId,
       eventType: 'ISSUE_SUBMITTED_TO_RO',
       recipientName: 'RO Officer'
-    });
+    }).catch(err => console.error('[Gmail SMTP] RO email error:', err));
 
-    // 2. Dispatch confirmation to Student (skandhayashas2906@gmail.com)
-    await sendGmailNotification({
+    // 2. Dispatch confirmation to Student (skandhayashas2906@gmail.com) in background
+    sendGmailNotification({
       to: 'skandhayashas2906@gmail.com',
       replyTo: 'skandhayashu2906@gmail.com',
       fromName: 'NITTE Mentorship Support',
@@ -402,7 +402,7 @@ app.post('/api/issues', async (req, res) => {
       issueId,
       eventType: 'ISSUE_SUBMITTED_STUDENT_CONFIRM',
       recipientName: studentName
-    });
+    }).catch(err => console.error('[Gmail SMTP] Student email error:', err));
 
     res.status(201).json({ id: issueId });
   } catch (err) {

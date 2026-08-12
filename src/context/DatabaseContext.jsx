@@ -229,25 +229,15 @@ export const DatabaseProvider = ({ children }) => {
   const submitIssue = async (studentId, category, description, priority) => {
     const student = db.users.students.find(s => s.id === studentId) || { name: 'Student' };
 
+    let res;
     try {
-      const res = await fetch('/api/issues', {
+      res = await fetch('/api/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ studentId, studentName: student.name, category, description, priority, bypassLimit: isDemoLimitBypassed })
       });
-      if (res.ok) {
-        const data = await res.json();
-        await fetchDbState();
-        return data.id;
-      } else {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to submit issue');
-      }
-    } catch (err) {
-      if (err.message && !err.message.includes('fetch')) {
-        throw err;
-      }
-      // Local state fallback
+    } catch (networkErr) {
+      // Local state fallback only when network fetch completely fails/offline
       const catIdx = ALL_CATEGORIES.indexOf(category);
       const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
       const ro = db.users.ros.find(r => r.id === roId);
@@ -266,6 +256,19 @@ export const DatabaseProvider = ({ children }) => {
       };
       setDb(prev => ({ ...prev, issues: [newIssue, ...prev.issues] }));
       return newIssue.id;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      try {
+        await fetchDbState();
+      } catch (e) {
+        console.warn('Could not refresh DB state after issue creation:', e);
+      }
+      return data.id;
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to submit issue');
     }
   };
 
