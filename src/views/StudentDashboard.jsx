@@ -7,6 +7,8 @@ export const StudentDashboard = ({ studentId }) => {
   
   // Tabs within Student Dashboard
   const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
+  const [selectedIssueId, setSelectedIssueId] = useState(null);
+  
   // Submission Mode state: 'single' (1 issue) or 'dual' (2 issues at once)
   const [submissionMode, setSubmissionMode] = useState('single');
 
