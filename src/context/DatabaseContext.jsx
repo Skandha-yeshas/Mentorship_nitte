@@ -225,7 +225,7 @@ export const DatabaseProvider = ({ children }) => {
     });
   };
 
-  // ISSUE SUBMISSION (Supports 2 Issues / Week Quota & Demo Mode Bypass)
+  // ISSUE SUBMISSION (Supports 2 Issues / Week Limit & Demo Mode Bypass)
   const submitIssue = async (studentId, category, description, priority) => {
     const student = db.users.students.find(s => s.id === studentId) || { name: 'Student' };
 

@@ -264,7 +264,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1b. GET STUDENT ISSUE LIMIT STATUS (2 Issues Per 7 Days Quota)
+// 1b. GET STUDENT ISSUE LIMIT STATUS (2 Issues Per 7 Days Limit)
 app.get('/api/students/:id/issue-limit', async (req, res) => {
   const studentId = req.params.id;
   try {
@@ -276,8 +276,8 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
     );
 
     const recentCount = checkRes.rowCount;
-    const maxQuota = 2;
-    const isEligible = recentCount < maxQuota;
+    const maxLimit = 2;
+    const isEligible = recentCount < maxLimit;
 
     if (recentCount > 0) {
       const oldestCreated = new Date(checkRes.rows[0].created_at);
@@ -287,8 +287,10 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
       res.json({
         isEligible,
         recentCount,
-        maxQuota,
-        remainingQuota: Math.max(0, maxQuota - recentCount),
+        maxLimit,
+        maxQuota: maxLimit, // backwards compatibility alias
+        remainingLimit: Math.max(0, maxLimit - recentCount),
+        remainingQuota: Math.max(0, maxLimit - recentCount),
         oldestSubmittedAt: oldestCreated.toISOString(),
         nextAllowedAt: nextAllowed.toISOString(),
         cooldownMs: diffMs
@@ -297,8 +299,10 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
       res.json({
         isEligible: true,
         recentCount: 0,
-        maxQuota,
-        remainingQuota: maxQuota,
+        maxLimit,
+        maxQuota: maxLimit,
+        remainingLimit: maxLimit,
+        remainingQuota: maxLimit,
         oldestSubmittedAt: null,
         nextAllowedAt: null,
         cooldownMs: 0
@@ -318,7 +322,7 @@ app.post('/api/issues', async (req, res) => {
   }
 
   try {
-    // Check 7-day 2-issue quota for this student unless Demo Bypass is active
+    // Check 7-day 2-issue limit for this student unless Demo Bypass is active
     if (!bypassLimit) {
       const checkRes = await query(
         `SELECT created_at FROM issues 
@@ -337,7 +341,7 @@ app.post('/api/issues', async (req, res) => {
         const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
 
         return res.status(400).json({
-          error: `Weekly Quota Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
+          error: `Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
           nextAllowedDate: nextAllowed.toISOString(),
           cooldownRemainingMs: diffMs
         });

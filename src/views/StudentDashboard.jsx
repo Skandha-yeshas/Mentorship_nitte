@@ -9,19 +9,10 @@ export const StudentDashboard = ({ studentId }) => {
   const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   
-  // Submission Mode state: 'single' (1 issue) or 'dual' (2 issues at once)
-  const [submissionMode, setSubmissionMode] = useState('single');
-
-  // Form 1 states
+  // Form states (Clean Single Issue Form)
   const [category, setCategory] = useState(ALL_CATEGORIES[0]);
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('Medium');
-
-  // Form 2 states (for dual batch mode)
-  const [category2, setCategory2] = useState(ALL_CATEGORIES[1] || ALL_CATEGORIES[0]);
-  const [description2, setDescription2] = useState('');
-  const [priority2, setPriority2] = useState('Medium');
-
   const [successMessage, setSuccessMessage] = useState('');
 
   // Rating & Re-open form states
@@ -34,18 +25,13 @@ export const StudentDashboard = ({ studentId }) => {
   const student = db.users.students.find(s => s.id === studentId) || db.users.students[0];
   const myMentor = db.users.mentors.find(m => m.id === student.mentorId);
 
-  // Determine active RO dynamically based on category selection for Issue 1
+  // Determine active RO dynamically based on category selection
   const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
   const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
   const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
 
-  // Determine active RO dynamically based on category selection for Issue 2
-  const activeCategoryIdx2 = ALL_CATEGORIES.indexOf(category2);
-  const activeFormRoId2 = activeCategoryIdx2 !== -1 ? `RO-${String(activeCategoryIdx2 + 1).padStart(2, '0')}` : 'RO-02';
-  const activeFormRO2 = db.users.ros.find(r => r.id === activeFormRoId2);
-
   // Issues raised by this student (handles studentId and student_id safely and deduplicates by ID)
-  const rawMyIssues = db.issues.filter(i => (i.studentId || i.student_id) === student.id);
+  const rawMyIssues = db.issues.filter(i => (i.studentId || i.student_id || '').toLowerCase() === student.id.toLowerCase());
   const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
   const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
 
@@ -53,89 +39,81 @@ export const StudentDashboard = ({ studentId }) => {
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
   const mySessions = db.groupSessions.filter(s => s.mentorId === student.mentorId);
 
-  // 7-Day Weekly Issue Quota Calculation (Allows up to 2 Issues per 7 days)
+  // 7-Day Weekly Issue Limit Calculation (Allows up to 2 Issues per 7 days)
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  const recentStudentTimestamps = myIssues
-    .map(i => {
+  const recentIssues7Days = myIssues
+    .filter(i => {
       const rawDate = i.createdAt || i.created_at;
-      if (!rawDate) return null;
+      if (!rawDate) return false;
       const t = new Date(rawDate).getTime();
-      return isNaN(t) ? null : t;
+      return !isNaN(t) && (Date.now() - t) < SEVEN_DAYS_MS;
     })
-    .filter(t => t !== null && (Date.now() - t) < SEVEN_DAYS_MS)
-    .sort((a, b) => a - b); // oldest recent timestamp first
+    .sort((a, b) => {
+      const tA = new Date(a.createdAt || a.created_at).getTime();
+      const tB = new Date(b.createdAt || b.created_at).getTime();
+      return tA - tB; // oldest submitted first
+    });
 
-  const recentCount = recentStudentTimestamps.length;
-  const maxWeeklyQuota = 2;
-  const isQuotaExceeded = recentCount >= maxWeeklyQuota;
-  
-  // Active lock state is true ONLY IF 2 issues used AND demo bypass is OFF
-  const isFormLocked = isQuotaExceeded && !isDemoLimitBypassed;
+  // Slot 1 & Slot 2 independent tracking
+  const slot1Issue = recentIssues7Days[0] || null;
+  const slot2Issue = recentIssues7Days[1] || null;
 
-  const oldestRecentTime = recentStudentTimestamps.length > 0 ? recentStudentTimestamps[0] : null;
-  const timeSinceOldest = oldestRecentTime ? Date.now() - oldestRecentTime : SEVEN_DAYS_MS + 1000;
-  const cooldownMsRemaining = isQuotaExceeded ? Math.max(0, SEVEN_DAYS_MS - timeSinceOldest) : 0;
+  const usedCount = recentIssues7Days.length;
+  const maxWeeklyLimit = 2;
+  const availableCount = Math.max(0, maxWeeklyLimit - usedCount);
+  const isLimitReached = usedCount >= maxWeeklyLimit;
   
-  const cooldownDays = Math.floor(cooldownMsRemaining / (1000 * 60 * 60 * 24));
-  const cooldownHours = Math.floor((cooldownMsRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const cooldownMinutes = Math.floor((cooldownMsRemaining % (1000 * 60 * 60)) / (1000 * 60));
+  // Active lock state is true ONLY IF 2 issues used AND demo limit bypass is OFF
+  const isFormLocked = isLimitReached && !isDemoLimitBypassed;
+
+  // Calculate Slot 1 Cooldown
+  let slot1UnlockTimeStr = '';
+  if (slot1Issue) {
+    const t1 = new Date(slot1Issue.createdAt || slot1Issue.created_at).getTime();
+    const msLeft1 = Math.max(0, (t1 + SEVEN_DAYS_MS) - Date.now());
+    const days1 = Math.floor(msLeft1 / (1000 * 60 * 60 * 24));
+    const hrs1 = Math.floor((msLeft1 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const mins1 = Math.floor((msLeft1 % (1000 * 60 * 60)) / (1000 * 60));
+    slot1UnlockTimeStr = days1 > 0 ? `${days1}d ${hrs1}h` : `${hrs1}h ${mins1}m`;
+  }
+
+  // Calculate Slot 2 Cooldown
+  let slot2UnlockTimeStr = '';
+  if (slot2Issue) {
+    const t2 = new Date(slot2Issue.createdAt || slot2Issue.created_at).getTime();
+    const msLeft2 = Math.max(0, (t2 + SEVEN_DAYS_MS) - Date.now());
+    const days2 = Math.floor(msLeft2 / (1000 * 60 * 60 * 24));
+    const hrs2 = Math.floor((msLeft2 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const mins2 = Math.floor((msLeft2 % (1000 * 60 * 60)) / (1000 * 60));
+    slot2UnlockTimeStr = days2 > 0 ? `${days2}d ${hrs2}h` : `${hrs2}h ${mins2}m`;
+  }
 
   const [errorMessage, setErrorMessage] = useState('');
 
   const handleSubmitIssue = async (e) => {
     e.preventDefault();
+    if (!description.trim()) return;
     setErrorMessage('');
 
-    if (submissionMode === 'single') {
-      if (!description.trim()) return;
+    if (isFormLocked) {
+      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}. (Turn on Demo Mode in header to bypass)`);
+      return;
+    }
 
-      if (isFormLocked) {
-        setErrorMessage(`Weekly Quota Reached (${recentCount} / 2 Used): Students can submit up to 2 issues per 7 days. Next submission opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}. (Turn on Demo Mode to bypass)`);
-        return;
-      }
-
-      try {
-        const newIssueId = await submitIssue(student.id, category, description, priority);
-        setSuccessMessage(`Issue successfully submitted! Ticket ID: ${newIssueId}`);
-        setDescription('');
-        
-        setTimeout(() => {
-          setSuccessMessage('');
-          setActiveTab('my-issues');
-          setSelectedIssueId(newIssueId);
-        }, 2000);
-      } catch (err) {
-        setErrorMessage(err.message || 'Failed to submit issue');
-      }
-    } else {
-      // Dual batch mode (submitting 2 issues at once)
-      if (!description.trim() || !description2.trim()) {
-        setErrorMessage('Please provide description details for BOTH Issue #1 and Issue #2 before submitting.');
-        return;
-      }
-
-      const slotsAvailable = Math.max(0, maxWeeklyQuota - recentCount);
-      if (!isDemoLimitBypassed && slotsAvailable < 2) {
-        setErrorMessage(`Weekly Quota Exceeded: Submitting 2 issues at once requires 2 available quota slots (You currently have ${slotsAvailable} slot(s) remaining). Enable Demo Mode in top header to bypass.`);
-        return;
-      }
-
-      try {
-        const id1 = await submitIssue(student.id, category, description, priority);
-        const id2 = await submitIssue(student.id, category2, description2, priority2);
-        
-        setSuccessMessage(`Success! Both 2 issues submitted! Ticket IDs: ${id1} & ${id2}`);
-        setDescription('');
-        setDescription2('');
-        
-        setTimeout(() => {
-          setSuccessMessage('');
-          setActiveTab('my-issues');
-          setSelectedIssueId(id1);
-        }, 2000);
-      } catch (err) {
-        setErrorMessage(err.message || 'Failed to submit batch issues');
-      }
+    try {
+      const newIssueId = await submitIssue(student.id, category, description, priority);
+      setSuccessMessage(`Issue successfully submitted! Ticket ID: ${newIssueId}`);
+      setDescription('');
+      setCategory(ALL_CATEGORIES[0]);
+      setPriority('Medium');
+      
+      setTimeout(() => {
+        setSuccessMessage('');
+        setActiveTab('my-issues');
+        setSelectedIssueId(newIssueId);
+      }, 2000);
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to submit issue');
     }
   };
 
@@ -240,15 +218,15 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
-        {/* 7-DAY WEEKLY LIMIT BANNER (2 ISSUES PER WEEK QUOTA) */}
-        {!isDemoLimitBypassed && isQuotaExceeded && (
+        {/* 7-DAY WEEKLY LIMIT BANNER */}
+        {!isDemoLimitBypassed && isLimitReached && (
           <div className="glass-card" style={{ borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.12)', padding: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ fontSize: '1.5rem' }}>⏳</div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#b45309' }}>
-                    Weekly Quota Reached (2 / 2 Issues Used)
+                    Weekly Limit Reached (2 / 2 Issues Used)
                   </h4>
                   <button
                     onClick={toggleDemoLimitBypass}
@@ -258,7 +236,7 @@ export const StudentDashboard = ({ studentId }) => {
                   </button>
                 </div>
                 <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#92400e' }}>
-                  You have used your 2 issue submissions for this 7-day period. Your next submission opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
+                  You have used your 2 issue submissions for this 7-day period. Your next issue slot opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
                 </p>
               </div>
             </div>
@@ -282,7 +260,7 @@ export const StudentDashboard = ({ studentId }) => {
               <span>Raise an Issue / Support Request</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '0.8rem', color: isFormLocked ? '#b45309' : '#047857', backgroundColor: isFormLocked ? '#fef3c7' : '#d1fae5', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
-                  {isFormLocked ? '🔒 Quota Reached (2/2 Used)' : `Quota: ${recentCount} / 2 Used`}
+                  {isFormLocked ? '🔒 Limit Reached (2/2 Used)' : `Weekly Limit: ${availableCount} / 2 Available`}
                 </span>
                 {isDemoLimitBypassed && (
                   <span style={{ fontSize: '0.75rem', color: '#047857', backgroundColor: '#ecfdf5', padding: '4px 8px', borderRadius: '12px', fontWeight: 700, border: '1px solid #a7f3d0' }}>
@@ -292,194 +270,122 @@ export const StudentDashboard = ({ studentId }) => {
               </div>
             </h2>
 
-            {/* Submission Mode Switcher Bar */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', backgroundColor: 'var(--bg-tertiary)', padding: '6px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-              <button
-                type="button"
-                style={{ flex: 1, padding: '8px 14px', fontSize: '0.85rem', fontWeight: 700, borderRadius: '8px', cursor: 'pointer', border: 'none', backgroundColor: submissionMode === 'single' ? 'var(--accent-blue)' : 'transparent', color: submissionMode === 'single' ? '#ffffff' : 'var(--text-secondary)' }}
-                onClick={() => setSubmissionMode('single')}
-              >
-                📝 Single Issue (1 Issue)
-              </button>
-              <button
-                type="button"
-                style={{ flex: 1, padding: '8px 14px', fontSize: '0.85rem', fontWeight: 700, borderRadius: '8px', cursor: 'pointer', border: 'none', backgroundColor: submissionMode === 'dual' ? '#8b5cf6' : 'transparent', color: submissionMode === 'dual' ? '#ffffff' : 'var(--text-secondary)' }}
-                onClick={() => setSubmissionMode('dual')}
-              >
-                ⚡ Dual Batch (Choose 2 Issues at Once)
-              </button>
+            {/* VISUAL 2-SLOT LIMIT TRACKER WIDGET */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+              
+              {/* SLOT #1 CARD */}
+              <div style={{
+                padding: '16px',
+                borderRadius: '12px',
+                border: slot1Issue ? '1px solid #f59e0b' : '1px solid #10b981',
+                background: slot1Issue ? 'rgba(245, 158, 11, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot1Issue ? '#b45309' : '#047857' }}>
+                    1️⃣ Slot #1: {slot1Issue ? '🔴 USED' : '🟢 AVAILABLE'}
+                  </h4>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: slot1Issue ? '#fef3c7' : '#d1fae5', color: slot1Issue ? '#b45309' : '#047857' }}>
+                    {slot1Issue ? 'Occupied' : 'Ready'}
+                  </span>
+                </div>
+                {slot1Issue ? (
+                  <div style={{ fontSize: '0.8rem', color: '#92400e' }}>
+                    <div>Ticket: <strong>{slot1Issue.id}</strong> ({slot1Issue.category})</div>
+                    <div style={{ marginTop: '4px', fontWeight: 700 }}>⏳ Unlocks in: {slot1UnlockTimeStr} (7-Day Limit)</div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.8rem', color: '#065f46' }}>
+                    Available for your 1st support request.
+                  </div>
+                )}
+              </div>
+
+              {/* SLOT #2 CARD */}
+              <div style={{
+                padding: '16px',
+                borderRadius: '12px',
+                border: slot2Issue ? '1px solid #f59e0b' : '1px solid #10b981',
+                background: slot2Issue ? 'rgba(245, 158, 11, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                display: 'flex',
+                flexDirection: 'column',
+                justify: 'space-between'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot2Issue ? '#b45309' : '#047857' }}>
+                    2️⃣ Slot #2: {slot2Issue ? '🔴 USED' : '🟢 AVAILABLE'}
+                  </h4>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: slot2Issue ? '#fef3c7' : '#d1fae5', color: slot2Issue ? '#b45309' : '#047857' }}>
+                    {slot2Issue ? 'Occupied' : 'Ready'}
+                  </span>
+                </div>
+                {slot2Issue ? (
+                  <div style={{ fontSize: '0.8rem', color: '#92400e' }}>
+                    <div>Ticket: <strong>{slot2Issue.id}</strong> ({slot2Issue.category})</div>
+                    <div style={{ marginTop: '4px', fontWeight: 700 }}>⏳ Unlocks in: {slot2UnlockTimeStr} (7-Day Limit)</div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.8rem', color: '#065f46' }}>
+                    Available for your 2nd support request.
+                  </div>
+                )}
+              </div>
+
             </div>
 
             <form onSubmit={handleSubmitIssue}>
               <fieldset disabled={isFormLocked} style={{ border: 'none', padding: 0, margin: 0 }}>
-                
-                {/* MODE 1: SINGLE ISSUE */}
-                {submissionMode === 'single' && (
-                  <>
-                    <div className="form-group">
-                      <label className="form-label">Issue Category (from 50 support domains)</label>
-                      <select 
-                        className="form-select"
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                      >
-                        {ALL_CATEGORIES.map((cat, idx) => (
-                          <option key={idx} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                    </div>
+                <div className="form-group">
+                  <label className="form-label">Issue Category (from 50 support domains)</label>
+                  <select 
+                    className="form-select"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                  >
+                    {ALL_CATEGORIES.map((cat, idx) => (
+                      <option key={idx} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
 
-                    <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
-                      <div className="form-group">
-                        <label className="form-label">Priority Level</label>
-                        <select 
-                          className="form-select"
-                          value={priority}
-                          onChange={(e) => setPriority(e.target.value)}
-                        >
-                          <option value="Low">🟢 Low (General queries)</option>
-                          <option value="Medium">🟡 Medium (Academic details, forms)</option>
-                          <option value="High">🔴 High (Urgent food, health, exam issues)</option>
-                        </select>
-                      </div>
-                      
-                      <div className="form-group">
-                        <label className="form-label">Assigned Relationship Officer (RO)</label>
-                        <input 
-                          type="text" 
-                          className="form-control" 
-                          readOnly 
-                          disabled 
-                          value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
-                        />
-                      </div>
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Describe your issue in detail</label>
-                      <textarea 
-                        className="form-textarea"
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder={isFormLocked ? "Weekly quota reached (2 / 2 used). Turn on Demo Mode in header to bypass." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
-                        required
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* MODE 2: DUAL BATCH MODE (2 ISSUES AT ONCE) */}
-                {submissionMode === 'dual' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '20px' }}>
-                    {/* ISSUE #1 BOX */}
-                    <div style={{ padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'rgba(59, 130, 246, 0.04)' }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span>1️⃣ Issue #1 Details</span>
-                      </h4>
-                      <div className="form-group">
-                        <label className="form-label">Issue #1 Category</label>
-                        <select 
-                          className="form-select"
-                          value={category}
-                          onChange={(e) => setCategory(e.target.value)}
-                        >
-                          {ALL_CATEGORIES.map((cat, idx) => (
-                            <option key={idx} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
-                        <div className="form-group">
-                          <label className="form-label">Priority #1</label>
-                          <select 
-                            className="form-select"
-                            value={priority}
-                            onChange={(e) => setPriority(e.target.value)}
-                          >
-                            <option value="Low">🟢 Low</option>
-                            <option value="Medium">🟡 Medium</option>
-                            <option value="High">🔴 High</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Assigned RO #1</label>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            readOnly 
-                            disabled 
-                            value={activeFormRO ? `${activeFormRO.name}` : 'Auto-routing'} 
-                          />
-                        </div>
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Issue #1 Description</label>
-                        <textarea 
-                          className="form-textarea"
-                          rows={3}
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value)}
-                          placeholder="Describe your first issue in detail..."
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    {/* ISSUE #2 BOX */}
-                    <div style={{ padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'rgba(139, 92, 246, 0.04)' }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: 700, color: '#8b5cf6', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span>2️⃣ Issue #2 Details</span>
-                      </h4>
-                      <div className="form-group">
-                        <label className="form-label">Issue #2 Category</label>
-                        <select 
-                          className="form-select"
-                          value={category2}
-                          onChange={(e) => setCategory2(e.target.value)}
-                        >
-                          {ALL_CATEGORIES.map((cat, idx) => (
-                            <option key={idx} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
-                        <div className="form-group">
-                          <label className="form-label">Priority #2</label>
-                          <select 
-                            className="form-select"
-                            value={priority2}
-                            onChange={(e) => setPriority2(e.target.value)}
-                          >
-                            <option value="Low">🟢 Low</option>
-                            <option value="Medium">🟡 Medium</option>
-                            <option value="High">🔴 High</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Assigned RO #2</label>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            readOnly 
-                            disabled 
-                            value={activeFormRO2 ? `${activeFormRO2.name}` : 'Auto-routing'} 
-                          />
-                        </div>
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">Issue #2 Description</label>
-                        <textarea 
-                          className="form-textarea"
-                          rows={3}
-                          value={description2}
-                          onChange={(e) => setDescription2(e.target.value)}
-                          placeholder="Describe your second issue in detail..."
-                          required
-                        />
-                      </div>
-                    </div>
+                <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
+                  <div className="form-group">
+                    <label className="form-label">Priority Level</label>
+                    <select 
+                      className="form-select"
+                      value={priority}
+                      onChange={(e) => setPriority(e.target.value)}
+                    >
+                      <option value="Low">🟢 Low (General queries)</option>
+                      <option value="Medium">🟡 Medium (Academic details, forms)</option>
+                      <option value="High">🔴 High (Urgent food, health, exam issues)</option>
+                    </select>
                   </div>
-                )}
+                  
+                  <div className="form-group">
+                    <label className="form-label">Assigned Relationship Officer (RO)</label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      readOnly 
+                      disabled 
+                      value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Describe your issue in detail</label>
+                  <textarea 
+                    className="form-textarea"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder={isFormLocked ? "Weekly limit reached (2 / 2 used). Turn on Demo Mode in header to bypass." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
+                    required
+                  />
+                </div>
 
                 <button 
                   type="submit" 
@@ -488,18 +394,14 @@ export const StudentDashboard = ({ studentId }) => {
                   style={{
                     width: '100%',
                     justifyContent: 'center',
-                    backgroundColor: submissionMode === 'dual' ? '#8b5cf6' : undefined,
-                    borderColor: submissionMode === 'dual' ? '#7c3aed' : undefined,
                     opacity: isFormLocked ? 0.6 : 1,
                     cursor: isFormLocked ? 'not-allowed' : 'pointer'
                   }}
                 >
                   {isFormLocked ? (
-                    <>🔒 Weekly Quota Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
-                  ) : submissionMode === 'dual' ? (
-                    <><Send size={16} /> 🚀 Submit Both 2 Issues at Once</>
+                    <>🔒 Weekly Limit Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
                   ) : (
-                    <><Send size={16} /> Submit Support Request ({2 - recentCount} remaining this week)</>
+                    <><Send size={16} /> Submit Support Request ({availableCount} / 2 Available)</>
                   )}
                 </button>
               </fieldset>
