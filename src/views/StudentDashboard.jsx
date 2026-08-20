@@ -68,13 +68,17 @@ export const StudentDashboard = ({ studentId }) => {
 
   // Calculate Slot 1 Cooldown
   let slot1UnlockTimeStr = '';
+  let cooldownDays = 0;
+  let cooldownHours = 0;
+  let cooldownMinutes = 0;
+
   if (slot1Issue) {
     const t1 = new Date(slot1Issue.createdAt || slot1Issue.created_at).getTime();
     const msLeft1 = Math.max(0, (t1 + SEVEN_DAYS_MS) - Date.now());
-    const days1 = Math.floor(msLeft1 / (1000 * 60 * 60 * 24));
-    const hrs1 = Math.floor((msLeft1 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const mins1 = Math.floor((msLeft1 % (1000 * 60 * 60)) / (1000 * 60));
-    slot1UnlockTimeStr = days1 > 0 ? `${days1}d ${hrs1}h` : `${hrs1}h ${mins1}m`;
+    cooldownDays = Math.floor(msLeft1 / (1000 * 60 * 60 * 24));
+    cooldownHours = Math.floor((msLeft1 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    cooldownMinutes = Math.floor((msLeft1 % (1000 * 60 * 60)) / (1000 * 60));
+    slot1UnlockTimeStr = cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`;
   }
 
   // Calculate Slot 2 Cooldown

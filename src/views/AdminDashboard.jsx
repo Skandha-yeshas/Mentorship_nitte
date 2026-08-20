@@ -1,11 +1,16 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
 import { BarChart, DonutChart } from '../components/CustomChart';
-import { Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight, Filter, MoreVertical, TrendingUp, ArrowUp, ArrowDown, ExternalLink } from 'lucide-react';
+import { 
+  Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, 
+  Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight, 
+  Filter, MoreVertical, TrendingUp, ArrowUp, ArrowDown, ExternalLink,
+  GraduationCap, Briefcase, UserCheck, Activity, Eye, Layers, Clock
+} from 'lucide-react';
 
 export const AdminDashboard = () => {
   const { db, adminResolveIssue, reassignIssue } = useContext(DatabaseContext);
-  const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'escalations', 'audit-logs', 'session-reports'
+  const [activeTab, setActiveTab] = useState('students'); // 'students', 'ros', 'mentors', 'escalations', 'audit-logs', 'session-reports'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [chartTimeframe, setChartTimeframe] = useState('week'); // 'week' or 'month'
   const [searchTerm, setSearchTerm] = useState('');
@@ -16,6 +21,7 @@ export const AdminDashboard = () => {
 
   // Reassign state
   const [targetRoId, setTargetRoId] = useState('');
+  const [selectedRoForFilter, setSelectedRoForFilter] = useState('ALL');
 
   // 1. STATS CALCULATION
   const totalIssues = db.issues.length;
@@ -101,20 +107,40 @@ export const AdminDashboard = () => {
               <Shield size={24} />
             </div>
             <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>NITTE Portal</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Academic Authority</p>
+              <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Admin Office</h3>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Workflow Control Center</p>
             </div>
           </div>
         </div>
 
+        {/* Division 1: Students */}
         <button 
-          className={`panel-btn ${activeTab === 'analytics' ? 'active Admin' : ''}`}
-          onClick={() => setActiveTab('analytics')}
+          className={`panel-btn ${activeTab === 'students' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('students')}
         >
-          <Ticket size={18} />
-          <span>Analytics Overview</span>
+          <GraduationCap size={18} />
+          <span>Students Division ({db.users.students.length})</span>
         </button>
 
+        {/* Division 3: Relationship Officers */}
+        <button 
+          className={`panel-btn ${activeTab === 'ros' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('ros')}
+        >
+          <Briefcase size={18} />
+          <span>RO Officers ({db.users.ros.length})</span>
+        </button>
+
+        {/* Division 4: Faculty Mentors */}
+        <button 
+          className={`panel-btn ${activeTab === 'mentors' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('mentors')}
+        >
+          <UserCheck size={18} />
+          <span>Faculty Mentors ({db.users.mentors.length})</span>
+        </button>
+
+        {/* Division 5: Escalations */}
         <button 
           className={`panel-btn ${activeTab === 'escalations' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('escalations')}
@@ -123,20 +149,22 @@ export const AdminDashboard = () => {
           <span>Escalations Queue ({escalations.length})</span>
         </button>
 
+        {/* Division 6: Audit Logs */}
         <button 
           className={`panel-btn ${activeTab === 'audit-logs' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('audit-logs')}
         >
-          <Users size={18} />
+          <Clock size={18} />
           <span>System Audit Trail ({db.systemLogs.length})</span>
         </button>
 
+        {/* Division 7: Mentor Reports */}
         <button 
           className={`panel-btn ${activeTab === 'session-reports' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('session-reports')}
         >
           <FileText size={18} />
-          <span>Mentor Session Logs ({(db.mentorSessionRecords || []).length})</span>
+          <span>Faculty Session Logs ({(db.mentorSessionRecords || []).length})</span>
         </button>
 
         {/* Action Panel for CSV downloads */}
@@ -160,20 +188,20 @@ export const AdminDashboard = () => {
         
         {/* TOP BAR / SEARCH HEADER */}
         <div className="glass-card" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ position: 'relative', width: '100%', maxWidth: '420px' }}>
+          <div style={{ position: 'relative', width: '100%', maxWidth: '440px' }}>
             <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
             <input 
               type="text" 
               className="form-control" 
               style={{ paddingLeft: '36px', height: '38px', fontSize: '0.85rem' }} 
-              placeholder="Search analytics, students, or escalation tickets..." 
+              placeholder="Search students, faculty mentors, ROs, or ticket IDs..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', gap: '6px' }}>
-              <Bell size={16} /> Notification Center
+              <Bell size={16} /> Notifications
             </button>
             <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', gap: '6px' }}>
               <HelpCircle size={16} /> Portal Guide
@@ -181,240 +209,221 @@ export const AdminDashboard = () => {
           </div>
         </div>
 
-        {/* TAB 1: BENTO GRID ANALYTICS OVERVIEW */}
-        {activeTab === 'analytics' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Header Title */}
-            <div>
-              <h2 className="section-title" style={{ fontSize: '1.4rem', margin: 0 }}>Analytics Overview</h2>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Real-time metrics and historical trends for NITTE support operations.
-              </p>
+
+
+        {/* DIVISION 2: STUDENTS WORKFLOW MONITOR */}
+        {activeTab === 'students' && (
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>🎓 Students Division Directory & Limit Monitor</h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                  Monitor student accounts, assigned faculty mentors, active ticket load, and 2-issue slot limit statuses.
+                </p>
+              </div>
+              <span style={{ fontSize: '0.8rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-blue)', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
+                {db.users.students.length} Total Enrolled Mentees
+              </span>
             </div>
 
-            {/* Bento Grid 4 KPI Cards */}
-            <div className="grid-cols-4" style={{ gap: '16px' }}>
-              
-              {/* KPI Card 1: System Health */}
-              <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>System Health</span>
-                  <CheckCircle2 size={20} style={{ color: 'var(--accent-emerald)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>99.9%</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                    <TrendingUp size={14} /> PostgreSQL + Express Live
-                  </div>
-                </div>
-              </div>
+            <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Student ID / USN</th>
+                    <th>Student Name</th>
+                    <th>Gmail Address</th>
+                    <th>Branch / Sem</th>
+                    <th>Assigned Mentor</th>
+                    <th>Active Issues</th>
+                    <th>Slot Limit Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {db.users.students
+                    .filter(s => !searchTerm || s.name.toLowerCase().includes(searchTerm.toLowerCase()) || s.id.toLowerCase().includes(searchTerm.toLowerCase()) || s.email.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map(student => {
+                      const studentIssues = db.issues.filter(i => (i.studentId || i.student_id || '').toLowerCase() === student.id.toLowerCase());
+                      const activeStudentIssues = studentIssues.filter(i => i.status !== 'Resolved');
+                      const mentor = db.users.mentors.find(m => m.id === student.mentorId);
 
-              {/* KPI Card 2: Resolution Rate */}
-              <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Resolution Rate</span>
-                  <CheckCircle2 size={20} style={{ color: 'var(--accent-blue)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{resolutionRate}%</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                    <ArrowUp size={14} /> +2.4% SLA performance
-                  </div>
-                </div>
-              </div>
+                      // 7-day limit calculation for this student
+                      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+                      const recent7Days = studentIssues.filter(i => {
+                        const raw = i.createdAt || i.created_at;
+                        return raw && (Date.now() - new Date(raw).getTime()) < SEVEN_DAYS_MS;
+                      });
 
-              {/* KPI Card 3: Active Users */}
-              <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Active Accounts</span>
-                  <Users size={20} style={{ color: 'var(--accent-purple)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 700 }}>{db.users.students.length + db.users.mentors.length + db.users.ros.length}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                    <span>{db.users.students.length} Students | 49 RO Officers</span>
-                  </div>
-                </div>
-              </div>
+                      const usedSlots = recent7Days.length;
 
-              {/* KPI Card 4: Pending Escalations */}
-              <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px', borderLeft: escalatedIssues > 0 ? '4px solid var(--accent-rose)' : '1px solid var(--border-color)', background: escalatedIssues > 0 ? 'rgba(244, 63, 94, 0.06)' : undefined }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: escalatedIssues > 0 ? 'var(--accent-rose)' : 'var(--text-secondary)' }}>Pending Escalations</span>
-                  <AlertTriangle size={20} style={{ color: escalatedIssues > 0 ? 'var(--accent-rose)' : 'var(--text-secondary)' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 700, color: escalatedIssues > 0 ? 'var(--accent-rose)' : 'inherit' }}>{escalatedIssues}</div>
-                  <div style={{ fontSize: '0.75rem', color: escalatedIssues > 0 ? 'var(--accent-rose)' : 'var(--accent-emerald)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                    {escalatedIssues > 0 ? (
-                      <><AlertTriangle size={14} /> Action required immediately</>
-                    ) : (
-                      <><CheckCircle2 size={14} /> All tickets within SLA</>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
-            {/* Middle Grid: Charts & Recent Escalations List */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
-              
-              {/* Interactive Charts Area */}
-              <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Issue Volume Trends</h3>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button 
-                      onClick={() => setChartTimeframe('week')}
-                      className={`btn ${chartTimeframe === 'week' ? 'btn-primary' : 'btn-secondary'}`}
-                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                    >
-                      Week
-                    </button>
-                    <button 
-                      onClick={() => setChartTimeframe('month')}
-                      className={`btn ${chartTimeframe === 'month' ? 'btn-primary' : 'btn-secondary'}`}
-                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                    >
-                      Month
-                    </button>
-                  </div>
-                </div>
-
-                <div className="charts-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <DonutChart data={statusData} title="Resolution Status Breakdown" />
-                  <BarChart data={categoryData} title="Primary Domain Volume" />
-                </div>
-              </div>
-
-              {/* Recent Escalations Widget */}
-              <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', justifySelf: 'space-between', justifyContent: 'space-between' }}>
-                  <span>Recent Escalations</span>
-                  <span style={{ fontSize: '0.75rem', background: 'rgba(244, 63, 94, 0.15)', color: 'var(--accent-rose)', padding: '2px 8px', borderRadius: '10px' }}>
-                    {escalations.length} Active
-                  </span>
-                </h3>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', maxHeight: '340px' }}>
-                  {escalations.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)' }}>
-                      <CheckCircle2 size={36} style={{ marginBottom: '8px', opacity: 0.5, color: 'var(--accent-emerald)' }} />
-                      <p style={{ fontSize: '0.85rem' }}>No pending escalations!</p>
-                    </div>
-                  ) : (
-                    escalations.map(issue => (
-                      <div key={issue.id} style={{ padding: '12px', borderRadius: '8px', border: '1px solid rgba(244, 63, 94, 0.3)', background: 'rgba(244, 63, 94, 0.05)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#ffdad6', color: '#dc2626', padding: '2px 6px', borderRadius: '10px' }}>
-                            CRITICAL
-                          </span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{issue.id}</span>
-                        </div>
-                        <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: '4px 0', color: 'var(--text-primary)' }}>{issue.category}</h4>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', margin: 0 }}>
-                          {issue.description}
-                        </p>
-                        <button 
-                          onClick={() => { setActiveTab('escalations'); setSelectedIssueId(issue.id); }}
-                          style={{ marginTop: '8px', fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: 0 }}
-                        >
-                          View Details & Override <ArrowUpRight size={14} />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-            </div>
-
-            {/* Bottom Section: Cohort Student Monitoring Table */}
-            <div className="glass-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div>
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Cohort Student Monitoring</h3>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>Real-time open ticket load per student across all departments.</p>
-                </div>
-                <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', gap: '6px' }}>
-                  <Filter size={14} /> Filter Cohort
-                </button>
-              </div>
-
-              <div className="custom-table-container" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th>Student ID</th>
-                      <th>Student Name</th>
-                      <th>Branch / Sem</th>
-                      <th>Open Tickets</th>
-                      <th>Status Indicator</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {db.users.students
-                      .filter(s => !searchTerm || s.name.toLowerCase().includes(searchTerm.toLowerCase()) || s.id.toLowerCase().includes(searchTerm.toLowerCase()))
-                      .map(student => {
-                        const studentOpenTickets = db.issues.filter(i => (i.studentId === student.id || i.student_id === student.id) && i.status !== 'Resolved');
-                        const hasEscalated = studentOpenTickets.some(i => i.status === 'Escalated');
-                        
-                        let statusBadge = (
-                          <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(16, 185, 129, 0.15)', color: '#047857', fontWeight: 600 }}>
-                            Healthy
-                          </span>
-                        );
-
-                        if (hasEscalated) {
-                          statusBadge = (
-                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626', fontWeight: 600 }}>
-                              Overdue / Escalated
+                      return (
+                        <tr key={student.id}>
+                          <td><code>{student.id}</code></td>
+                          <td><strong>{student.name}</strong></td>
+                          <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{student.email}</td>
+                          <td>{student.branch || 'CSE'} - Sem {student.sem || 5}</td>
+                          <td>{mentor ? mentor.name : 'Unassigned'}</td>
+                          <td>
+                            <span style={{ 
+                              padding: '2px 8px', borderRadius: '10px', 
+                              fontWeight: 700, fontSize: '0.75rem',
+                              backgroundColor: activeStudentIssues.length > 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                              color: activeStudentIssues.length > 0 ? '#b45309' : '#047857'
+                            }}>
+                              {activeStudentIssues.length} Open
                             </span>
-                          );
-                        } else if (studentOpenTickets.length > 0) {
-                          statusBadge = (
-                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', color: '#b45309', fontWeight: 600 }}>
-                              Needs Review ({studentOpenTickets.length})
+                          </td>
+                          <td>
+                            <span style={{ 
+                              padding: '2px 8px', borderRadius: '10px', 
+                              fontWeight: 600, fontSize: '0.75rem',
+                              backgroundColor: usedSlots >= 2 ? '#fef3c7' : '#d1fae5',
+                              color: usedSlots >= 2 ? '#b45309' : '#047857'
+                            }}>
+                              {usedSlots >= 2 ? '🔒 Limit Reached (2/2 Used)' : `Weekly Limit: ${2 - usedSlots}/2 Avail`}
                             </span>
-                          );
-                        }
-
-                        return (
-                          <tr key={student.id}>
-                            <td><code>{student.id}</code></td>
-                            <td><strong>{student.name}</strong></td>
-                            <td>{student.branch} - Sem {student.sem}</td>
-                            <td><strong>{studentOpenTickets.length}</strong></td>
-                            <td>{statusBadge}</td>
-                            <td>
-                              <button 
-                                onClick={() => { setActiveTab('escalations'); }}
-                                className="btn btn-secondary" 
-                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                              >
-                                View Tickets
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
-
           </div>
         )}
 
-        {/* TAB 2: ESCALATIONS QUEUE */}
+        {/* DIVISION 3: RELATIONSHIP OFFICERS (ROs) WORKFLOW MONITOR */}
+        {activeTab === 'ros' && (
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>👔 Relationship Officers (ROs) Workflow Control Division</h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                  Monitor domain workloads, resolution counts, and real-time Gmail dispatch status for all 49 dedicated ROs.
+                </p>
+              </div>
+              <span style={{ fontSize: '0.8rem', background: 'rgba(139, 92, 246, 0.15)', color: '#c084fc', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
+                {db.users.ros.length} Category-Specific RO Officers
+              </span>
+            </div>
+
+            <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>RO ID</th>
+                    <th>Officer Name</th>
+                    <th>Domain / Assigned Region</th>
+                    <th>Target Gmail</th>
+                    <th>Assigned Tickets</th>
+                    <th>Resolved</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {db.users.ros
+                    .filter(ro => !searchTerm || ro.name.toLowerCase().includes(searchTerm.toLowerCase()) || ro.region.toLowerCase().includes(searchTerm.toLowerCase()) || ro.id.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map(ro => {
+                      const roTickets = db.issues.filter(i => i.roId === ro.id);
+                      const openRoTickets = roTickets.filter(i => i.status !== 'Resolved');
+                      const resolvedRoTickets = roTickets.filter(i => i.status === 'Resolved');
+                      const hasEscalated = openRoTickets.some(i => i.status === 'Escalated');
+
+                      return (
+                        <tr key={ro.id}>
+                          <td><code>{ro.id}</code></td>
+                          <td><strong>{ro.name}</strong></td>
+                          <td style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>{ro.region}</td>
+                          <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ro.email}</td>
+                          <td><strong>{roTickets.length}</strong> ({openRoTickets.length} open)</td>
+                          <td><strong style={{ color: 'var(--accent-emerald)' }}>{resolvedRoTickets.length}</strong></td>
+                          <td>
+                            {hasEscalated ? (
+                              <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626', fontWeight: 700 }}>
+                                🔴 Escalated Ticket
+                              </span>
+                            ) : openRoTickets.length > 0 ? (
+                              <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', color: '#b45309', fontWeight: 600 }}>
+                                🟡 In Progress
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(16, 185, 129, 0.15)', color: '#047857', fontWeight: 600 }}>
+                                🟢 Clear Queue
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* DIVISION 4: FACULTY MENTORS WORKFLOW MONITOR */}
+        {activeTab === 'mentors' && (
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>👨‍🏫 Faculty Mentors Division & Session Progress Monitor</h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                  Track faculty mentor assignments, assigned mentee load, scheduled group sessions, and filed session reports.
+                </p>
+              </div>
+              <span style={{ fontSize: '0.8rem', background: 'rgba(16, 185, 129, 0.15)', color: '#047857', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
+                {db.users.mentors.length} Faculty Mentors
+              </span>
+            </div>
+
+            <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Mentor ID</th>
+                    <th>Faculty Name</th>
+                    <th>Department</th>
+                    <th>Class / Batch</th>
+                    <th>Assigned Mentees</th>
+                    <th>Group Sessions</th>
+                    <th>Filed Reports</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {db.users.mentors
+                    .filter(m => !searchTerm || m.name.toLowerCase().includes(searchTerm.toLowerCase()) || m.dept.toLowerCase().includes(searchTerm.toLowerCase()) || m.id.toLowerCase().includes(searchTerm.toLowerCase()))
+                    .map(mentor => {
+                      const mentees = db.users.students.filter(s => s.mentorId === mentor.id);
+                      const sessions = db.groupSessions.filter(s => s.mentorId === mentor.id);
+                      const records = (db.mentorSessionRecords || []).filter(r => r.mentorId === mentor.id);
+
+                      return (
+                        <tr key={mentor.id}>
+                          <td><code>{mentor.id}</code></td>
+                          <td><strong>{mentor.name}</strong></td>
+                          <td>{mentor.dept}</td>
+                          <td>{mentor.class || 'All Semesters'}</td>
+                          <td><strong style={{ color: 'var(--accent-blue)' }}>{mentees.length} Students</strong></td>
+                          <td>{sessions.length} Scheduled</td>
+                          <td>
+                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: records.length > 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: records.length > 0 ? '#047857' : '#b45309', fontWeight: 600 }}>
+                              {records.length} Filed
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* DIVISION 5: ESCALATIONS QUEUE */}
         {activeTab === 'escalations' && (
           <div style={{ display: 'grid', gridTemplateColumns: escalations.length > 0 ? '1fr 1fr' : '1fr', gap: '20px' }}>
-            
-            {/* Escalations List */}
             <div className="glass-card">
-              <h2 className="section-title">Critical Escalations ({escalations.length})</h2>
+              <h2 className="section-title">Critical Escalations Queue ({escalations.length})</h2>
 
               {escalations.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
@@ -472,7 +481,6 @@ export const AdminDashboard = () => {
                   </p>
                 </div>
 
-                {/* Last action log detailing why it was escalated */}
                 <div style={{ marginBottom: '20px', borderLeft: '3px solid var(--accent-rose)', background: 'rgba(244,63,94,0.05)', padding: '10px', borderRadius: '4px' }}>
                   <h4 style={{ fontSize: '0.8rem', fontWeight: '700', color: 'rgb(253,164,175)', marginBottom: '4px' }}>Reason for Escalation (from RO Logs):</h4>
                   <p style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>
@@ -480,50 +488,32 @@ export const AdminDashboard = () => {
                   </p>
                 </div>
 
-                {/* Overriding Administrative Actions */}
                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <h4 style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '4px' }}>Administrative Override Actions:</h4>
-                  
-                  {/* Action 1: Override and Resolve */}
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: '600', marginBottom: '4px' }}>Administrative Actions:</h4>
                   <button onClick={() => setShowResolveModal(true)} className="btn btn-success" style={{ width: '100%' }}>
                     Override & Mark as Resolved
                   </button>
-                  
-                  {/* Action 2: Reassign to another RO */}
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
-                    <select
-                      className="form-select"
-                      style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                      value={targetRoId}
-                      onChange={(e) => setTargetRoId(e.target.value)}
-                    >
+                    <select className="form-select" style={{ fontSize: '0.8rem', padding: '6px 12px' }} value={targetRoId} onChange={(e) => setTargetRoId(e.target.value)}>
                       <option value="">-- Reassign RO --</option>
                       {db.users.ros.filter(r => r.id !== selectedIssue.roId).map(ro => (
                         <option key={ro.id} value={ro.id}>{ro.name}</option>
                       ))}
                     </select>
-                    <button 
-                      onClick={() => handleReassign(targetRoId)}
-                      disabled={!targetRoId}
-                      className="btn btn-secondary" 
-                      style={{ padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-                    >
+                    <button onClick={() => handleReassign(targetRoId)} disabled={!targetRoId} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                       Apply Reassignment
                     </button>
                   </div>
                 </div>
-
               </div>
             )}
-
           </div>
         )}
 
-        {/* TAB 3: SYSTEM AUDIT TRAIL */}
+        {/* DIVISION 6: SYSTEM AUDIT TRAIL */}
         {activeTab === 'audit-logs' && (
           <div className="glass-card">
             <h2 className="section-title">Central Activity & Audit Log</h2>
-            
             <div className="custom-table-container" style={{ maxHeight: '500px', overflowY: 'auto' }}>
               <table className="custom-table">
                 <thead>
@@ -537,15 +527,10 @@ export const AdminDashboard = () => {
                 <tbody>
                   {db.systemLogs.map(log => (
                     <tr key={log.id}>
-                      <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        {new Date(log.timestamp).toLocaleString()}
-                      </td>
+                      <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(log.timestamp).toLocaleString()}</td>
                       <td>
                         <span style={{
-                          fontSize: '0.7rem',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          fontWeight: '600',
+                          fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', fontWeight: '600',
                           background: log.userRole === 'Admin' ? 'rgba(244,63,94,0.15)' : log.userRole === 'RO' ? 'rgba(245,158,11,0.15)' : 'rgba(139,92,246,0.15)',
                           color: log.userRole === 'Admin' ? '#fca5a5' : log.userRole === 'RO' ? '#fbbf24' : '#c084fc'
                         }}>
@@ -562,12 +547,12 @@ export const AdminDashboard = () => {
           </div>
         )}
 
-        {/* TAB 4: MENTOR SESSION RECORDS AUDIT */}
+        {/* DIVISION 7: MENTOR SESSION REPORTS AUDIT */}
         {activeTab === 'session-reports' && (
           <div className="glass-card">
             <h2 className="section-title">Faculty Mentoring Sessions Audit</h2>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              A centralized list of all mentoring sessions and progress reports filed by faculty mentors.
+              A centralized audit list of all mentoring sessions and progress reports filed by faculty mentors.
             </p>
 
             {(!db.mentorSessionRecords || db.mentorSessionRecords.length === 0) ? (
@@ -597,21 +582,12 @@ export const AdminDashboard = () => {
                           <td>{new Date(rec.sessionDate).toLocaleDateString()}</td>
                           <td>{rec.topic}</td>
                           <td>
-                            <span style={{ 
-                              padding: '2px 8px', 
-                              borderRadius: '10px', 
-                              background: 'rgba(244, 63, 94, 0.15)',
-                              color: '#fca5a5',
-                              fontSize: '0.8rem',
-                              fontWeight: '600'
-                            }}>
+                            <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(244, 63, 94, 0.15)', color: '#fca5a5', fontSize: '0.8rem', fontWeight: '600' }}>
                               {rec.studentsAttended} Students
                             </span>
                           </td>
                           <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rec.notes}</td>
-                          <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            {new Date(rec.createdAt).toLocaleString()}
-                          </td>
+                          <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(rec.createdAt).toLocaleString()}</td>
                         </tr>
                       );
                     })}
@@ -621,7 +597,6 @@ export const AdminDashboard = () => {
             )}
           </div>
         )}
-
       </div>
 
       {/* ADMIN RESOLVE DIRECT OVERRIDE MODAL */}
@@ -656,7 +631,6 @@ export const AdminDashboard = () => {
           </div>
         </div>
       )}
-
     </div>
   );
 };

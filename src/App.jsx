@@ -12,14 +12,23 @@ function AppContent() {
   const [selectedSubProfile, setSelectedSubProfile] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
-  // Automatically initialize default sub-profile when switching roles
+  // Automatically initialize default sub-profile when switching roles or if selectedSubProfile is invalid
   useEffect(() => {
-    if (currentUser === 'Student' && db.users.students.length > 0) {
-      setSelectedSubProfile(db.users.students[0].id);
-    } else if (currentUser === 'Mentor' && db.users.mentors.length > 0) {
-      setSelectedSubProfile(db.users.mentors[0].id);
-    } else if (currentUser === 'RO' && db.users.ros.length > 0) {
-      setSelectedSubProfile(db.users.ros[0].id);
+    if (currentUser === 'Student' && db.users?.students?.length > 0) {
+      const isValid = db.users.students.some(s => s.id === selectedSubProfile);
+      if (!isValid) {
+        setSelectedSubProfile(db.users.students[0].id);
+      }
+    } else if (currentUser === 'Mentor' && db.users?.mentors?.length > 0) {
+      const isValid = db.users.mentors.some(m => m.id === selectedSubProfile);
+      if (!isValid) {
+        setSelectedSubProfile(db.users.mentors[0].id);
+      }
+    } else if (currentUser === 'RO' && db.users?.ros?.length > 0) {
+      const isValid = db.users.ros.some(r => r.id === selectedSubProfile);
+      if (!isValid) {
+        setSelectedSubProfile(db.users.ros[0].id);
+      }
     } else {
       setSelectedSubProfile('ADMIN');
     }
