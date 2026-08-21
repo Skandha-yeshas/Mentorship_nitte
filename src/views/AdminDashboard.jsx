@@ -705,8 +705,11 @@ export const AdminDashboard = () => {
         {activeTab === 'session-reports' && (
           <div className="glass-card">
             <h2 className="section-title">Faculty Mentoring Sessions Audit</h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              A centralized audit list of all mentoring sessions and progress reports filed by faculty mentors.
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              A centralized audit of all mentoring sessions filed by faculty. Reports are due <strong style={{ color: '#f59e0b' }}>every Friday before 5:00 PM</strong>.
+            </p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+              Total reports filed: <strong>{db.mentorSessionRecords?.length || 0}</strong>
             </p>
 
             {(!db.mentorSessionRecords || db.mentorSessionRecords.length === 0) ? (
@@ -720,28 +723,36 @@ export const AdminDashboard = () => {
                   <thead>
                     <tr>
                       <th>Mentor Name</th>
+                      <th>Which Class</th>
                       <th>Session Date</th>
-                      <th>Topic / Discussion Title</th>
-                      <th>Mentees Attended</th>
-                      <th>Progress Summary Notes</th>
-                      <th>Logged Timestamp</th>
+                      <th>Location</th>
+                      <th>Attendance</th>
+                      <th>Topic Covered</th>
+                      <th>Summary / Action Plan</th>
+                      <th>Logged At</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {db.mentorSessionRecords.map((rec, idx) => {
+                    {db.mentorSessionRecords.slice().reverse().map((rec, idx) => {
                       const mentorName = db.users.mentors.find(m => m.id === rec.mentorId)?.name || rec.mentorId;
                       return (
                         <tr key={idx}>
                           <td><strong>{mentorName}</strong></td>
-                          <td>{new Date(rec.sessionDate).toLocaleDateString()}</td>
-                          <td>{rec.topic}</td>
                           <td>
-                            <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(244, 63, 94, 0.15)', color: '#fca5a5', fontSize: '0.8rem', fontWeight: '600' }}>
-                              {rec.studentsAttended} Students
+                            <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', fontSize: '0.8rem', fontWeight: '600' }}>
+                              {rec.whichClass || '—'}
                             </span>
                           </td>
-                          <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rec.notes}</td>
-                          <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(rec.createdAt).toLocaleString()}</td>
+                          <td>{rec.sessionDate ? new Date(rec.sessionDate).toLocaleDateString() : '—'}</td>
+                          <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rec.location || '—'}</td>
+                          <td>
+                            <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(244, 63, 94, 0.15)', color: '#fca5a5', fontSize: '0.8rem', fontWeight: '600' }}>
+                              {rec.studentsAttended ?? '—'} Students
+                            </span>
+                          </td>
+                          <td style={{ fontSize: '0.85rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rec.topic}>{rec.topic || '—'}</td>
+                          <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rec.notes}>{rec.notes || '—'}</td>
+                          <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{rec.createdAt ? new Date(rec.createdAt).toLocaleString() : '—'}</td>
                         </tr>
                       );
                     })}

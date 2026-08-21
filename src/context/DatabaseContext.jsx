@@ -394,17 +394,39 @@ export const DatabaseProvider = ({ children }) => {
     }
   };
 
-  const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes) => {
+  const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location) => {
+    const mentor = (db.users?.mentors || []).find(m => m.id === mentorId);
+    const newRec = { 
+      id: `REC-${Date.now()}`, 
+      mentorId, 
+      mentorName: mentor ? mentor.name : mentorId,
+      topic, 
+      sessionDate, 
+      studentsAttended: parseInt(studentsAttended) || 0, 
+      notes: notes || '',
+      whichClass: whichClass || mentor?.class || '6th Sem CSE-A',
+      location: location || 'Seminar Hall 1 (Admin Block)',
+      createdAt: new Date().toISOString()
+    };
+
+    // 1. Instantly update local React state for immediate UI reflection in Mentor & Admin Dashboards
+    setDb(prev => ({ 
+      ...prev, 
+      mentorSessionRecords: [newRec, ...(prev.mentorSessionRecords || [])] 
+    }));
+
+    // 2. Also sync to backend API
     try {
-      await fetch('/api/mentor/session-records', {
+      const res = await fetch('/api/mentor/session-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mentorId, topic, sessionDate, studentsAttended, notes })
+        body: JSON.stringify({ mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      const newRec = { id: `REC-${Date.now()}`, mentorId, topic, sessionDate, studentsAttended, notes };
-      setDb(prev => ({ ...prev, mentorSessionRecords: [...prev.mentorSessionRecords, newRec] }));
+      console.warn('Backend sync failed for session record, relying on updated local state.', err);
     }
   };
 

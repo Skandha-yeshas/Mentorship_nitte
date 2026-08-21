@@ -55,7 +55,7 @@ app.get('/api/db-state', async (req, res) => {
     const meetingsRes = await query(`SELECT id, issue_id AS "issueId", student_id AS "studentId", student_name AS "studentName", ro_id AS "roId", date, time, mode, location, notes, status FROM meetings`);
     const sessionsRes = await query(`SELECT id, mentor_id AS "mentorId", mentor_name AS "mentorName", title, date_time AS "dateTime", description, link FROM group_sessions ORDER BY date_time ASC`);
     const resourcesRes = await query(`SELECT id, mentor_id AS "mentorId", title, type, content, date_shared AS "dateShared" FROM resources ORDER BY date_shared DESC`);
-    const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, created_at AS "createdAt" FROM mentor_session_records ORDER BY session_date DESC`);
+    const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, which_class AS "whichClass", location, created_at AS "createdAt" FROM mentor_session_records ORDER BY session_date DESC`);
     const logsRes = await query(`SELECT id, text, timestamp, user_role AS "userRole", user_id AS "userId" FROM system_logs ORDER BY timestamp DESC LIMIT 100`);
     const emailLogs = await getEmailLogs();
 
@@ -775,19 +775,25 @@ app.post('/api/resources', async (req, res) => {
 
 // 10.5. SUBMIT MENTOR SESSION RECORD
 app.post('/api/mentor/session-records', async (req, res) => {
-  const { mentorId, sessionDate, studentsAttended, topic, notes } = req.body;
-  if (!mentorId || !sessionDate || !studentsAttended || !topic) {
+  const { mentorId, sessionDate, studentsAttended, topic, notes, whichClass, location } = req.body;
+  if (!mentorId || !sessionDate || !topic) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
     await query(
-      `INSERT INTO mentor_session_records (mentor_id, session_date, students_attended, topic, notes)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [mentorId, sessionDate, studentsAttended, topic, notes]
+      `INSERT INTO mentor_session_records (mentor_id, session_date, students_attended, topic, notes, which_class, location)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [mentorId, sessionDate, parseInt(studentsAttended) || 0, topic, notes || '', whichClass || '6th Sem CSE-A', location || 'Seminar Hall 1 (Admin Block)']
     );
 
-    await logSystemEvent(`Mentor ${mentorId} submitted a session record: ${topic} (${studentsAttended} students)`, 'Mentor', mentorId);
+    await logSystemEvent(`Mentor ${mentorId} submitted session report for ${whichClass || 'Class'}: ${topic}`, 'Mentor', mentorId);
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error('Error logging mentor session record:', err);
+    res.status(500).json({ error: 'Failed to save session record' });
+  }
+});
     res.status(201).json({ success: true });
   } catch (err) {
     console.error('Error saving mentor session record:', err);

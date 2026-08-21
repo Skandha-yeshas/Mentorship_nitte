@@ -22,6 +22,8 @@ export const MentorDashboard = ({ mentorId }) => {
   const [recordDate, setRecordDate] = useState(new Date().toISOString().split('T')[0]);
   const [recordNotes, setRecordNotes] = useState('');
   const [recordCount, setRecordCount] = useState(25);
+  const [whichClass, setWhichClass] = useState('6th Sem CSE-A');
+  const [recordLocation, setRecordLocation] = useState('Seminar Hall 1 (Admin Block)');
 
   // Fetch current mentor details
   const mentor = db.users.mentors.find(m => m.id === mentorId) || db.users.mentors[0];
@@ -34,27 +36,39 @@ export const MentorDashboard = ({ mentorId }) => {
   const myResources = db.resources.filter(r => r.mentorId === mentor.id);
   const myRecords = (db.mentorSessionRecords || []).filter(r => r.mentorId === mentor.id);
 
-  // Auto-initialize recordCount when mentees load
+  // Auto-initialize recordCount and whichClass when mentor/mentees load
   React.useEffect(() => {
     if (mentees.length > 0) {
       setRecordCount(mentees.length);
     }
-  }, [mentees.length]);
+    if (mentor && mentor.class) {
+      setWhichClass(mentor.class);
+    }
+  }, [mentees.length, mentor]);
 
   const handleAddSessionRecord = (e) => {
     e.preventDefault();
     if (!recordTopic || !recordDate || !recordCount) return;
 
-    submitMentorSessionRecord(mentor.id, recordTopic, recordDate, parseInt(recordCount), recordNotes);
-    setSuccessMessage('Session attendance and progress report filed successfully!');
+    submitMentorSessionRecord(
+      mentor.id, 
+      recordTopic, 
+      recordDate, 
+      parseInt(recordCount), 
+      recordNotes,
+      whichClass || mentor.class,
+      recordLocation
+    );
+    setSuccessMessage('Weekly mentor session report filed successfully!');
     setRecordTopic('');
     setRecordNotes('');
     setRecordDate(new Date().toISOString().split('T')[0]);
     setRecordCount(mentees.length || 25);
+    setRecordLocation('Seminar Hall 1 (Admin Block)');
 
     setTimeout(() => {
       setSuccessMessage('');
-    }, 2000);
+    }, 2500);
   };
 
   const handleAddSession = (e) => {
@@ -351,30 +365,41 @@ export const MentorDashboard = ({ mentorId }) => {
           </div>
         )}
 
-        {/* TAB 4: FILE SESSION RECORD */}
+        {/* TAB 4: FILE SESSION REPORT */}
         {activeTab === 'session-records' && (
           <div className="glass-card">
-            <h2 className="section-title">Log Mentoring Session Record</h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-              File a regular report after hosting a mentoring session to record student attendance and progress notes.
+            <h2 className="section-title">Log Mentoring Session Report</h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              File your weekly mentoring report capturing all 6 required flowchart parameters for institutional audit compliance.
             </p>
-            
-            <form onSubmit={handleAddSessionRecord} style={{ marginBottom: '32px' }}>
-              <div className="form-group">
-                <label className="form-label">Session Topic / Agenda</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  placeholder="e.g. Discussing supplementary exam preparation and time management"
-                  value={recordTopic}
-                  onChange={(e) => setRecordTopic(e.target.value)}
-                  required
-                />
-              </div>
 
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
+            {/* EXPLICIT FRIDAY SUBMISSION DEADLINE NOTICE */}
+            <div style={{ borderLeft: '4px solid var(--accent-amber)', background: 'rgba(217, 119, 6, 0.08)', padding: '14px 16px', borderRadius: '8px', marginBottom: '24px' }}>
+              <h4 style={{ fontWeight: '800', color: 'var(--accent-amber)', marginBottom: '4px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🗓️ Friday Weekly Report Submission Deadline Notice
+              </h4>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-primary)', margin: 0, lineHeight: 1.5 }}>
+                Faculty Mentors are required to file this Session Report by <strong>Every Friday before 5:00 PM</strong> to comply with institutional NAAC & Academic Audit standards. Submitted reports are synchronized live and instantly accessible on the <strong>Management / Admin Dashboard</strong>.
+              </p>
+            </div>
+            
+            <form onSubmit={handleAddSessionRecord} style={{ marginBottom: '36px' }}>
+              {/* FLOWCHART FIELD 1 & FIELD 2 */}
+              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
                 <div className="form-group">
-                  <label className="form-label">Session Date</label>
+                  <label className="form-label">1) Which Class / Cohort</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. 6th Sem CSE-A"
+                    value={whichClass}
+                    onChange={(e) => setWhichClass(e.target.value)}
+                    required
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label">2) Date Conducted</label>
                   <input 
                     type="date" 
                     className="form-control" 
@@ -383,9 +408,24 @@ export const MentorDashboard = ({ mentorId }) => {
                     required
                   />
                 </div>
+              </div>
+
+              {/* FLOWCHART FIELD 3 & FIELD 4 */}
+              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">3) Where / Venue Location</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Seminar Hall 1, Classroom 304, or Online (Google Meet)"
+                    value={recordLocation}
+                    onChange={(e) => setRecordLocation(e.target.value)}
+                    required
+                  />
+                </div>
                 
                 <div className="form-group">
-                  <label className="form-label">Number of Students Handled</label>
+                  <label className="form-label">4) Attendance Count (Mentees Attended)</label>
                   <input 
                     type="number" 
                     className="form-control" 
@@ -398,23 +438,38 @@ export const MentorDashboard = ({ mentorId }) => {
                 </div>
               </div>
 
+              {/* FLOWCHART FIELD 5 */}
               <div className="form-group">
-                <label className="form-label">Session Progress Notes / Action Summary</label>
-                <textarea 
-                  className="form-textarea"
-                  value={recordNotes}
-                  onChange={(e) => setRecordNotes(e.target.value)}
-                  placeholder="Summarize the discussion, list common pain points raised, or log students who need special guidance..."
+                <label className="form-label">5) Topic Covered</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="e.g. Supplementary exam prep, attendance recovery, and career guidance"
+                  value={recordTopic}
+                  onChange={(e) => setRecordTopic(e.target.value)}
                   required
                 />
               </div>
 
-              <button type="submit" className="btn btn-success">
-                <Send size={16} /> Submit Session Report
+              {/* FLOWCHART FIELD 6 */}
+              <div className="form-group">
+                <label className="form-label">6) Summary Notes & Action Plan</label>
+                <textarea 
+                  className="form-textarea"
+                  style={{ minHeight: '85px' }}
+                  value={recordNotes}
+                  onChange={(e) => setRecordNotes(e.target.value)}
+                  placeholder="Detail the discussion points, key student concerns, action items assigned, and follow-up plan..."
+                  required
+                />
+              </div>
+
+              <button type="submit" className="btn btn-success" style={{ width: '100%', padding: '10px' }}>
+                <Send size={16} /> File Official Session Report
               </button>
             </form>
 
-            <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '12px' }}>Session History Logs ({myRecords.length})</h3>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '14px' }}>Historical Session Report Logs ({myRecords.length})</h3>
             
             {myRecords.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -425,10 +480,12 @@ export const MentorDashboard = ({ mentorId }) => {
                 <table className="custom-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Topic / Title</th>
-                      <th>Students Attended</th>
-                      <th>Progress Notes Summary</th>
+                      <th>Date Conducted</th>
+                      <th>Which Class</th>
+                      <th>Where / Location</th>
+                      <th>Attendance</th>
+                      <th>Topic Covered</th>
+                      <th>Summary Notes & Action Plan</th>
                       <th>Filed Timestamp</th>
                     </tr>
                   </thead>
@@ -436,7 +493,8 @@ export const MentorDashboard = ({ mentorId }) => {
                     {myRecords.map((rec, idx) => (
                       <tr key={idx}>
                         <td><strong>{new Date(rec.sessionDate).toLocaleDateString()}</strong></td>
-                        <td>{rec.topic}</td>
+                        <td><span className="badge badge-scheduled" style={{ fontSize: '0.72rem' }}>{rec.whichClass || mentor.class || '6th Sem CSE'}</span></td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>📍 {rec.location || 'Seminar Hall 1'}</td>
                         <td>
                           <span style={{ 
                             padding: '2px 8px', 
@@ -449,10 +507,11 @@ export const MentorDashboard = ({ mentorId }) => {
                             {rec.studentsAttended} Students
                           </span>
                         </td>
-                        <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        <td style={{ fontWeight: '600', fontSize: '0.82rem' }}>{rec.topic}</td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '250px' }}>
                           {rec.notes}
                         </td>
-                        <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        <td style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
                           {new Date(rec.createdAt).toLocaleString()}
                         </td>
                       </tr>

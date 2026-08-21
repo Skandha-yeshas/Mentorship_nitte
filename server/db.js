@@ -214,6 +214,8 @@ const createTables = async () => {
       students_attended INT NOT NULL,
       topic VARCHAR(200) NOT NULL,
       notes TEXT,
+      which_class VARCHAR(100) DEFAULT '6th Sem CSE-A',
+      location VARCHAR(200) DEFAULT 'Seminar Hall 1 (Admin Block)',
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
 
@@ -238,6 +240,8 @@ const createTables = async () => {
 
   // Ensure newer columns exist for existing databases
   try {
+    await pool.query(`ALTER TABLE mentor_session_records ADD COLUMN IF NOT EXISTS which_class VARCHAR(100) DEFAULT '6th Sem CSE-A'`);
+    await pool.query(`ALTER TABLE mentor_session_records ADD COLUMN IF NOT EXISTS location VARCHAR(200) DEFAULT 'Seminar Hall 1 (Admin Block)'`);
     await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS location VARCHAR(200) DEFAULT 'RO Office Desk'`);
     await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE mentors ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Mnt2026'`);
