@@ -10,7 +10,9 @@ import {
 
 export const AdminDashboard = () => {
   const { db, adminResolveIssue, reassignIssue } = useContext(DatabaseContext);
-  const [activeTab, setActiveTab] = useState('students'); // 'students', 'ros', 'mentors', 'escalations', 'audit-logs', 'session-reports'
+  const [activeTab, setActiveTab] = useState('students'); // 'students', 'all-tickets', 'ros', 'mentors', 'escalations', 'audit-logs', 'session-reports'
+  const [ticketStatusFilter, setTicketStatusFilter] = useState('All');
+  const [viewLogIssueId, setViewLogIssueId] = useState(null);
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [chartTimeframe, setChartTimeframe] = useState('week'); // 'week' or 'month'
   const [searchTerm, setSearchTerm] = useState('');
@@ -120,6 +122,15 @@ export const AdminDashboard = () => {
         >
           <GraduationCap size={18} />
           <span>Students Division ({db.users.students.length})</span>
+        </button>
+
+        {/* Division 2: All & Closed Tickets */}
+        <button 
+          className={`panel-btn ${activeTab === 'all-tickets' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('all-tickets')}
+        >
+          <Ticket size={18} />
+          <span>All & Closed Tickets ({db.issues.length})</span>
         </button>
 
         {/* Division 3: Relationship Officers */}
@@ -282,6 +293,149 @@ export const AdminDashboard = () => {
                             }}>
                               {usedSlots >= 2 ? '🔒 Limit Reached (2/2 Used)' : `Weekly Limit: ${2 - usedSlots}/2 Avail`}
                             </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* DIVISION 2: ALL & CLOSED TICKETS MANAGEMENT DIVISION */}
+        {activeTab === 'all-tickets' && (
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>📋 All & Closed Tickets Management Division</h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                  Full administrative overview of all submitted, resolved, closed, and escalated issues with audit trails & student feedback.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span className="badge badge-resolved" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                  {resolvedIssues} Resolved / Closed
+                </span>
+                <span className="badge badge-escalated" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                  {escalatedIssues} Escalated
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Status Filter Tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+              {['All', 'Resolved', 'Assigned to RO', 'Meeting Scheduled', 'Escalated'].map(st => (
+                <button
+                  key={st}
+                  onClick={() => setTicketStatusFilter(st)}
+                  className={`btn ${ticketStatusFilter === st ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ padding: '4px 12px', fontSize: '0.78rem' }}
+                >
+                  {st === 'All' ? `All Tickets (${db.issues.length})` : `${st} (${db.issues.filter(i => i.status === st).length})`}
+                </button>
+              ))}
+            </div>
+
+            <div className="custom-table-container" style={{ maxHeight: '550px', overflowY: 'auto' }}>
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Ticket ID</th>
+                    <th>Student Name & ID</th>
+                    <th>Category & Details</th>
+                    <th>Assigned RO</th>
+                    <th>Status</th>
+                    <th>Resolution Summary / Closing Notes</th>
+                    <th>Student Rating & Feedback</th>
+                    <th>Timeline Logs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {db.issues
+                    .filter(i => {
+                      const matchesStatus = ticketStatusFilter === 'All' || i.status === ticketStatusFilter;
+                      const matchesSearch = !searchTerm || 
+                        i.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        i.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        i.category.toLowerCase().includes(searchTerm.toLowerCase());
+                      return matchesStatus && matchesSearch;
+                    })
+                    .map(issue => {
+                      const badgeClass = `badge badge-${issue.status.toLowerCase().replace(' ', '-')}`;
+                      const roObj = db.users.ros.find(r => r.id === issue.roId);
+                      const feedback = issue.feedback || (issue.feedbackRating ? { rating: issue.feedbackRating, comments: issue.feedbackComments } : null);
+
+                      return (
+                        <tr key={issue.id}>
+                          <td>
+                            <code>{issue.id}</code>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              Priority: <strong>{issue.priority}</strong>
+                            </div>
+                          </td>
+                          <td>
+                            <strong>{issue.studentName}</strong>
+                            <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>ID: {issue.studentId}</div>
+                          </td>
+                          <td style={{ maxWidth: '220px' }}>
+                            <strong style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{issue.category}</strong>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '2px 0 0 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {issue.description}
+                            </p>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{roObj ? roObj.name : issue.roId}</span>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>ID: {issue.roId}</div>
+                          </td>
+                          <td>
+                            <span className={badgeClass}>{issue.status}</span>
+                          </td>
+                          <td style={{ maxWidth: '240px' }}>
+                            {issue.status === 'Resolved' && issue.resolutionNotes ? (
+                              <div style={{ background: 'rgba(16, 185, 129, 0.08)', padding: '6px 10px', borderRadius: '4px', borderLeft: '3px solid var(--accent-emerald)', fontSize: '0.78rem' }}>
+                                <strong>Notes:</strong> {issue.resolutionNotes}
+                                {issue.resolvedAt && (
+                                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    Closed: {new Date(issue.resolvedAt).toLocaleString()}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                {issue.status === 'Resolved' ? 'Closed without notes' : 'Pending Resolution'}
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            {feedback ? (
+                              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '6px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                                <div style={{ display: 'flex', gap: '2px', color: 'var(--accent-amber)' }}>
+                                  {[1, 2, 3, 4, 5].map(num => (
+                                    <Star key={num} size={12} fill={num <= feedback.rating ? 'var(--accent-amber)' : 'none'} />
+                                  ))}
+                                  <span style={{ marginLeft: '4px', fontWeight: 'bold' }}>{feedback.rating}/5</span>
+                                </div>
+                                {feedback.comments && (
+                                  <p style={{ fontStyle: 'italic', color: 'var(--text-secondary)', margin: '2px 0 0 0', fontSize: '0.72rem' }}>
+                                    "{feedback.comments}"
+                                  </p>
+                                )}
+                              </div>
+                            ) : issue.status === 'Resolved' ? (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Awaiting Student Feedback</span>
+                            ) : (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>N/A</span>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => setViewLogIssueId(issue.id)}
+                              className="btn btn-secondary"
+                              style={{ padding: '3px 8px', fontSize: '0.72rem', gap: '4px' }}
+                            >
+                              <Eye size={12} /> View ({issue.logs ? issue.logs.length : 0})
+                            </button>
                           </td>
                         </tr>
                       );
@@ -628,6 +782,46 @@ export const AdminDashboard = () => {
                 <button type="submit" className="btn btn-success">Force Resolve & Close</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW LOGS MODAL */}
+      {viewLogIssueId && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3 style={{ fontWeight: '700' }}>Ticket Audit Trail — {viewLogIssueId}</h3>
+              <button onClick={() => setViewLogIssueId(null)} className="btn-icon-only">✕</button>
+            </div>
+            <div className="modal-body">
+              {(() => {
+                const targetIssue = db.issues.find(i => i.id === viewLogIssueId);
+                if (!targetIssue) return <p>Issue not found.</p>;
+                return (
+                  <div>
+                    <div style={{ marginBottom: '12px', fontSize: '0.85rem' }}>
+                      <p><strong>Category:</strong> {targetIssue.category}</p>
+                      <p><strong>Student:</strong> {targetIssue.studentName} ({targetIssue.studentId})</p>
+                      <p><strong>Assigned RO:</strong> {targetIssue.roId}</p>
+                      <p><strong>Status:</strong> <span className={`badge badge-${targetIssue.status.toLowerCase().replace(' ', '-')}`}>{targetIssue.status}</span></p>
+                    </div>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Timeline Logs:</h4>
+                    <div className="log-timeline">
+                      {(targetIssue.logs || []).map((log, idx) => (
+                        <div key={idx} className="log-item">
+                          <span>{log.text}</span>
+                          <span className="log-time">{new Date(log.time).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setViewLogIssueId(null)} className="btn btn-secondary">Close</button>
+            </div>
           </div>
         </div>
       )}

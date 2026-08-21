@@ -47,11 +47,11 @@ export const RODashboard = ({ roId }) => {
   const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
 
   // Meetings assigned to this RO
-  const myMeetings = db.meetings.filter(m => m.roId === ro.id);
+  const myMeetings = (db.meetings || []).filter(m => (m.roId || m.ro_id) === ro.id);
   const scheduledMeetings = myMeetings.filter(m => m.status !== 'Cancelled');
 
   // Find if selected issue has a meeting scheduled
-  const activeMeeting = selectedIssue ? db.meetings.find(m => m.issueId === selectedIssue.id) : null;
+  const activeMeeting = selectedIssue ? (db.meetings || []).find(m => (m.issueId || m.issue_id) === selectedIssue.id) : null;
 
   const handleResolveSubmit = (e) => {
     e.preventDefault();

@@ -75,7 +75,7 @@ const MOCK_DB = {
   issues: [
     {
       id: 'TICK-1001',
-      studentId: '1NT21CS001',
+      studentId: 'u18cm24s0058',
       studentName: 'Aarav Sharma',
       category: 'Academic - Internal marks discrepancy',
       description: 'Discrepancy in Mid-Sem 2 Data Structures internal marks calculation.',
@@ -90,7 +90,7 @@ const MOCK_DB = {
     },
     {
       id: 'TICK-1002',
-      studentId: '1NT21EC015',
+      studentId: 'u18cm24s0056',
       studentName: 'Ananya Rao',
       category: 'Financial - Scholarship application delay',
       description: 'SSP Scholarship portal document verification pending at college office.',
@@ -106,7 +106,7 @@ const MOCK_DB = {
     },
     {
       id: 'TICK-1003',
-      studentId: '1NT22IS042',
+      studentId: 'u18cm24s0053',
       studentName: 'Rohan Mehta',
       category: 'Hostels - Wi-Fi connectivity issues',
       description: 'Intermittent internet connection in Block B, 3rd Floor rooms.',
@@ -273,18 +273,46 @@ export const DatabaseProvider = ({ children }) => {
   };
 
   const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes) => {
-    const student = db.users.students.find(s => s.id === studentId);
-    const issue = db.issues.find(i => i.id === issueId);
+    const student = (db.users?.students || []).find(s => s.id === studentId) || {};
+    const issue = (db.issues || []).find(i => i.id === issueId);
     if (!issue) return;
-    const studentName = student ? student.name : (issue.studentName || 'Student');
+    const studentName = student.name || issue.studentName || 'Student';
 
+    const newMeeting = {
+      id: `MEET-${Math.floor(100 + Math.random() * 900)}`,
+      issueId,
+      studentId: issue.studentId || studentId,
+      studentName,
+      roId,
+      date,
+      time,
+      mode: mode || 'Offline',
+      location: location || 'RO Office Desk',
+      notes: notes || '',
+      status: 'Confirmed'
+    };
+    const timestamp = new Date().toLocaleString();
+    const logMsg = `Meeting scheduled by RO for ${date} at ${time} at ${location || 'RO Office Desk'} (${mode || 'Offline'}).`;
+
+    // 1. Instantly update local React state so Student & RO Dashboards update immediately
+    setDb(prev => ({
+      ...prev,
+      meetings: [...(prev.meetings || []).filter(m => m.issueId !== issueId && m.issue_id !== issueId), newMeeting],
+      issues: (prev.issues || []).map(i => i.id === issueId ? {
+        ...i,
+        status: 'Meeting Scheduled',
+        logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
+      } : i)
+    }));
+
+    // 2. Also send request to backend API if active
     try {
-      await fetch('/api/meetings', {
+      const res = await fetch('/api/meetings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           issueId,
-          studentId: issue.studentId,
+          studentId: issue.studentId || studentId,
           studentName,
           roId,
           date,
@@ -294,48 +322,45 @@ export const DatabaseProvider = ({ children }) => {
           notes: notes || ''
         })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      const newMeeting = {
-        id: `MEET-${Math.floor(100 + Math.random() * 900)}`,
-        issueId,
-        studentId: issue.studentId,
-        studentName,
-        roId,
-        date,
-        time,
-        mode: mode || 'Offline',
-        location: location || 'RO Office Desk',
-        notes: notes || '',
-        status: 'Confirmed'
-      };
-      const timestamp = new Date().toLocaleString();
-      const logMsg = `Meeting scheduled by RO for ${date} at ${time} at ${location || 'RO Office Desk'} (${mode || 'Offline'}).`;
-      setDb(prev => ({
-        ...prev,
-        meetings: [...prev.meetings, newMeeting],
-        issues: prev.issues.map(i => i.id === issueId ? {
-          ...i,
-          status: 'Meeting Scheduled',
-          logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
-        } : i)
-      }));
+      console.warn('Backend server offline/sync warning, relying on updated active state.', err);
     }
   };
 
   const submitFeedback = async (issueId, rating, comments) => {
+    const numericRating = Number(rating);
+    const feedbackObj = { rating: numericRating, comments: comments || '' };
+
+    // 1. Instantly update local state so rating shows immediately in Student & Admin Dashboards
+    setDb(prev => ({
+      ...prev,
+      issues: (prev.issues || []).map(i => i.id === issueId ? {
+        ...i,
+        feedback: feedbackObj,
+        feedbackRating: numericRating,
+        feedbackComments: comments || '',
+        logs: [...(i.logs || []), {
+          time: new Date().toLocaleString(),
+          text: `Student submitted feedback rating: ${numericRating} Stars ("${comments || ''}")`
+        }]
+      } : i)
+    }));
+
+    // 2. Also sync to backend API if server is online
     try {
-      await fetch(`/api/issues/${issueId}/feedback`, {
+      const res = await fetch(`/api/issues/${issueId}/feedback`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating, comments })
+        body: JSON.stringify({ rating: numericRating, comments })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      setDb(prev => ({
-        ...prev,
-        issues: prev.issues.map(i => i.id === issueId ? { ...i, rating, feedbackComments: comments } : i)
-      }));
+      console.warn('Backend server offline/sync warning for submitFeedback, using active local state.', err);
     }
   };
 
@@ -401,23 +426,34 @@ export const DatabaseProvider = ({ children }) => {
   };
 
   const resolveIssue = async (issueId, roId, resolutionNotes) => {
+    const timestamp = new Date().toISOString();
+    const timeFormatted = new Date().toLocaleString();
+    const logMsg = `Marked as Resolved by RO (${roId}): ${resolutionNotes}`;
+
+    // 1. Instantly update local React state so Student, RO, & Admin Dashboards update immediately
+    setDb(prev => ({
+      ...prev,
+      issues: (prev.issues || []).map(i => i.id === issueId ? {
+        ...i,
+        status: 'Resolved',
+        resolvedAt: timestamp,
+        resolutionNotes,
+        logs: [...(i.logs || []), { time: timeFormatted, text: logMsg }]
+      } : i)
+    }));
+
+    // 2. Also sync to backend API if active
     try {
-      await fetch(`/api/issues/${issueId}/resolve`, {
+      const res = await fetch(`/api/issues/${issueId}/resolve`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roId, resolutionNotes, userRole: 'RO' })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      setDb(prev => ({
-        ...prev,
-        issues: prev.issues.map(i => i.id === issueId ? {
-          ...i,
-          status: 'Resolved',
-          resolutionNotes,
-          logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Resolved: ${resolutionNotes}` }]
-        } : i)
-      }));
+      console.warn('Backend server offline/sync warning for resolveIssue, using active local state.', err);
     }
   };
 

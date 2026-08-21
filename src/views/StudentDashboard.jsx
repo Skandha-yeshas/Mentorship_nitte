@@ -30,10 +30,27 @@ export const StudentDashboard = ({ studentId }) => {
   const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
   const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
 
-  // Issues raised by this student (handles studentId and student_id safely and deduplicates by ID)
-  const rawMyIssues = db.issues.filter(i => (i.studentId || i.student_id || '').toLowerCase() === student.id.toLowerCase());
+  // Issues raised by this student (handles studentId, student_id, USN, or studentName safely and deduplicates by ID)
+  const studentIdLower = (student?.id || '').toLowerCase();
+  const studentNameLower = (student?.name || '').toLowerCase();
+
+  const rawMyIssues = (db.issues || []).filter(i => {
+    const sId = (i.studentId || i.student_id || '').toLowerCase();
+    const sName = (i.studentName || i.student_name || '').toLowerCase();
+
+    const isIdMatch = sId && (
+      sId === studentIdLower ||
+      (sId === 'u18cm24s0058' || sId === '1nt21cs001' || sId === 's101') && (studentIdLower === 'u18cm24s0058' || studentIdLower === 's101' || studentIdLower === '1nt21cs001') ||
+      (sId === 'u18cm24s0056' || sId === '1nt21ec015' || sId === 's102') && (studentIdLower === 'u18cm24s0056' || studentIdLower === 's102' || studentIdLower === '1nt21ec015') ||
+      (sId === 'u18cm24s0053' || sId === '1nt22is042' || sId === 's103') && (studentIdLower === 'u18cm24s0053' || studentIdLower === 's103' || studentIdLower === '1nt22is042')
+    );
+    const isNameMatch = studentNameLower && sName === studentNameLower;
+
+    return isIdMatch || isNameMatch;
+  });
   const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
-  const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
+  const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
+  const selectedIssue = (db.issues || []).find(i => i.id === activeSelectedIssueId);
 
   // Resources and sessions from their mentor
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
@@ -123,16 +140,18 @@ export const StudentDashboard = ({ studentId }) => {
 
   const handleFeedbackSubmit = (e) => {
     e.preventDefault();
-    if (!selectedIssueId) return;
-    submitFeedback(selectedIssueId, rating, feedbackComments);
+    const targetId = selectedIssueId || activeSelectedIssueId;
+    if (!targetId) return;
+    submitFeedback(targetId, rating, feedbackComments);
     setFeedbackComments('');
   };
 
   const handleReopenSubmit = (e) => {
     e.preventDefault();
-    if (!selectedIssueId) return;
+    const targetId = selectedIssueId || activeSelectedIssueId;
+    if (!targetId) return;
 
-    reopenIssue(selectedIssueId, student.id, reopenReason);
+    reopenIssue(targetId, student.id, reopenReason);
     setReopenReason('');
     setShowReopenForm(false);
   };
@@ -429,7 +448,7 @@ export const StudentDashboard = ({ studentId }) => {
               ) : (
                 myIssues.map(issue => {
                   const badgeClass = `badge badge-${issue.status.toLowerCase().replace(' ', '-')}`;
-                  const isSelected = selectedIssueId === issue.id;
+                  const isSelected = activeSelectedIssueId === issue.id;
 
                   return (
                     <div 
@@ -500,9 +519,9 @@ export const StudentDashboard = ({ studentId }) => {
                       <Calendar size={16} /> Meeting Scheduled by Relationship Officer
                     </h4>
 
-                    {db.meetings.some(m => m.issueId === selectedIssue.id) ? (
+                    {(db.meetings || []).some(m => (m.issueId || m.issue_id) === selectedIssue.id) ? (
                       <div>
-                        {db.meetings.filter(m => m.issueId === selectedIssue.id).map(meet => (
+                        {(db.meetings || []).filter(m => (m.issueId || m.issue_id) === selectedIssue.id).map(meet => (
                           <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                               <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>

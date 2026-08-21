@@ -428,11 +428,21 @@ app.post('/api/meetings', async (req, res) => {
   const logMessage = `Meeting assigned by RO for ${date} at ${time} at ${meetLoc} (${mode || 'Offline'})`;
 
   try {
+    // Ensure student_id exists in database or fallback to issue's student_id
+    let validStudentId = studentId;
+    const studentCheck = await query(`SELECT id FROM students WHERE id = $1`, [studentId]);
+    if (studentCheck.rowCount === 0) {
+      const issueCheck = await query(`SELECT student_id FROM issues WHERE id = $1`, [issueId]);
+      if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
+        validStudentId = issueCheck.rows[0].student_id;
+      }
+    }
+
     // Add meeting record
     await query(
       `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-      [meetId, issueId, studentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
+      [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
     );
 
     // Update issue logs and status
