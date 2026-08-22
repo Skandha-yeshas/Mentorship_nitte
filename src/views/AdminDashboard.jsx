@@ -1,21 +1,30 @@
 import React, { useContext, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { DatabaseContext } from '../context/DatabaseContext';
 import { BarChart, DonutChart } from '../components/CustomChart';
 import { 
   Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, 
   Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight, 
   Filter, MoreVertical, TrendingUp, ArrowUp, ArrowDown, ExternalLink,
-  GraduationCap, Briefcase, UserCheck, Activity, Eye, Layers, Clock
+  GraduationCap, Briefcase, UserCheck, Activity, Eye, Layers, Clock,
+  Upload, FileSpreadsheet, Mail, Key, Check, AlertCircle, X, UserPlus
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
-  const { db, adminResolveIssue, reassignIssue } = useContext(DatabaseContext);
-  const [activeTab, setActiveTab] = useState('students'); // 'students', 'all-tickets', 'ros', 'mentors', 'escalations', 'audit-logs', 'session-reports'
+  const { db, adminResolveIssue, reassignIssue, bulkUploadStudents } = useContext(DatabaseContext);
+  const [activeTab, setActiveTab] = useState('students'); // 'students', 'student-import', 'all-tickets', 'ros', 'mentors', 'escalations', 'audit-logs', 'session-reports'
   const [ticketStatusFilter, setTicketStatusFilter] = useState('All');
   const [viewLogIssueId, setViewLogIssueId] = useState(null);
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [chartTimeframe, setChartTimeframe] = useState('week'); // 'week' or 'month'
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Roster Bulk Upload state
+  const [rosterFile, setRosterFile] = useState(null);
+  const [parsedRoster, setParsedRoster] = useState([]);
+  const [isUploadingRoster, setIsUploadingRoster] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [uploadError, setUploadError] = useState('');
   
   // Modal state
   const [showResolveModal, setShowResolveModal] = useState(false);
@@ -24,6 +33,88 @@ export const AdminDashboard = () => {
   // Reassign state
   const [targetRoId, setTargetRoId] = useState('');
   const [selectedRoForFilter, setSelectedRoForFilter] = useState('ALL');
+
+  // Excel / CSV Parsing Handlers
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setRosterFile(file);
+    setUploadError('');
+    setUploadResult(null);
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+        if (!data || data.length === 0) {
+          setUploadError('The uploaded Excel/CSV file is empty or formatted incorrectly.');
+          setParsedRoster([]);
+          return;
+        }
+
+        setParsedRoster(data);
+      } catch (err) {
+        setUploadError('Failed to parse file: ' + err.message);
+        setParsedRoster([]);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleDownloadTemplate = () => {
+    const sampleData = [
+      { 'Student ID': 'S109', 'Student Name': 'Rohan Sharma', 'Student Gmail': 'rohan.sharma@gmail.com', 'Branch': 'CSE', 'Semester': 5 },
+      { 'Student ID': 'S110', 'Student Name': 'Ananya Verma', 'Student Gmail': 'ananya.verma@gmail.com', 'Branch': 'ISE', 'Semester': 3 },
+      { 'Student ID': 'S111', 'Student Name': 'Vikram Hegde', 'Student Gmail': 'vikram.hegde@gmail.com', 'Branch': 'ECE', 'Semester': 6 }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Student Roster');
+    XLSX.writeFile(wb, 'nitte_student_roster_template.xlsx');
+  };
+
+  const handleRosterSubmit = async () => {
+    if (!parsedRoster || parsedRoster.length === 0) {
+      setUploadError('Please select a valid Excel or CSV file with student rows first.');
+      return;
+    }
+
+    setIsUploadingRoster(true);
+    setUploadError('');
+    setUploadResult(null);
+
+    try {
+      const res = await bulkUploadStudents(parsedRoster);
+      setUploadResult(res);
+      setParsedRoster([]);
+      setRosterFile(null);
+    } catch (err) {
+      setUploadError(err.message || 'Failed to process bulk student upload.');
+    } finally {
+      setIsUploadingRoster(false);
+    }
+  };
+
+  const handleExportCredentialsCsv = () => {
+    if (!uploadResult || !uploadResult.results) return;
+    let csvContent = 'data:text/csv;charset=utf-8,Index,Student ID,Student Name,Gmail Address,Generated Password,Email Delivery Status\n';
+    uploadResult.results.forEach((row, i) => {
+      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.password || 'N/A'}","${row.status === 'SUCCESS' ? 'DELIVERED_GMAIL' : 'FAILED'}"\n`;
+    });
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `nitte_student_credentials_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // 1. STATS CALCULATION
   const totalIssues = db.issues.length;
@@ -124,6 +215,15 @@ export const AdminDashboard = () => {
           <span>Students Division ({db.users.students.length})</span>
         </button>
 
+        {/* Division 1b: Roster Excel Upload */}
+        <button 
+          className={`panel-btn ${activeTab === 'student-import' ? 'active Admin' : ''}`}
+          onClick={() => setActiveTab('student-import')}
+        >
+          <FileSpreadsheet size={18} />
+          <span>Excel Student Import & Mailer</span>
+        </button>
+
         {/* Division 2: All & Closed Tickets */}
         <button 
           className={`panel-btn ${activeTab === 'all-tickets' ? 'active Admin' : ''}`}
@@ -222,6 +322,225 @@ export const AdminDashboard = () => {
 
 
 
+        {/* DIVISION 1b: EXCEL STUDENT ROSTER IMPORT & CREDENTIAL DISPATCH */}
+        {activeTab === 'student-import' && (
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FileSpreadsheet size={22} style={{ color: '#3b82f6' }} />
+                  Admin Excel Roster Import & Automated Credential Dispatch
+                </h2>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                  Upload student rosters in Excel (<code>.xlsx</code>, <code>.xls</code>) or <code>.csv</code> format. The system automatically generates passwords, registers accounts in PostgreSQL, and emails credentials directly to students.
+                </p>
+              </div>
+              <button onClick={handleDownloadTemplate} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                <FileSpreadsheet size={16} />
+                Download Sample Excel Template
+              </button>
+            </div>
+
+            {/* Instruction Banner */}
+            <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '8px', padding: '16px', marginBottom: '24px' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#60a5fa', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Shield size={16} /> How Bulk Student Onboarding Works:
+              </h4>
+              <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <li>Your uploaded spreadsheet must include headers for <strong>Student ID</strong> (or USN), <strong>Student Name</strong>, and <strong>Student Gmail</strong> (Branch and Semester are optional).</li>
+                <li>The system will automatically generate a secure password (e.g. <code>Nit#A9k2</code>) for each student.</li>
+                <li>Accounts are saved into PostgreSQL. An automated onboarding email with login credentials & URL is sent via <code>skandhayashu2906@gmail.com</code>.</li>
+                <li>Admin receives a full audit table and can download an Excel/CSV copy of all generated credentials.</li>
+              </ul>
+            </div>
+
+            {/* Upload Drag & Drop Area */}
+            <div style={{ 
+              border: '2px dashed var(--border-color)', 
+              borderRadius: '12px', 
+              padding: '36px 20px', 
+              textAlign: 'center', 
+              background: 'rgba(255, 255, 255, 0.02)',
+              marginBottom: '24px'
+            }}>
+              <Upload size={40} style={{ color: '#3b82f6', marginBottom: '12px' }} />
+              <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '6px' }}>Choose Excel (.xlsx, .xls) or CSV File</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                Drag and drop your file here or click below to browse from your computer
+              </p>
+              
+              <input 
+                type="file" 
+                id="rosterFileInput"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+              <label 
+                htmlFor="rosterFileInput" 
+                className="btn btn-primary"
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+              >
+                <FileSpreadsheet size={16} />
+                Select Excel Roster File
+              </label>
+
+              {rosterFile && (
+                <div style={{ marginTop: '16px', display: 'inline-flex', alignItems: 'center', gap: '10px', background: 'rgba(37, 99, 235, 0.15)', border: '1px solid rgba(37, 99, 235, 0.3)', padding: '8px 16px', borderRadius: '20px' }}>
+                  <FileSpreadsheet size={16} style={{ color: '#60a5fa' }} />
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#93c5fd' }}>{rosterFile.name}</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>({(rosterFile.size / 1024).toFixed(1)} KB — {parsedRoster.length} rows detected)</span>
+                  <button onClick={() => { setRosterFile(null); setParsedRoster([]); }} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Error Message */}
+            {uploadError && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                <AlertCircle size={18} />
+                <span>{uploadError}</span>
+              </div>
+            )}
+
+            {/* Parsed Preview Table */}
+            {parsedRoster.length > 0 && !uploadResult && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    Previewing {parsedRoster.length} Student Record{parsedRoster.length > 1 ? 's' : ''} Ready for Onboarding
+                  </h3>
+                  <button 
+                    onClick={handleRosterSubmit} 
+                    disabled={isUploadingRoster}
+                    className="btn btn-success"
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', fontSize: '0.9rem', fontWeight: '600' }}
+                  >
+                    {isUploadingRoster ? (
+                      <>
+                        <RefreshCw size={16} className="spin" />
+                        Generating Passwords & Sending Emails...
+                      </>
+                    ) : (
+                      <>
+                        <Mail size={16} />
+                        Register & Dispatch Credentials ({parsedRoster.length})
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="custom-table-container" style={{ maxHeight: '350px', overflowY: 'auto', marginBottom: '20px' }}>
+                  <table className="custom-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Student ID / USN</th>
+                        <th>Student Name</th>
+                        <th>Gmail Address</th>
+                        <th>Branch</th>
+                        <th>Sem</th>
+                        <th>Auto Password Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedRoster.map((row, idx) => {
+                        const idVal = row['Student ID'] || row['USN'] || row['studentId'] || row['id'] || row['Student USN'] || '—';
+                        const nameVal = row['Student Name'] || row['Name'] || row['studentName'] || row['Full Name'] || '—';
+                        const emailVal = row['Student Gmail'] || row['Gmail'] || row['Email'] || row['studentEmail'] || row['Email Address'] || '—';
+                        const branchVal = row['Branch'] || row['branch'] || row['Dept'] || 'CSE';
+                        const semVal = row['Semester'] || row['sem'] || row['Sem'] || 5;
+
+                        return (
+                          <tr key={idx}>
+                            <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{idx + 1}</td>
+                            <td><code>{idVal}</code></td>
+                            <td><strong>{nameVal}</strong></td>
+                            <td style={{ color: '#60a5fa' }}>{emailVal}</td>
+                            <td><span style={{ fontSize: '0.75rem', background: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', padding: '2px 8px', borderRadius: '4px' }}>{branchVal}</span></td>
+                            <td>{semVal}</td>
+                            <td>
+                              <span style={{ fontSize: '0.75rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '2px 8px', borderRadius: '4px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Key size={12} /> Auto-Generate & Mail
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Upload Results Summary Card */}
+            {uploadResult && (
+              <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '10px', padding: '20px', marginTop: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#34d399', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <CheckCircle2 size={20} /> Bulk Student Registration & Credential Mailer Complete!
+                    </h3>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                      Successfully registered <strong>{uploadResult.successCount}</strong> out of <strong>{uploadResult.totalProcessed}</strong> students into PostgreSQL and dispatched onboarding emails.
+                    </p>
+                  </div>
+                  <button onClick={handleExportCredentialsCsv} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                    <Download size={16} /> Export Credentials CSV
+                  </button>
+                </div>
+
+                <div className="custom-table-container" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                  <table className="custom-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Student ID</th>
+                        <th>Student Name</th>
+                        <th>Gmail Address</th>
+                        <th>Generated Password</th>
+                        <th>Email Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {uploadResult.results.map((res, idx) => (
+                        <tr key={idx}>
+                          <td>{idx + 1}</td>
+                          <td><code>{res.id}</code></td>
+                          <td><strong>{res.name}</strong></td>
+                          <td>{res.email}</td>
+                          <td>
+                            {res.status === 'SUCCESS' ? (
+                              <code style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                {res.password}
+                              </code>
+                            ) : (
+                              <span style={{ color: '#f87171' }}>Failed</span>
+                            )}
+                          </td>
+                          <td>
+                            {res.status === 'SUCCESS' ? (
+                              <span style={{ fontSize: '0.75rem', background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', padding: '2px 8px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={12} /> DELIVERED GMAIL
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', padding: '2px 8px', borderRadius: '12px', fontWeight: '600' }}>
+                                {res.reason}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* DIVISION 2: STUDENTS WORKFLOW MONITOR */}
         {activeTab === 'students' && (
           <div className="glass-card">
@@ -232,9 +551,19 @@ export const AdminDashboard = () => {
                   Monitor student accounts, assigned faculty mentors, active ticket load, and 2-issue slot limit statuses.
                 </p>
               </div>
-              <span style={{ fontSize: '0.8rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-blue)', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
-                {db.users.students.length} Total Enrolled Mentees
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button 
+                  onClick={() => setActiveTab('student-import')}
+                  className="btn btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 14px' }}
+                >
+                  <FileSpreadsheet size={16} />
+                  Import Excel Roster
+                </button>
+                <span style={{ fontSize: '0.8rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-blue)', padding: '6px 12px', borderRadius: '12px', fontWeight: 600 }}>
+                  {db.users.students.length} Total Enrolled Mentees
+                </span>
+              </div>
             </div>
 
             <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>

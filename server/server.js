@@ -226,6 +226,138 @@ app.post('/api/auth/register-student', async (req, res) => {
   }
 });
 
+// ADMIN BULK STUDENT ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
+app.post('/api/admin/bulk-upload-students', async (req, res) => {
+  const { students } = req.body;
+  if (!Array.isArray(students) || students.length === 0) {
+    return res.status(400).json({ error: 'Payload must contain a non-empty "students" array.' });
+  }
+
+  const results = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < students.length; i++) {
+    const s = students[i];
+    const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'];
+    const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || s['Name'];
+    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'];
+    const branch = s.branch || s.Branch || s.department || s.Dept || 'CSE';
+    const sem = parseInt(s.sem || s.Sem || s.semester || s.Semester) || 5;
+    const phone = s.phone || s.Phone || s.mobile || '9876543210';
+    const mentorId = s.mentorId || s.mentor_id || 'M01';
+
+    if (!rawId || !rawName || !rawEmail) {
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: rawId || 'N/A',
+        name: rawName || 'N/A',
+        email: rawEmail || 'N/A',
+        reason: 'Missing required Student ID, Name, or Email.'
+      });
+      failureCount++;
+      continue;
+    }
+
+    const studentId = String(rawId).trim().toUpperCase();
+    const name = String(rawName).trim();
+    const email = String(rawEmail).trim().toLowerCase();
+    const generatedPassword = s.password && String(s.password).trim() ? String(s.password).trim() : generateComputerPassword();
+
+    try {
+      // Upsert into PostgreSQL students table
+      await query(
+        `INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           branch = EXCLUDED.branch,
+           sem = EXCLUDED.sem,
+           password = EXCLUDED.password`,
+        [studentId, name, email, mentorId, phone, branch, sem, generatedPassword]
+      );
+
+      // Send automated onboarding credential email via Gmail SMTP
+      const emailHtml = `
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px;">NITTE Student Mentorship & Support System</h1>
+            <p style="margin: 6px 0 0 0; font-size: 0.9rem; color: #93c5fd;">Official Student Account Onboarding</p>
+          </div>
+          <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
+            <p style="font-size: 1rem; margin-top: 0;">Dear <strong>${name}</strong>,</p>
+            <p>Welcome! Your official student account has been created by the Administration for the NITTE Mentorship Portal.</p>
+            
+            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #2563eb; padding: 18px; border-radius: 6px; margin: 20px 0;">
+              <h3 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 1rem;">🔐 Your Login Credentials:</h3>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #2563eb; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Student USN / ID:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${studentId}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Registered Gmail:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
+            </div>
+
+            <p style="font-size: 0.9rem; color: #475569;">You can log in to the portal using either your <strong>Registered Gmail</strong> or <strong>Student USN</strong> along with the generated password shown above.</p>
+            
+            <div style="text-align: center; margin-top: 24px;">
+              <a href="http://localhost:5173" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;">Log In to Student Dashboard</a>
+            </div>
+          </div>
+          <div style="background-color: #f1f5f9; padding: 14px 24px; text-align: center; font-size: 0.78rem; color: #64748b; border-top: 1px solid #e2e8f0;">
+            This automated credential notification was sent by NITTE System Administration via ${GMAIL_ADDRESS}.
+          </div>
+        </div>
+      `;
+
+      await sendGmailNotification({
+        to: email,
+        replyTo: GMAIL_ADDRESS,
+        fromName: 'NITTE Admin Desk',
+        subject: `[NITTE PORTAL CREDENTIALS] Welcome ${name} - Student Onboarding (${studentId})`,
+        html: emailHtml,
+        text: `Welcome ${name}! Your student account has been created. Student ID: ${studentId}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        eventType: 'BULK_STUDENT_ONBOARDING'
+      });
+
+      await logSystemEvent(`Bulk Upload: Registered student ${name} (${studentId}) with generated password and dispatched Gmail credentials to ${email}`, 'Admin', 'ADMIN');
+
+      results.push({
+        status: 'SUCCESS',
+        index: i + 1,
+        id: studentId,
+        name,
+        email,
+        branch,
+        sem,
+        password: generatedPassword,
+        emailStatus: 'DELIVERED_GMAIL'
+      });
+      successCount++;
+    } catch (err) {
+      console.error(`[Bulk Upload Error] Failed for student ${studentId}:`, err);
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: studentId,
+        name,
+        email,
+        reason: err.message || 'Database insertion error'
+      });
+      failureCount++;
+    }
+  }
+
+  res.json({
+    success: true,
+    totalProcessed: students.length,
+    successCount,
+    failureCount,
+    results
+  });
+});
+
+
 app.post('/api/auth/login', async (req, res) => {
   const { id, email, password, role } = req.body;
   const loginIdentifier = (email || id || '').trim();
@@ -791,12 +923,6 @@ app.post('/api/mentor/session-records', async (req, res) => {
     res.status(201).json({ success: true });
   } catch (err) {
     console.error('Error logging mentor session record:', err);
-    res.status(500).json({ error: 'Failed to save session record' });
-  }
-});
-    res.status(201).json({ success: true });
-  } catch (err) {
-    console.error('Error saving mentor session record:', err);
     res.status(500).json({ error: 'Failed to save session record' });
   }
 });

@@ -757,6 +757,26 @@ export const DatabaseProvider = ({ children }) => {
     localStorage.removeItem('auth_user_session');
   };
 
+  const bulkUploadStudents = async (students) => {
+    try {
+      const res = await fetch('/api/admin/bulk-upload-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ students })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchDbState();
+        return data;
+      } else {
+        throw new Error(data.error || 'Failed to process bulk upload.');
+      }
+    } catch (err) {
+      console.error('Error uploading student roster:', err);
+      throw err;
+    }
+  };
+
   return (
     <DatabaseContext.Provider value={{
       db,
@@ -786,7 +806,8 @@ export const DatabaseProvider = ({ children }) => {
       resetDatabase,
       fetchGmailLogs,
       sendCustomEmail,
-      simulateGmailResponse
+      simulateGmailResponse,
+      bulkUploadStudents
     }}>
       {children}
     </DatabaseContext.Provider>
