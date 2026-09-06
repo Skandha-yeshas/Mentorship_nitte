@@ -85,7 +85,7 @@ const MOCK_DB = {
       roName: 'RO - Internal marks discrepancy',
       createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
       logs: [
-        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Ticket raised by Aarav Sharma and routed to RO-03.' }
+        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Ticket created and assigned to RO-03.' }
       ]
     },
     {
@@ -154,7 +154,7 @@ const MOCK_DB = {
       sender: 'skandhayashu2906@gmail.com',
       recipient: 'aarav.mehta@nitte.edu',
       subject: '[TICK-1001] Issue Registered: Academic - Internal marks discrepancy',
-      body: 'Your ticket has been logged and assigned to RO-03. Official updates will be delivered via Gmail system skandhayashu2906@gmail.com.',
+      body: 'Your ticket has been logged and assigned to RO-03.',
       eventType: 'ISSUE_SUBMITTED',
       issueId: 'TICK-1001',
       status: 'DELIVERED_GMAIL',
@@ -241,6 +241,21 @@ export const DatabaseProvider = ({ children }) => {
       const catIdx = ALL_CATEGORIES.indexOf(category);
       const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
       const ro = db.users.ros.find(r => r.id === roId);
+
+      // Check total attempts in this category for this student
+      const prevCatIssues = (db.issues || []).filter(i => i.studentId === studentId && (i.category === category || i.roId === roId));
+      let totalAttempts = prevCatIssues.length;
+      prevCatIssues.forEach(iss => {
+        const reopens = (iss.logs || []).filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+        totalAttempts += reopens;
+      });
+
+      const isThirdAttempt = totalAttempts >= 2;
+      const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
+      const initialLogText = isThirdAttempt
+        ? `[AUTO-ESCALATED TO ADMIN] 3rd issue attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
+        : `Ticket raised by ${student.name} (Attempt #${totalAttempts + 1} for ${category}).`;
+
       const newIssue = {
         id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
         studentId,
@@ -248,11 +263,11 @@ export const DatabaseProvider = ({ children }) => {
         category,
         description,
         priority,
-        status: 'Assigned to RO',
+        status: initialStatus,
         roId,
         roName: ro ? ro.name : 'RO Officer',
         createdAt: new Date().toISOString(),
-        logs: [{ time: new Date().toLocaleString(), text: `Ticket raised by ${student.name}.` }]
+        logs: [{ time: new Date().toLocaleString(), text: initialLogText }]
       };
       setDb(prev => ({ ...prev, issues: [newIssue, ...prev.issues] }));
       return newIssue.id;
@@ -274,31 +289,73 @@ export const DatabaseProvider = ({ children }) => {
 
   const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes) => {
     const student = (db.users?.students || []).find(s => s.id === studentId) || {};
-    const issue = (db.issues || []).find(i => i.id === issueId);
+    const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase());
     if (!issue) return;
     const studentName = student.name || issue.studentName || 'Student';
 
+    const getLogText = (l) => {
+      if (!l) return '';
+      if (typeof l === 'string') {
+        if (l.trim().startsWith('{') && l.includes('"text"')) {
+          try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) {}
+        }
+        return l;
+      }
+      if (typeof l === 'object' && l.text) return String(l.text);
+      return String(l);
+    };
+
+    const existingMeet = (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === issueId?.toUpperCase());
+    const reassignLogs = (issue.logs || []).filter(l => {
+      const txt = getLogText(l).toLowerCase();
+      return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
+    });
+    const isReschedule = Boolean(
+      existingMeet ||
+      issue.status === 'Meeting Scheduled' ||
+      issue.status === 'Meeting Started' ||
+      issue.status === 'In-Progress' ||
+      issue.status === 'In Progress' ||
+      (issue.logs || []).some(l => {
+        const txt = getLogText(l).toLowerCase();
+        return txt.includes('meeting scheduled') || txt.includes('meeting rescheduled') || txt.includes('meeting reassigned');
+      })
+    );
+
+    if (isReschedule && reassignLogs.length >= 2) {
+      alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). Escalate to Admin for further changes.');
+      throw new Error('RO Limit Reached: Maximum 2 meeting reassignments allowed per issue.');
+    }
+
+    const meetingLocation = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk');
+
     const newMeeting = {
-      id: `MEET-${Math.floor(100 + Math.random() * 900)}`,
+      id: existingMeet ? existingMeet.id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       issueId,
+      issue_id: issueId,
       studentId: issue.studentId || studentId,
+      student_id: issue.studentId || studentId,
       studentName,
+      student_name: studentName,
       roId,
+      ro_id: roId,
       date,
       time,
       mode: mode || 'Offline',
-      location: location || 'RO Office Desk',
+      location: meetingLocation,
       notes: notes || '',
       status: 'Confirmed'
     };
     const timestamp = new Date().toLocaleString();
-    const logMsg = `Meeting scheduled by RO for ${date} at ${time} at ${location || 'RO Office Desk'} (${mode || 'Offline'}).`;
+    const logMsg = isReschedule
+      ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`
+      : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`;
 
     // 1. Instantly update local React state so Student & RO Dashboards update immediately
     setDb(prev => ({
       ...prev,
-      meetings: [...(prev.meetings || []).filter(m => m.issueId !== issueId && m.issue_id !== issueId), newMeeting],
-      issues: (prev.issues || []).map(i => i.id === issueId ? {
+      meetings: [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), newMeeting],
+      issues: (prev.issues || []).map(i => i.id?.toUpperCase() === issueId?.toUpperCase() ? {
         ...i,
         status: 'Meeting Scheduled',
         logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
@@ -318,7 +375,7 @@ export const DatabaseProvider = ({ children }) => {
           date,
           time,
           mode: mode || 'Offline',
-          location: location || 'RO Office Desk',
+          location: meetingLocation,
           notes: notes || ''
         })
       });
@@ -396,13 +453,13 @@ export const DatabaseProvider = ({ children }) => {
 
   const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location) => {
     const mentor = (db.users?.mentors || []).find(m => m.id === mentorId);
-    const newRec = { 
-      id: `REC-${Date.now()}`, 
-      mentorId, 
+    const newRec = {
+      id: `REC-${Date.now()}`,
+      mentorId,
       mentorName: mentor ? mentor.name : mentorId,
-      topic, 
-      sessionDate, 
-      studentsAttended: parseInt(studentsAttended) || 0, 
+      topic,
+      sessionDate,
+      studentsAttended: parseInt(studentsAttended) || 0,
       notes: notes || '',
       whichClass: whichClass || mentor?.class || '6th Sem CSE-A',
       location: location || 'Seminar Hall 1 (Admin Block)',
@@ -410,9 +467,9 @@ export const DatabaseProvider = ({ children }) => {
     };
 
     // 1. Instantly update local React state for immediate UI reflection in Mentor & Admin Dashboards
-    setDb(prev => ({ 
-      ...prev, 
-      mentorSessionRecords: [newRec, ...(prev.mentorSessionRecords || [])] 
+    setDb(prev => ({
+      ...prev,
+      mentorSessionRecords: [newRec, ...(prev.mentorSessionRecords || [])]
     }));
 
     // 2. Also sync to backend API
@@ -432,19 +489,55 @@ export const DatabaseProvider = ({ children }) => {
 
   // RO ACTIONS
   const updateMeetingStatus = async (meetId, status) => {
+    // 1. Update local state immediately for instant UI feedback
+    setDb(prev => ({
+      ...prev,
+      meetings: (prev.meetings || []).map(m => (m.id === meetId || m.issueId === meetId || m.issue_id === meetId) ? { ...m, status } : m)
+    }));
+
+    // 2. Also send request to backend API
     try {
-      await fetch(`/api/meetings/${meetId}`, {
+      const res = await fetch(`/api/meetings/${meetId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      setDb(prev => ({
-        ...prev,
-        meetings: prev.meetings.map(m => m.id === meetId ? { ...m, status } : m)
-      }));
+      console.warn('Backend server offline/sync warning for updateMeetingStatus, using active local state.', err);
     }
+  };
+
+  const saveMeetingRecording = async (meetingId, issueId, durationSeconds, videoUrl, transcriptSummary) => {
+    const timestamp = new Date().toLocaleString();
+    const secs = parseInt(durationSeconds) || 120;
+    const durationFormatted = `${Math.floor(secs / 60)}m ${secs % 60}s`;
+    const recId = `REC-${Date.now()}`;
+
+    const newRec = {
+      id: recId,
+      meetingId,
+      issueId,
+      mode: 'Online Video Call',
+      duration: secs,
+      durationText: durationFormatted,
+      recordedAt: new Date().toISOString(),
+      videoUrl: videoUrl || `https://nitte-cloud-storage.edu/recordings/rec_${issueId}_${Date.now()}.mp4`,
+      transcriptSummary: transcriptSummary || 'Automated speech-to-text transcript summary logged for meeting.'
+    };
+
+    const logText = `[AUTO-RECORDED ONLINE MEETING STORED] Session recording saved (Duration: ${durationFormatted}). Archived in NITTE Cloud Storage.`;
+
+    setDb(prev => ({
+      ...prev,
+      recordings: [newRec, ...(prev.recordings || [])],
+      issues: (prev.issues || []).map(i => i.id === issueId ? {
+        ...i,
+        logs: [...(i.logs || []), { time: timestamp, text: logText }]
+      } : i)
+    }));
   };
 
   const resolveIssue = async (issueId, roId, resolutionNotes) => {
@@ -481,14 +574,29 @@ export const DatabaseProvider = ({ children }) => {
 
   const reopenIssue = async (issueId, studentId, reason) => {
     const timestamp = new Date().toLocaleString();
-    const logMsg = `Ticket re-opened by student due to unsatisfied resolution: ${reason || 'Additional advice required.'}`;
+    const targetIssue = (db.issues || []).find(i => i.id === issueId);
+
+    // Check total attempts in this category for this student
+    const category = targetIssue?.category;
+    const prevCatIssues = (db.issues || []).filter(i => i.studentId === studentId && (i.category === category || i.roId === targetIssue?.roId));
+    let totalAttempts = prevCatIssues.length;
+    prevCatIssues.forEach(iss => {
+      const reopens = (iss.logs || []).filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+      totalAttempts += reopens;
+    });
+
+    const isThirdAttempt = totalAttempts >= 2;
+    const newStatus = isThirdAttempt ? 'Escalated' : 'Re-opened by Student';
+    const logMsg = isThirdAttempt
+      ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt/re-escalation reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
+      : `Ticket re-opened by student due to unsatisfied resolution: ${reason || 'Additional advice required.'}`;
 
     // Update local state immediately for instant UI feedback
     setDb(prev => ({
       ...prev,
       issues: prev.issues.map(i => i.id === issueId ? {
         ...i,
-        status: 'Re-opened by Student',
+        status: newStatus,
         resolvedAt: null,
         logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
       } : i)
@@ -807,7 +915,8 @@ export const DatabaseProvider = ({ children }) => {
       fetchGmailLogs,
       sendCustomEmail,
       simulateGmailResponse,
-      bulkUploadStudents
+      bulkUploadStudents,
+      saveMeetingRecording
     }}>
       {children}
     </DatabaseContext.Provider>

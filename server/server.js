@@ -483,34 +483,55 @@ app.post('/api/issues', async (req, res) => {
     const idx = ALL_CATEGORIES.indexOf(category);
     const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
 
+    // Count previous attempts/issues in this category for this student
+    const catCheck = await query(
+      `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
+      [studentId, category, calculatedRoId]
+    );
+
+    let totalAttempts = catCheck.rowCount;
+    catCheck.rows.forEach(row => {
+      const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
+      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+      totalAttempts += reopens;
+    });
+
+    const isThirdAttempt = totalAttempts >= 2; // 3rd attempt or higher
+    const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
+    const logText = isThirdAttempt
+      ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
+      : `Issue submitted by ${studentName} (Attempt #${totalAttempts + 1} for ${category}).`;
+
     const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
     const timestamp = new Date().toISOString();
-    const initialLogs = JSON.stringify([{ text: `Issue submitted by ${studentName}`, time: timestamp }]);
+    const initialLogs = JSON.stringify([{ text: logText, time: timestamp }]);
 
     await query(
       `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
-       VALUES ($1, $2, $3, $4, $5, $6, 'Assigned to RO', $7, $8, $9)`,
-      [issueId, studentId, studentName, category, description, priority, calculatedRoId, timestamp, initialLogs]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [issueId, studentId, studentName, category, description, priority, initialStatus, calculatedRoId, timestamp, initialLogs]
     );
 
-    await logSystemEvent(`Student ${studentName} submitted a new issue: ${category}`, 'Student', studentId);
-    
+    await logSystemEvent(`Student ${studentName} submitted issue: ${category} (${initialStatus})`, 'Student', studentId);
+
     // 1. Dispatch email to RO Officer (skandhayashu2906@gmail.com) in background
     sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
       replyTo: 'skandhayashas2906@gmail.com',
       fromName: `NITTE Portal (${studentName})`,
-      subject: `[RO ACTION REQUIRED - ${calculatedRoId}] New Issue: ${category} (${issueId})`,
+      subject: isThirdAttempt ? `[ADMIN AUTO-ESCALATION - 3RD ATTEMPT] ${category} (${issueId})` : `[RO ACTION REQUIRED - ${calculatedRoId}] New Issue: ${category} (${issueId})`,
       html: `<h3>New Student Issue Registered for RO Office</h3>
              <p>Hello RO Officer (<strong>${calculatedRoId}</strong>),</p>
-             <p>Student <strong>${studentName}</strong> (from skandhayashas2906@gmail.com) has submitted a new issue:</p>
+             <p>Student <strong>${studentName}</strong> (from skandhayashas2906@gmail.com) has submitted an issue:</p>
              <ul>
                <li><strong>Ticket ID:</strong> ${issueId}</li>
                <li><strong>Category:</strong> ${category}</li>
                <li><strong>Priority:</strong> ${priority}</li>
+               <li><strong>Status:</strong> ${initialStatus}</li>
                <li><strong>Student Name:</strong> ${studentName} (${studentId})</li>
                <li><strong>Description:</strong> ${description}</li>
              </ul>
+             ${isThirdAttempt ? '<p style="color: #dc2626; font-weight: bold;">⚠️ Note: This is the 3rd attempt for this category. It has been automatically escalated to Admin Office.</p>' : ''}
              <p>Please log into your RO Dashboard to review and take action.</p>
              <hr/>
              <p><em>Dispatched to RO Office email: skandhayashu2906@gmail.com</em></p>`,
@@ -527,11 +548,12 @@ app.post('/api/issues', async (req, res) => {
       subject: `[TICKET CONFIRMATION - ${issueId}] Issue Submitted: ${category}`,
       html: `<h3>NITTE Student Support Ticket Registered</h3>
              <p>Dear <strong>${studentName}</strong>,</p>
-             <p>Your issue has been successfully submitted and forwarded to RO Officer <strong>${calculatedRoId}</strong> (skandhayashu2906@gmail.com).</p>
+             <p>Your issue has been successfully submitted ${isThirdAttempt ? 'and <strong>automatically escalated to the Admin Office</strong> (3rd Attempt Limit)' : `and forwarded to RO Officer <strong>${calculatedRoId}</strong>`}.</p>
              <ul>
                <li><strong>Ticket ID:</strong> ${issueId}</li>
                <li><strong>Category:</strong> ${category}</li>
                <li><strong>Priority:</strong> ${priority}</li>
+               <li><strong>Status:</strong> ${initialStatus}</li>
              </ul>
              <hr/>
              <p><em>Dispatched to Student email: skandhayashas2906@gmail.com</em></p>`,
@@ -540,66 +562,114 @@ app.post('/api/issues', async (req, res) => {
       recipientName: studentName
     }).catch(err => console.error('[Gmail SMTP] Student email error:', err));
 
-    res.status(201).json({ id: issueId });
+    res.status(201).json({ id: issueId, status: initialStatus, isThirdAttempt });
   } catch (err) {
     console.error('Error submitting issue:', err);
     res.status(500).json({ error: 'Failed to submit issue' });
   }
 });
 
-// 3. SCHEDULE A MEETING (RO ASSIGNED)
+// 3. SCHEDULE / RESCHEDULE A MEETING (RO ASSIGNED)
 app.post('/api/meetings', async (req, res) => {
   const { issueId, studentId, studentName, roId, date, time, mode, location, notes } = req.body;
   if (!issueId || !studentId || !roId || !date || !time) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
-  const meetId = `MEET-${Math.floor(100 + Math.random() * 900)}`;
   const timestamp = new Date().toISOString();
-  const meetLoc = location || 'RO Desk Office';
-  const logMessage = `Meeting assigned by RO for ${date} at ${time} at ${meetLoc} (${mode || 'Offline'})`;
+  const meetLoc = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Desk Office');
 
   try {
     // Ensure student_id exists in database or fallback to issue's student_id
     let validStudentId = studentId;
-    const studentCheck = await query(`SELECT id FROM students WHERE id = $1`, [studentId]);
+    const studentCheck = await query(`SELECT id FROM students WHERE UPPER(id) = UPPER($1)`, [studentId]);
     if (studentCheck.rowCount === 0) {
-      const issueCheck = await query(`SELECT student_id FROM issues WHERE id = $1`, [issueId]);
+      const issueCheck = await query(`SELECT student_id FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
       if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
         validStudentId = issueCheck.rows[0].student_id;
       }
     }
 
-    // Add meeting record
-    await query(
-      `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-      [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
-    );
+    // Check if meeting already exists for this issue or if meeting was previously scheduled
+    const existingMeet = await query(`SELECT id FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+    const issueStatusCheck = await query(`SELECT status, logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
+    const currentStatus = issueStatusCheck.rowCount > 0 ? issueStatusCheck.rows[0].status : '';
 
-    // Update issue logs and status
-    const issueRes = await query(`SELECT logs FROM issues WHERE id = $1`, [issueId]);
-    if (issueRes.rowCount > 0) {
-      const logs = issueRes.rows[0].logs;
-      logs.push({ text: logMessage, time: timestamp });
-      
+    const isReschedule = existingMeet.rowCount > 0 ||
+      currentStatus === 'Meeting Scheduled' ||
+      currentStatus === 'Meeting Started' ||
+      currentStatus === 'In-Progress' ||
+      currentStatus === 'In Progress';
+
+    const meetId = existingMeet.rowCount > 0 ? existingMeet.rows[0].id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    if (isReschedule) {
+      if (issueStatusCheck.rowCount > 0) {
+        const lArr = typeof issueStatusCheck.rows[0].logs === 'string' ? JSON.parse(issueStatusCheck.rows[0].logs) : (issueStatusCheck.rows[0].logs || []);
+        const getLogText = (l) => {
+          if (!l) return '';
+          if (typeof l === 'string') {
+            if (l.trim().startsWith('{') && l.includes('"text"')) {
+              try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) { }
+            }
+            return l;
+          }
+          if (typeof l === 'object' && l.text) return String(l.text);
+          return String(l);
+        };
+        const reassignCount = lArr.filter(l => {
+          const txt = getLogText(l).toLowerCase();
+          return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
+        }).length;
+        if (reassignCount >= 2) {
+          return res.status(400).json({ error: 'RO Limit Reached: Maximum 2 meeting reassignments allowed per issue. Please escalate to Admin for further changes.' });
+        }
+      }
+
+      // Delete any previous meeting rows for this issue to ensure no stale 'Started' status remains
+      await query(`DELETE FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+
+      // Insert fresh meeting record with status = 'Confirmed'
       await query(
-        `UPDATE issues SET status = 'Meeting Scheduled', logs = $1 WHERE id = $2`,
+        `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
+        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
+      );
+    } else {
+      await query(
+        `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
+        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
+      );
+    }
+
+    const logMessage = isReschedule
+      ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
+      : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`;
+
+    // Update issue logs and status (reset status to Meeting Scheduled)
+    const issueRes = await query(`SELECT logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
+    if (issueRes.rowCount > 0) {
+      const logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : (issueRes.rows[0].logs || []);
+      logs.push({ text: logMessage, time: timestamp });
+
+      await query(
+        `UPDATE issues SET status = 'Meeting Scheduled', logs = $1 WHERE UPPER(id) = UPPER($2)`,
         [JSON.stringify(logs), issueId]
       );
     }
 
-    await logSystemEvent(`RO ${roId} scheduled a meeting with Student ${studentName} for ${date} at ${time} at ${meetLoc}`, 'RO', roId);
-    
+    await logSystemEvent(`RO ${roId} ${isReschedule ? 'rescheduled' : 'scheduled'} a meeting with Student ${studentName} for ${date} at ${time}`, 'RO', roId);
+
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashas2906@gmail.com',
       replyTo: 'skandhayashu2906@gmail.com',
       fromName: `RO Officer (${roId})`,
-      subject: `[MEETING CONFIRMATION - ${issueId}] Scheduled on ${date} at ${time}`,
-      html: `<h3>Meeting Confirmation Notice</h3>
+      subject: `[MEETING ${isReschedule ? 'RESCHEDULED' : 'CONFIRMATION'} - ${issueId}] ${date} at ${time}`,
+      html: `<h3>Meeting ${isReschedule ? 'Rescheduled' : 'Confirmation'} Notice</h3>
              <p>Dear <strong>${studentName}</strong>,</p>
-             <p>Relationship Officer <strong>${roId}</strong> (skandhayashu2906@gmail.com) has scheduled a meeting regarding Ticket <strong>${issueId}</strong>.</p>
+             <p>Relationship Officer <strong>${roId}</strong> (skandhayashu2906@gmail.com) has ${isReschedule ? 'rescheduled' : 'scheduled'} your meeting regarding Ticket <strong>${issueId}</strong>.</p>
              <ul>
                <li><strong>Date:</strong> ${date}</li>
                <li><strong>Time:</strong> ${time}</li>
@@ -614,7 +684,7 @@ app.post('/api/meetings', async (req, res) => {
       recipientName: studentName
     });
 
-    res.status(201).json({ id: meetId });
+    res.status(201).json({ id: meetId, isReschedule });
   } catch (err) {
     console.error('Error scheduling meeting:', err);
     res.status(500).json({ error: 'Failed to schedule meeting' });
@@ -641,7 +711,7 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
   const issueId = req.params.id;
   const { roId, resolutionNotes, userRole } = req.body;
   const timestamp = new Date().toISOString();
-  const logText = userRole === 'Admin' 
+  const logText = userRole === 'Admin'
     ? `Issue resolved by Administrator: ${resolutionNotes}`
     : `Issue resolved by RO: ${resolutionNotes}`;
 
@@ -651,7 +721,7 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
       return res.status(404).json({ error: 'Issue not found' });
     }
 
-    const logs = issueRes.rows[0].logs;
+    const logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : (issueRes.rows[0].logs || []);
     logs.push({ text: logText, time: timestamp });
 
     await query(
@@ -686,52 +756,72 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
   }
 });
 
-// 5b. REOPEN AN ISSUE (Student Re-open Feature)
+// 5b. REOPEN AN ISSUE (Student Re-open Feature with 3rd Attempt Auto-Escalation)
 app.put('/api/issues/:id/reopen', async (req, res) => {
   const issueId = req.params.id;
   const { studentId, reason } = req.body;
   const timestamp = new Date().toISOString();
   const reopenReasonText = reason ? `: ${reason}` : '';
-  const logText = `Ticket re-opened by student due to unsatisfied resolution${reopenReasonText}`;
 
   try {
-    const issueRes = await query(`SELECT logs, ro_id FROM issues WHERE id = $1`, [issueId]);
+    const issueRes = await query(`SELECT logs, ro_id, student_id, category FROM issues WHERE id = $1`, [issueId]);
     if (issueRes.rowCount === 0) {
       return res.status(404).json({ error: 'Issue not found' });
     }
 
+    const { ro_id: roId, student_id: issueStudentId, category } = issueRes.rows[0];
     let logs = [];
     if (issueRes.rows[0]?.logs) {
       logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : issueRes.rows[0].logs;
     }
-    const roId = issueRes.rows[0].ro_id;
+
+    // Count attempts in this category
+    const catCheck = await query(
+      `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
+      [issueStudentId || studentId, category, roId]
+    );
+    let totalAttempts = catCheck.rowCount;
+    catCheck.rows.forEach(row => {
+      const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
+      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+      totalAttempts += reopens;
+    });
+
+    const isThirdAttempt = totalAttempts >= 2; // 3rd attempt or higher
+    const newStatus = isThirdAttempt ? 'Escalated' : 'Re-opened by Student';
+    const logText = isThirdAttempt
+      ? `[AUTO-ESCALATED TO ADMIN] 3rd re-escalation attempt for category ${category}. Automatically escalated directly to Admin Office for priority intervention.`
+      : `Ticket re-opened by student due to unsatisfied resolution${reopenReasonText}`;
+
     logs.push({ text: logText, time: timestamp });
 
     await query(
       `UPDATE issues 
-       SET status = 'Re-opened by Student', resolved_at = NULL, logs = $1 
-       WHERE id = $2`,
-      [JSON.stringify(logs), issueId]
+       SET status = $1, resolved_at = NULL, logs = $2 
+       WHERE id = $3`,
+      [newStatus, JSON.stringify(logs), issueId]
     );
 
-    await logSystemEvent(`Issue ${issueId} re-opened by student ${studentId}. Routed back to RO ${roId}`, 'Student', studentId);
+    await logSystemEvent(`Issue ${issueId} re-opened by student ${studentId} (${newStatus})`, 'Student', studentId);
 
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
       to: 'skandhayashu2906@gmail.com',
       replyTo: 'skandhayashas2906@gmail.com',
       fromName: `Student Portal (${studentId})`,
-      subject: `[RO URGENT - TICKET REOPENED] Ticket ${issueId} Re-opened by Student`,
+      subject: isThirdAttempt ? `[ADMIN AUTO-ESCALATION - 3RD REOPEN] Ticket ${issueId}` : `[RO URGENT - TICKET REOPENED] Ticket ${issueId} Re-opened by Student`,
       html: `<h3>Alert: Ticket Re-opened by Student</h3>
-             <p>Student <strong>${studentId}</strong> (skandhayashas2906@gmail.com) has re-opened ticket <strong>${issueId}</strong> routed to RO <strong>${roId}</strong>.</p>
+             <p>Student <strong>${studentId}</strong> (skandhayashas2906@gmail.com) has re-opened ticket <strong>${issueId}</strong> (Category: ${category}).</p>
              <p><strong>Reason:</strong> ${reason || 'Unsatisfied resolution'}</p>
+             <p><strong>Status:</strong> <span style="color: ${isThirdAttempt ? '#dc2626' : '#2563eb'}; font-weight: bold;">${newStatus}</span></p>
+             ${isThirdAttempt ? '<p style="color: #dc2626; font-weight: bold;">⚠️ 3rd Attempt reached. Automatically escalated directly to Admin Office.</p>' : ''}
              <hr/>
-             <p><em>Dispatched to RO Office email: skandhayashu2906@gmail.com</em></p>`,
+             <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
       issueId,
       eventType: 'ISSUE_REOPENED'
     });
 
-    res.json({ success: true });
+    res.json({ success: true, status: newStatus, isThirdAttempt });
   } catch (err) {
     console.error('Error reopening issue:', err);
     res.status(500).json({ error: 'Failed to reopen issue' });
