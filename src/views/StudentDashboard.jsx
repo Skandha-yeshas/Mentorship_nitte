@@ -1,19 +1,18 @@
-import React, { useContext, useState } from 'react';
-import { DatabaseContext, ALL_CATEGORIES } from '../context/DatabaseContext';
-import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield } from 'lucide-react';
+import React, { useContext, useState, useEffect, useRef } from 'react';
+import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
+import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp } from 'lucide-react';
+import { WebRtcMeetingSession } from '../utils/webrtcService';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
+  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
   
-  // Student Video Modal State
-  const [showStudentVideoModal, setShowStudentVideoModal] = useState(false);
-  const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
-  const [isStudentCamOff, setIsStudentCamOff] = useState(false);
-  
+  // Submission Self-Help Video Modal State
+  const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
+
   // Tabs within Student Dashboard
   const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
-  
+
   // Form states (Clean Single Issue Form)
   const [category, setCategory] = useState(ALL_CATEGORIES[0]);
   const [description, setDescription] = useState('');
@@ -56,6 +55,158 @@ export const StudentDashboard = ({ studentId }) => {
   const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
   const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
   const selectedIssue = (db.issues || []).find(i => i.id === activeSelectedIssueId);
+
+  // Student Video Modal State
+  const [showStudentVideoModal, setShowStudentVideoModal] = useState(false);
+  const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
+  const [isStudentCamOff, setIsStudentCamOff] = useState(false);
+  const [studentMediaPermissionState, setStudentMediaPermissionState] = useState('idle'); // 'idle' | 'requesting' | 'granted' | 'denied'
+  const [studentMediaPermissionError, setStudentMediaPermissionError] = useState('');
+  const [playingRecording, setPlayingRecording] = useState(null);
+
+  // WebRTC Peer Video Stream States for RO & Student
+  const [roRemoteStream, setRoRemoteStream] = useState(null);
+  const [peerConnected, setPeerConnected] = useState(false);
+
+  const studentVideoRef = useRef(null);
+  const studentStreamRef = useRef(null);
+  const roRemoteVideoRef = useRef(null);
+  const webrtcSessionRef = useRef(null);
+
+  const requestStudentMedia = async () => {
+    setStudentMediaPermissionState('requesting');
+    setStudentMediaPermissionError('');
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Your browser does not support camera/microphone access (WebRTC).');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: true
+      });
+      studentStreamRef.current = stream;
+      if (studentVideoRef.current) {
+        studentVideoRef.current.srcObject = stream;
+      }
+      setStudentMediaPermissionState('granted');
+
+      // Initialize WebRTC Meeting Session for live peer video with RO
+      if (selectedIssue) {
+        if (webrtcSessionRef.current) {
+          webrtcSessionRef.current.updateLocalStream(stream);
+        } else {
+          webrtcSessionRef.current = new WebRtcMeetingSession({
+            issueId: selectedIssue.id,
+            role: 'student',
+            localStream: stream,
+            onRemoteStream: (remStream) => {
+              console.log('[Student] Remote RO stream received:', remStream);
+              setRoRemoteStream(remStream);
+              if (roRemoteVideoRef.current) {
+                roRemoteVideoRef.current.srcObject = remStream;
+              }
+            },
+            onPeerStatus: (status) => {
+              setPeerConnected(Boolean(status.connected));
+            },
+            onMeetingEnded: () => {
+              console.log('[Student] Meeting ended signal received from RO.');
+              handleCloseStudentVideo();
+              alert('📢 Meeting Ended by Relationship Officer:\n\nThe RO has concluded this online session. Your session video recording has been saved to your ticket records.');
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Student camera/mic permission error:', err);
+      setStudentMediaPermissionState('denied');
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setStudentMediaPermissionError('Camera & Microphone permission was blocked by your browser. Please click the lock or camera icon in your address bar and allow Camera and Microphone, then click "Retry Permissions".');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setStudentMediaPermissionError('No webcam or microphone hardware detected on this device. Running in simulated fallback mode.');
+      } else {
+        setStudentMediaPermissionError(err.message || 'Unable to access camera or microphone.');
+      }
+    }
+  };
+
+  const toggleStudentMic = () => {
+    const nextMuted = !isStudentMicMuted;
+    setIsStudentMicMuted(nextMuted);
+    if (studentStreamRef.current) {
+      studentStreamRef.current.getAudioTracks().forEach(track => {
+        track.enabled = !nextMuted;
+      });
+    }
+  };
+
+  const toggleStudentCamera = () => {
+    const nextCamOff = !isStudentCamOff;
+    setIsStudentCamOff(nextCamOff);
+    if (studentStreamRef.current) {
+      studentStreamRef.current.getVideoTracks().forEach(track => {
+        track.enabled = !nextCamOff;
+      });
+    }
+  };
+
+  const handleCloseStudentVideo = () => {
+    setShowStudentVideoModal(false);
+    setStudentMediaPermissionState('idle');
+    if (webrtcSessionRef.current) {
+      try { webrtcSessionRef.current.close(); } catch (e) {}
+      webrtcSessionRef.current = null;
+    }
+    setRoRemoteStream(null);
+    setPeerConnected(false);
+    if (studentStreamRef.current) {
+      studentStreamRef.current.getTracks().forEach(track => track.stop());
+      studentStreamRef.current = null;
+    }
+  };
+
+  // Auto-exit online meeting when RO ends or marks meeting completed in DB
+  useEffect(() => {
+    if (showStudentVideoModal && selectedIssue) {
+      const currentMeet = (db.meetings || []).find(m => 
+        (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
+      );
+      if (currentMeet && (currentMeet.status === 'Completed' || currentMeet.status === 'Finished' || currentMeet.status === 'Cancelled')) {
+        handleCloseStudentVideo();
+        alert('📢 Meeting Ended by Relationship Officer:\n\nThe RO has concluded this online session. Your session video recording has been saved to your ticket records.');
+      }
+    }
+  }, [db.meetings, showStudentVideoModal, selectedIssue]);
+
+  useEffect(() => {
+    if (showStudentVideoModal) {
+      requestStudentMedia();
+    } else {
+      setStudentMediaPermissionState('idle');
+      if (webrtcSessionRef.current) {
+        try { webrtcSessionRef.current.close(); } catch (e) {}
+        webrtcSessionRef.current = null;
+      }
+      setRoRemoteStream(null);
+      setPeerConnected(false);
+      if (studentStreamRef.current) {
+        studentStreamRef.current.getTracks().forEach(t => t.stop());
+        studentStreamRef.current = null;
+      }
+    }
+    return () => {
+      if (webrtcSessionRef.current) {
+        try { webrtcSessionRef.current.close(); } catch (e) {}
+        webrtcSessionRef.current = null;
+      }
+      setRoRemoteStream(null);
+      setPeerConnected(false);
+      if (studentStreamRef.current) {
+        studentStreamRef.current.getTracks().forEach(t => t.stop());
+        studentStreamRef.current = null;
+      }
+    };
+  }, [showStudentVideoModal]);
 
   // Resources and sessions from their mentor
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
@@ -116,6 +267,81 @@ export const StudentDashboard = ({ studentId }) => {
 
   const [errorMessage, setErrorMessage] = useState('');
 
+  const getCategoryVideo = (cat) => {
+    if (!cat) return null;
+    const cleanCat = String(cat).trim();
+
+    // 1. Fetch freshest video list from state or localStorage
+    let list = db.categoryVideos || [];
+    try {
+      const saved = localStorage.getItem('nitte_saved_category_videos');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const parsedMap = new Map(parsed.map(v => [v.category?.toLowerCase()?.trim(), v]));
+          list.forEach(v => {
+            const k = v.category?.toLowerCase()?.trim();
+            if (!parsedMap.has(k)) parsedMap.set(k, v);
+          });
+          list = Array.from(parsedMap.values());
+        }
+      }
+    } catch (e) {}
+
+    // Priority 1: Exact match on full category name (e.g. 'Academic - Course Enrollment issues')
+    let match = list.find(v => v.category?.toLowerCase()?.trim() === cleanCat.toLowerCase());
+    if (match) return match;
+
+    // Priority 2: Match by main category prefix (e.g. 'Academic' from 'Academic - Course Enrollment issues')
+    const prefix = cleanCat.split(' - ')[0]?.trim();
+    if (prefix) {
+      match = list.find(v => v.category?.toLowerCase()?.trim() === prefix.toLowerCase());
+      if (match) return match;
+    }
+
+    // Priority 3: Video category starts with or contains prefix (e.g. 'Academic Support Desk' contains 'Academic')
+    if (prefix) {
+      match = list.find(v => {
+        const vCat = v.category?.toLowerCase()?.trim() || '';
+        return vCat.startsWith(prefix.toLowerCase()) || vCat.includes(prefix.toLowerCase());
+      });
+      if (match) return match;
+    }
+
+    // Priority 4: Category contains video category or vice versa
+    match = list.find(v => {
+      const vCat = v.category?.toLowerCase()?.trim();
+      return vCat && (cleanCat.toLowerCase().includes(vCat) || vCat.includes(cleanCat.toLowerCase()));
+    });
+    if (match) return match;
+
+    return list[0] || {
+      category: 'General',
+      title: 'NITTE Student Guidance & Support Walkthrough',
+      videoUrl: 'https://www.youtube.com/watch?v=kqtD5dpn9C8',
+      description: 'Follow the steps outlined in this guidance video to resolve common university queries.'
+    };
+  };
+
+  const handleSelfResolveIssue = async () => {
+    if (!submissionVideoModal) return;
+    const { issueId } = submissionVideoModal;
+    await resolveIssue(issueId, 'Student (Self-Resolved via Guidance Video)', 'Resolved by student after watching self-help guidance video.');
+    setSubmissionVideoModal(null);
+    setActiveTab('my-issues');
+    setSelectedIssueId(issueId);
+    alert('🎉 Issue Resolved!\n\nYour ticket has been marked as Closed/Resolved. Thank you for using the NITTE self-help solution center!');
+  };
+
+  const handleProceedToRO = () => {
+    if (!submissionVideoModal) return;
+    const { issueId, roName } = submissionVideoModal;
+    setSubmissionVideoModal(null);
+    setActiveTab('my-issues');
+    setSelectedIssueId(issueId);
+    alert(`📢 Ticket Forwarded to Relationship Officer:\n\nYour ticket (${issueId}) remains open and assigned to ${roName}. They will review your ticket and schedule a session if needed.`);
+  };
+
   const handleSubmitIssue = async (e) => {
     e.preventDefault();
     if (!description.trim()) return;
@@ -127,24 +353,20 @@ export const StudentDashboard = ({ studentId }) => {
     }
 
     try {
-      const prevCatCount = myIssues.filter(i => i.category === category).length;
+      const submittedCategory = category;
       const newIssueId = await submitIssue(student.id, category, description, priority);
       
-      if (prevCatCount >= 2) {
-        setSuccessMessage(`🚨 3rd Attempt Limit Reached: Your ticket ${newIssueId} in "${category}" has been automatically escalated directly to the Admin Office for priority resolution!`);
-      } else {
-        setSuccessMessage(`Issue successfully submitted! Ticket ID: ${newIssueId} (Attempt #${prevCatCount + 1} for this category)`);
-      }
-
       setDescription('');
       setCategory(ALL_CATEGORIES[0]);
       setPriority('Medium');
-      
-      setTimeout(() => {
-        setSuccessMessage('');
-        setActiveTab('my-issues');
-        setSelectedIssueId(newIssueId);
-      }, 3000);
+      setSelectedIssueId(newIssueId);
+
+      // Open Instant Solution Video Modal
+      setSubmissionVideoModal({
+        issueId: newIssueId,
+        category: submittedCategory,
+        roName: activeFormRO ? activeFormRO.name : 'Relationship Officer'
+      });
     } catch (err) {
       setErrorMessage(err.message || 'Failed to submit issue');
     }
@@ -506,11 +728,28 @@ export const StudentDashboard = ({ studentId }) => {
                   <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}><strong>Created:</strong> {new Date(selectedIssue.createdAt).toLocaleString()}</p>
                 </div>
 
-                <div style={{ marginBottom: '20px' }}>
+                <div style={{ marginBottom: '16px' }}>
                   <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Issue Description:</h4>
                   <p style={{ fontSize: '0.9rem', background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
                     {selectedIssue.description}
                   </p>
+                </div>
+
+                {/* Instant Guidance & Solution Video Button */}
+                <div style={{ marginBottom: '20px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionVideoModal({
+                      issueId: selectedIssue.id,
+                      category: selectedIssue.category,
+                      roName: selectedIssue.roName || 'Relationship Officer'
+                    })}
+                    className="btn btn-secondary"
+                    style={{ width: '100%', fontSize: '0.82rem', padding: '9px 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
+                  >
+                    <Play size={15} fill="#ef4444" style={{ color: '#ef4444' }} />
+                    <span>🎥 Watch Solution & Guidance Video for "{selectedIssue.category.split(' - ')[0]}"</span>
+                  </button>
                 </div>
 
                 {/* RESOLUTION DETAILS */}
@@ -589,22 +828,36 @@ export const StudentDashboard = ({ studentId }) => {
                 )}
 
                 {/* STORED VIDEO RECORDINGS ARCHIVE FOR STUDENT */}
-                {db.recordings && db.recordings.filter(r => r.issueId === selectedIssue.id).length > 0 && (
+                {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
                   <div style={{ border: '1px solid rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.05)', padding: '12px 14px', borderRadius: '6px', marginBottom: '20px' }}>
                     <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#10b981', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Video size={15} /> Auto-Archived Online Video Recordings ({db.recordings.filter(r => r.issueId === selectedIssue.id).length})
+                      <Video size={15} /> Auto-Archived Online Video Recordings ({db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length})
                     </h4>
-                    {db.recordings.filter(r => r.issueId === selectedIssue.id).map(rec => (
+                    {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
                       <div key={rec.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '8px 10px', borderRadius: '4px', marginTop: '6px', fontSize: '0.78rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ fontWeight: '700', color: '#10b981' }}>🎥 {rec.mode} ({rec.durationText})</span>
                           <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>Recorded: {new Date(rec.recordedAt).toLocaleString()}</span>
                         </div>
                         <p style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>{rec.transcriptSummary}</p>
-                        <div style={{ marginTop: '6px' }}>
-                          <a href={rec.videoUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--nitte-blue)', fontWeight: '600', textDecoration: 'underline', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                            <Play size={12} /> Play Stored Video Recording (.webm / mp4)
-                          </a>
+                        <div style={{ marginTop: '6px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => setPlayingRecording(rec)}
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.75rem', padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                          >
+                            <Play size={12} /> Play Stored Video Recording
+                          </button>
+                          {rec.videoUrl && rec.videoUrl.startsWith('blob:') && (
+                            <a
+                              href={rec.videoUrl}
+                              download={`recording_${selectedIssue.id}.webm`}
+                              style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <Download size={12} /> Download .webm
+                            </a>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -834,22 +1087,108 @@ export const StudentDashboard = ({ studentId }) => {
             </div>
 
             <div className="modal-body" style={{ padding: '20px 0' }}>
+              {/* Permission & Device Status Banners */}
+              {studentMediaPermissionState === 'requesting' && (
+                <div style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6', color: '#93c5fd', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Camera size={16} />
+                  <span><strong>Requesting Camera & Microphone Access:</strong> Please click <em>"Allow"</em> on your browser's prompt to enable your live video and audio feed.</span>
+                </div>
+              )}
+
+              {studentMediaPermissionState === 'granted' && (
+                <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#6ee7b7', padding: '8px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <CheckCircle2 size={16} />
+                    <span><strong>Live Camera & Microphone Active:</strong> Browser permissions granted. Your webcam video and audio are streaming.</span>
+                  </div>
+                  <span style={{ fontSize: '0.72rem', background: '#065f46', color: '#a7f3d0', padding: '2px 8px', borderRadius: '12px' }}>🔒 Live Stream</span>
+                </div>
+              )}
+
+              {studentMediaPermissionState === 'denied' && (
+                <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertCircle size={16} style={{ color: '#ef4444' }} />
+                    <span><strong>Camera/Mic Notice:</strong> {studentMediaPermissionError || 'Permissions blocked by browser.'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={requestStudentMedia}
+                    className="btn btn-warning"
+                    style={{ fontSize: '0.74rem', padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <RotateCcw size={12} /> Retry Permissions
+                  </button>
+                </div>
+              )}
+
+              {/* Video Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                
+                {/* RO OFFICER (HOST) LIVE VIDEO FEED */}
                 <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', height: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-                  <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#3b82f6', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 'bold' }}>
-                      RO
+                  {roRemoteStream ? (
+                    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#000' }}>
+                      <video
+                        ref={(el) => {
+                          roRemoteVideoRef.current = el;
+                          if (el && roRemoteStream) {
+                            el.srcObject = roRemoteStream;
+                          }
+                        }}
+                        autoPlay
+                        playsInline
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.7rem', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3b82f6', display: 'inline-block' }} /> 🟢 RO Host Live WebCam
+                      </div>
                     </div>
-                    <p style={{ marginTop: '10px', fontWeight: '700', fontSize: '0.9rem', color: '#ffffff' }}>Relationship Officer (Host)</p>
-                    <span style={{ fontSize: '0.7rem', color: '#93c5fd' }}>Conducting Mentorship & Support Session</span>
+                  ) : (
+                    <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#3b82f6', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 'bold' }}>
+                        RO
+                      </div>
+                      <p style={{ marginTop: '10px', fontWeight: '700', fontSize: '0.9rem', color: '#ffffff' }}>Relationship Officer (Host)</p>
+                      <span style={{ fontSize: '0.7rem', color: '#93c5fd' }}>
+                        {peerConnected ? 'Live Connection Active' : 'Waiting for RO Host to start camera...'}
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', background: 'rgba(0,0,0,0.7)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
+                    <Mic size={12} style={{ color: roRemoteStream ? '#10b981' : (peerConnected ? '#f59e0b' : '#94a3b8') }} />
+                    <span>{roRemoteStream ? 'Host Audio & Video Live' : (peerConnected ? 'Connecting Audio...' : 'Waiting for Host')}</span>
+                  </div>
+                  <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.68rem', color: roRemoteStream ? '#10b981' : '#94a3b8' }}>
+                    {roRemoteStream ? '🟢 Live P2P' : (peerConnected ? '🟡 Connecting...' : '⚪ Waiting')}
                   </div>
                 </div>
 
+                {/* STUDENT (YOU) LIVE WEBCAM VIDEO FEED */}
                 <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', height: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
                   {isStudentCamOff ? (
                     <div style={{ color: '#64748b', textAlign: 'center' }}>
                       <VideoOff size={36} style={{ marginBottom: '6px' }} />
-                      <p style={{ fontSize: '0.8rem' }}>Camera Off</p>
+                      <p style={{ fontSize: '0.8rem', margin: 0 }}>Camera Off</p>
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Click 'Turn Camera On' below</span>
+                    </div>
+                  ) : studentMediaPermissionState === 'granted' ? (
+                    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#000' }}>
+                      <video
+                        ref={(el) => {
+                          studentVideoRef.current = el;
+                          if (el && studentStreamRef.current) {
+                            el.srcObject = studentStreamRef.current;
+                          }
+                        }}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.7rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} /> Live HD WebCam (You)
+                      </div>
                     </div>
                   ) : (
                     <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #047857 0%, #064e3b 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
@@ -857,9 +1196,19 @@ export const StudentDashboard = ({ studentId }) => {
                         {student.name ? student.name.charAt(0) : 'S'}
                       </div>
                       <p style={{ marginTop: '10px', fontWeight: '700', fontSize: '0.9rem', color: '#ffffff' }}>{student.name} (You)</p>
-                      <span style={{ fontSize: '0.7rem', color: '#a7f3d0' }}>Student Participant — Live</span>
+                      <span style={{ fontSize: '0.7rem', color: '#a7f3d0' }}>
+                        {studentMediaPermissionState === 'requesting' ? 'Connecting webcam...' : 'Student Participant — Live'}
+                      </span>
                     </div>
                   )}
+
+                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', background: 'rgba(0,0,0,0.7)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
+                    {isStudentMicMuted ? <MicOff size={12} style={{ color: '#ef4444' }} /> : <Mic size={12} style={{ color: '#10b981' }} />}
+                    <span>{isStudentMicMuted ? 'Muted' : 'Audio Live'}</span>
+                  </div>
+                  <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.68rem', color: '#10b981' }}>
+                    📶 24ms Ping
+                  </div>
                 </div>
               </div>
 
@@ -871,29 +1220,38 @@ export const StudentDashboard = ({ studentId }) => {
               </div>
             </div>
 
-            <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', gap: '10px' }}>
+            <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
-                  onClick={() => setIsStudentMicMuted(!isStudentMicMuted)}
+                  onClick={toggleStudentMic}
                   style={{ background: isStudentMicMuted ? '#ef4444' : '#334155', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
                 >
                   {isStudentMicMuted ? <MicOff size={15} /> : <Mic size={15} />}
-                  {isStudentMicMuted ? 'Unmute' : 'Mute Mic'}
+                  {isStudentMicMuted ? 'Unmute Mic' : 'Mute Mic'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsStudentCamOff(!isStudentCamOff)}
+                  onClick={toggleStudentCamera}
                   style={{ background: isStudentCamOff ? '#ef4444' : '#334155', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
                 >
                   {isStudentCamOff ? <VideoOff size={15} /> : <Video size={15} />}
                   {isStudentCamOff ? 'Turn Camera On' : 'Turn Camera Off'}
                 </button>
+                {studentMediaPermissionState !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={requestStudentMedia}
+                    style={{ background: '#2563eb', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
+                  >
+                    <Camera size={15} /> Request Cam/Mic Access
+                  </button>
+                )}
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowStudentVideoModal(false)}
+                onClick={handleCloseStudentVideo}
                 className="btn btn-secondary"
               >
                 Leave Session Window
@@ -902,6 +1260,182 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         </div>
       )}
+
+      {/* VIDEO PLAYER MODAL FOR ARCHIVED RECORDINGS FOR STUDENT */}
+      {playingRecording && (
+        <div className="modal-overlay" style={{ zIndex: 1200, background: 'rgba(0,0,0,0.85)' }}>
+          <div className="modal-content" style={{ maxWidth: '750px', width: '92%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px' }}>
+            <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Video size={20} style={{ color: '#10b981' }} />
+                <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#fff' }}>
+                  Archived Online Video Recording ({playingRecording.durationText})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlayingRecording(null)}
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ padding: '20px 0' }}>
+              <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', marginBottom: '14px' }}>
+                <video
+                  src={playingRecording.videoUrl}
+                  controls
+                  autoPlay
+                  style={{ width: '100%', maxHeight: '420px', display: 'block' }}
+                >
+                  Your browser does not support HTML5 video playback.
+                </video>
+              </div>
+              <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '12px 14px', borderRadius: '6px', fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ color: '#10b981', fontWeight: '700' }}>Mode: {playingRecording.mode}</span>
+                  <span style={{ color: '#94a3b8' }}>Recorded: {new Date(playingRecording.recordedAt).toLocaleString()}</span>
+                </div>
+                <p style={{ margin: 0, color: '#cbd5e1' }}>{playingRecording.transcriptSummary}</p>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {playingRecording.videoUrl && playingRecording.videoUrl.startsWith('blob:') && (
+                <a
+                  href={playingRecording.videoUrl}
+                  download={`recording_${playingRecording.issueId || 'session'}.webm`}
+                  className="btn btn-secondary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
+                >
+                  <Download size={14} /> Download Recording (.webm)
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setPlayingRecording(null)}
+                className="btn btn-primary"
+                style={{ marginLeft: 'auto' }}
+              >
+                Close Video Player
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SELF-HELP GUIDANCE & SOLUTION VIDEO MODAL (SHOWN UPON ISSUE SUBMISSION) */}
+      {submissionVideoModal && (() => {
+        const catVideo = getCategoryVideo(submissionVideoModal.category);
+        const rawUrl = catVideo ? (catVideo.videoUrl || catVideo.video_url || '') : '';
+        const embedUrl = catVideo ? getYoutubeEmbedUrl(rawUrl) : '';
+        const isEmbed = embedUrl.includes('/embed/') || embedUrl.includes('youtube') || embedUrl.includes('youtu.be');
+
+        return (
+          <div className="modal-overlay" style={{ zIndex: 1250, background: 'rgba(0,0,0,0.88)' }}>
+            <div className="modal-content" style={{ maxWidth: '820px', width: '95%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
+              {/* Header */}
+              <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '10px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Play size={22} fill="#ef4444" />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff', fontWeight: '700' }}>
+                      Instant Solution & Guidance Video
+                    </h3>
+                    <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
+                      Ticket <strong>#{submissionVideoModal.issueId}</strong> &nbsp;|&nbsp; Category: <strong>{submissionVideoModal.category}</strong>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleProceedToRO}
+                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '6px' }}
+                  title="Close and keep ticket assigned to RO"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="modal-body" style={{ padding: '16px 0' }}>
+                {/* Helpful notice */}
+                <div style={{ background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '10px', color: '#93c5fd' }}>
+                  <HelpCircle size={18} style={{ color: '#3b82f6', flexShrink: 0 }} />
+                  <span>
+                    <strong>Self-Help Resolution:</strong> Please review this official solution tutorial. Many routine procedures, portal instructions, and fee/exam requests can be resolved immediately with these steps!
+                  </span>
+                </div>
+
+                {/* Embedded Video Player */}
+                <div style={{ position: 'relative', width: '100%', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '10px', background: '#000', marginBottom: '14px' }}>
+                  {isEmbed ? (
+                    <iframe
+                      src={embedUrl}
+                      title={catVideo ? catVideo.title : 'Guidance Video'}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
+                    />
+                  ) : (
+                    <video
+                      src={rawUrl}
+                      controls
+                      autoPlay
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+                    />
+                  )}
+                </div>
+
+                {/* Guidance Title & Step-by-Step Notes */}
+                <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '14px 16px', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: '#f8fafc' }}>
+                      {catVideo ? catVideo.title : 'Official Guidance Walkthrough'}
+                    </h4>
+                    <span style={{ fontSize: '0.72rem', background: '#2563eb', color: '#fff', padding: '2px 8px', borderRadius: '12px' }}>
+                      Curated by {catVideo?.updatedBy || 'RO Office'}
+                    </span>
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: '0.82rem', lineHeight: '1.55' }}>
+                    {catVideo?.description}
+                  </div>
+                </div>
+              </div>
+
+              {/* Decision Action Buttons */}
+              <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ fontSize: '0.76rem', color: '#94a3b8' }}>
+                  Did this video resolve your question?
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  {/* OPTION 1: Self-Resolve and Close Ticket */}
+                  <button
+                    type="button"
+                    onClick={handleSelfResolveIssue}
+                    className="btn btn-success"
+                    style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', fontWeight: '700', padding: '9px 18px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}
+                  >
+                    <CheckCircle2 size={16} /> ✅ Video Solved My Issue - Close Ticket
+                  </button>
+
+                  {/* OPTION 2: Escalate / Forward to RO */}
+                  <button
+                    type="button"
+                    onClick={handleProceedToRO}
+                    className="btn btn-primary"
+                    style={{ background: '#2563eb', borderColor: '#2563eb', color: '#ffffff', fontWeight: '600', padding: '9px 18px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}
+                  >
+                    <Send size={15} /> 🚀 Need More Help - Proceed with RO
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

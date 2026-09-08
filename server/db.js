@@ -1,6 +1,12 @@
 import pg from 'pg';
 const { Client, Pool } = pg;
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config();
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/mentorship_db';
@@ -231,6 +237,16 @@ const createTables = async () => {
       issue_id VARCHAR(50),
       status VARCHAR(50) NOT NULL DEFAULT 'SENT',
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    // 11. Category Guidance & Solution Videos (RO Manageable)
+    `CREATE TABLE IF NOT EXISTS category_videos (
+      category VARCHAR(255) PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      video_url TEXT NOT NULL,
+      description TEXT,
+      updated_by VARCHAR(100) DEFAULT 'System',
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   ];
 
@@ -249,8 +265,63 @@ const createTables = async () => {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Stu2026'`);
     await pool.query(`UPDATE ros SET email = 'skandhayashu2906@gmail.com' WHERE email IS NOT NULL`);
     await pool.query(`UPDATE students SET email = 'skandhayashas2906@gmail.com' WHERE email IS NOT NULL`);
+
+    // Seed default guidance videos if not existing
+    const defaultVideos = [
+      {
+        category: 'Academic',
+        title: 'NITTE Academic Guide: Course Enrollment & Attendance Policy',
+        video_url: 'https://www.youtube.com/watch?v=kqtD5dpn9C8',
+        description: '1. Check student ERP portal for minimum 75% attendance threshold.\n2. Medical or duty leave certificates must be submitted to HOD within 3 days.\n3. Verify course elective credits with your department coordinator.'
+      },
+      {
+        category: 'Exams',
+        title: 'Examination Portal & Hall Ticket Resolution Walkthrough',
+        video_url: 'https://www.youtube.com/watch?v=3JZ_D3ELwOQ',
+        description: '1. Clear pending department dues before downloading exam admit card.\n2. Apply for revaluation via Controller of Examination portal within 7 days of result declaration.\n3. Make-up exam forms are verified automatically based on attendance approval.'
+      },
+      {
+        category: 'Financial',
+        title: 'Fee Installments, Scholarships & Payment Receipt Assistance',
+        video_url: 'https://www.youtube.com/watch?v=fJ9rUzIMcZQ',
+        description: '1. Download fee receipt directly from Finance Portal under Transaction History.\n2. For installment plans, submit parent undertaking letter.\n3. State & National Scholarship bonafide certificates are issued at Admin Desk Counter 2.'
+      },
+      {
+        category: 'Hostels',
+        title: 'Campus Hostel Maintenance, Mess & Facility Protocol',
+        video_url: 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
+        description: '1. For electrical or plumbing issues, log a ticket in the Hostel Maintenance Register at block warden desk.\n2. Mess committee meetings are held on the 1st of every month.\n3. Curfew extension passes must be requested 24 hours prior via Warden.'
+      },
+      {
+        category: 'Placements',
+        title: 'Placement Training, Resume Verification & Drive Registration',
+        video_url: 'https://www.youtube.com/watch?v=21X5lGlDOfg',
+        description: '1. Ensure resume PDF is verified by Placement Cell coordinator.\n2. Update CGPA and active backlogs in the training portal.\n3. Collect NOC certificates from Training & Placement Officer.'
+      },
+      {
+        category: 'Facilities',
+        title: 'Campus Facilities: Library Access, Gym & Transport Services',
+        video_url: 'https://www.youtube.com/watch?v=OPf0YbXqDm0',
+        description: '1. Digital Library accounts are active for all enrolled students.\n2. Campus bus route passes can be renewed at Transport Office.\n3. Sports equipment is issued with valid student ID card.'
+      },
+      {
+        category: 'Personal',
+        title: 'Student Counseling, Wellness & Mentorship Support',
+        video_url: 'https://www.youtube.com/watch?v=7wtfhZwyrcc',
+        description: '1. Confidential student counseling is available at Wellness Center Block B.\n2. Mentors are available every Wednesday during tutorial hours.\n3. Reach out to your Relationship Officer for a private 1-on-1 session.'
+      }
+    ];
+
+    for (const v of defaultVideos) {
+      await pool.query(
+        `INSERT INTO category_videos (category, title, video_url, description, updated_by)
+         VALUES ($1, $2, $3, $4, 'System')
+         ON CONFLICT (category) DO NOTHING`,
+        [v.category, v.title, v.video_url, v.description]
+      );
+    }
   } catch (err) {
-    console.log('Column alter & email sync check complete.');
+    console.log('Column alter & category videos sync complete:', err.message);
   }
 
   console.log('PostgreSQL database tables verified/created.');

@@ -49,6 +49,18 @@ export const ALL_CATEGORIES = Object.keys(ISSUE_CATEGORIES).reduce((acc, cat) =>
   return acc.concat(ISSUE_CATEGORIES[cat].map(sub => `${cat} - ${sub}`));
 }, []);
 
+// YouTube embed URL conversion helper
+export const getYoutubeEmbedUrl = (url) => {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (trimmed.includes('/embed/')) return trimmed;
+  const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+  if (match && match[1]) {
+    return `https://www.youtube-nocookie.com/embed/${match[1]}?autoplay=1&rel=0`;
+  }
+  return trimmed;
+};
+
 // Mock Fallback Database State when PostgreSQL server is offline
 const MOCK_DB = {
   users: {
@@ -172,6 +184,57 @@ const MOCK_DB = {
       status: 'DELIVERED_GMAIL',
       createdAt: new Date(Date.now() - 86400000 * 1).toISOString()
     }
+  ],
+  categoryVideos: [
+    {
+      category: 'Academic',
+      title: 'NITTE Academic Guide: Course Enrollment & Attendance Policy',
+      videoUrl: 'https://www.youtube.com/watch?v=kqtD5dpn9C8',
+      description: '1. Check student ERP portal for minimum 75% attendance threshold.\n2. Medical or duty leave certificates must be submitted to HOD within 3 days.\n3. Verify course elective credits with your department coordinator.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Exams',
+      title: 'Examination Portal & Hall Ticket Resolution Walkthrough',
+      videoUrl: 'https://www.youtube.com/watch?v=3JZ_D3ELwOQ',
+      description: '1. Clear pending department dues before downloading exam admit card.\n2. Apply for revaluation via Controller of Examination portal within 7 days of result declaration.\n3. Make-up exam forms are verified automatically based on attendance approval.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Financial',
+      title: 'Fee Installments, Scholarships & Payment Receipt Assistance',
+      videoUrl: 'https://www.youtube.com/watch?v=fJ9rUzIMcZQ',
+      description: '1. Download fee receipt directly from Finance Portal under Transaction History.\n2. For installment plans, submit parent undertaking letter.\n3. State & National Scholarship bonafide certificates are issued at Admin Desk Counter 2.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Hostels',
+      title: 'Campus Hostel Maintenance, Mess & Facility Protocol',
+      videoUrl: 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
+      description: '1. For electrical or plumbing issues, log a ticket in the Hostel Maintenance Register at block warden desk.\n2. Mess committee meetings are held on the 1st of every month.\n3. Curfew extension passes must be requested 24 hours prior via Warden.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Placements',
+      title: 'Placement Training, Resume Verification & Drive Registration',
+      videoUrl: 'https://www.youtube.com/watch?v=21X5lGlDOfg',
+      description: '1. Ensure resume PDF is verified by Placement Cell coordinator.\n2. Update CGPA and active backlogs in the training portal.\n3. Collect NOC certificates from Training & Placement Officer.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Facilities',
+      title: 'Campus Facilities: Library Access, Gym & Transport Services',
+      videoUrl: 'https://www.youtube.com/watch?v=OPf0YbXqDm0',
+      description: '1. Digital Library accounts are active for all enrolled students.\n2. Campus bus route passes can be renewed at Transport Office.\n3. Sports equipment is issued with valid student ID card.',
+      updatedBy: 'System'
+    },
+    {
+      category: 'Personal',
+      title: 'Student Counseling, Wellness & Mentorship Support',
+      videoUrl: 'https://www.youtube.com/watch?v=7wtfhZwyrcc',
+      description: '1. Confidential student counseling is available at Wellness Center Block B.\n2. Mentors are available every Wednesday during tutorial hours.\n3. Reach out to your Relationship Officer for a private 1-on-1 session.',
+      updatedBy: 'System'
+    }
   ]
 };
 
@@ -192,13 +255,68 @@ export const DatabaseProvider = ({ children }) => {
       const res = await fetch('/api/db-state');
       if (!res.ok) throw new Error('Backend offline');
       const data = await res.json();
-      setDb(data);
+      setDb(prev => {
+        let recs = (data.recordings && data.recordings.length) ? data.recordings : (prev.recordings || []);
+        if (!recs || !recs.length) {
+          try {
+            const saved = localStorage.getItem('nitte_saved_recordings');
+            if (saved) recs = JSON.parse(saved);
+          } catch (e) {}
+        }
+
+        // Preserve and sync category videos from server or localStorage
+        let catVideos = (data.categoryVideos && data.categoryVideos.length) ? data.categoryVideos : (prev.categoryVideos || []);
+        if (!catVideos || !catVideos.length) {
+          try {
+            const savedVideos = localStorage.getItem('nitte_saved_category_videos');
+            if (savedVideos) catVideos = JSON.parse(savedVideos);
+          } catch (e) {}
+        }
+        if (!catVideos || !catVideos.length) {
+          catVideos = MOCK_DB.categoryVideos;
+        } else {
+          try {
+            localStorage.setItem('nitte_saved_category_videos', JSON.stringify(catVideos));
+          } catch (e) {}
+        }
+
+        return {
+          ...data,
+          recordings: recs || [],
+          categoryVideos: catVideos
+        };
+      });
       setIsPgConnected(true);
       setError(null);
     } catch (err) {
       console.warn('PostgreSQL backend server offline or connecting, running in local state mode.');
       setIsPgConnected(false);
-      setDb(prev => (prev.users?.students?.length ? prev : MOCK_DB));
+      setDb(prev => {
+        let recs = prev.recordings || [];
+        if (!recs.length) {
+          try {
+            const saved = localStorage.getItem('nitte_saved_recordings');
+            if (saved) recs = JSON.parse(saved);
+          } catch (e) {}
+        }
+
+        let catVideos = prev.categoryVideos || [];
+        if (!catVideos || !catVideos.length) {
+          try {
+            const savedVideos = localStorage.getItem('nitte_saved_category_videos');
+            if (savedVideos) catVideos = JSON.parse(savedVideos);
+          } catch (e) {}
+        }
+        if (!catVideos || !catVideos.length) {
+          catVideos = MOCK_DB.categoryVideos;
+        }
+
+        return {
+          ...(prev.users?.students?.length ? prev : MOCK_DB),
+          recordings: recs,
+          categoryVideos: catVideos
+        };
+      });
       setError(null);
     } finally {
       setLoading(false);
@@ -207,6 +325,58 @@ export const DatabaseProvider = ({ children }) => {
 
   useEffect(() => {
     fetchDbState();
+    const pollInterval = setInterval(() => {
+      fetchDbState();
+    }, 3000);
+
+    let bc;
+    let videoBc;
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        bc = new BroadcastChannel('nitte_meeting_sync');
+        bc.onmessage = (event) => {
+          if (event.data && event.data.type === 'meeting_status') {
+            const { meetId, status } = event.data;
+            setDb(prev => ({
+              ...prev,
+              meetings: (prev.meetings || []).map(m => 
+                (m.id === meetId || m.issueId === meetId || m.issue_id === meetId || (m.issueId && meetId && m.issueId.toUpperCase() === meetId.toUpperCase()))
+                  ? { ...m, status }
+                  : m
+              )
+            }));
+            fetchDbState();
+          }
+        };
+
+        // Real-time zero-latency sync for RO guidance videos across tabs
+        videoBc = new BroadcastChannel('nitte_video_sync');
+        videoBc.onmessage = (event) => {
+          if (event.data && event.data.type === 'category_video_updated' && event.data.entry) {
+            const entry = event.data.entry;
+            setDb(prev => {
+              const existing = (prev.categoryVideos || []).filter(
+                v => v.category?.toLowerCase()?.trim() !== entry.category?.toLowerCase()?.trim()
+              );
+              const merged = [entry, ...existing];
+              try {
+                localStorage.setItem('nitte_saved_category_videos', JSON.stringify(merged));
+              } catch (e) {}
+              return {
+                ...prev,
+                categoryVideos: merged
+              };
+            });
+          }
+        };
+      }
+    } catch (e) {}
+
+    return () => {
+      clearInterval(pollInterval);
+      if (bc) bc.close();
+      if (videoBc) videoBc.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -492,8 +662,21 @@ export const DatabaseProvider = ({ children }) => {
     // 1. Update local state immediately for instant UI feedback
     setDb(prev => ({
       ...prev,
-      meetings: (prev.meetings || []).map(m => (m.id === meetId || m.issueId === meetId || m.issue_id === meetId) ? { ...m, status } : m)
+      meetings: (prev.meetings || []).map(m => 
+        (m.id === meetId || m.issueId === meetId || m.issue_id === meetId || (m.issueId && meetId && m.issueId.toUpperCase() === meetId.toUpperCase()))
+          ? { ...m, status }
+          : m
+      )
     }));
+
+    // Broadcast across open tabs
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const bc = new BroadcastChannel('nitte_meeting_sync');
+        bc.postMessage({ type: 'meeting_status', meetId, status });
+        bc.close();
+      }
+    } catch (e) {}
 
     // 2. Also send request to backend API
     try {
@@ -530,14 +713,77 @@ export const DatabaseProvider = ({ children }) => {
 
     const logText = `[AUTO-RECORDED ONLINE MEETING STORED] Session recording saved (Duration: ${durationFormatted}). Archived in NITTE Cloud Storage.`;
 
-    setDb(prev => ({
-      ...prev,
-      recordings: [newRec, ...(prev.recordings || [])],
-      issues: (prev.issues || []).map(i => i.id === issueId ? {
-        ...i,
-        logs: [...(i.logs || []), { time: timestamp, text: logText }]
-      } : i)
-    }));
+    setDb(prev => {
+      const updatedRecs = [newRec, ...(prev.recordings || [])];
+      try {
+        localStorage.setItem('nitte_saved_recordings', JSON.stringify(updatedRecs.slice(0, 30)));
+      } catch (e) {}
+      return {
+        ...prev,
+        recordings: updatedRecs,
+        issues: (prev.issues || []).map(i => (i.id?.toUpperCase() === issueId?.toUpperCase()) ? {
+          ...i,
+          logs: [...(i.logs || []), { time: timestamp, text: logText }]
+        } : i)
+      };
+    });
+  };
+
+  // RO Action: Update or add YouTube guidance video for a category
+  const updateCategoryVideo = async (category, videoUrl, title, description, roId) => {
+    const cleanCat = (category || '').trim();
+    const updatedEntry = {
+      category: cleanCat,
+      title: title || `${cleanCat} Guidance Video`,
+      videoUrl,
+      video_url: videoUrl,
+      description: description || '',
+      updatedBy: roId || 'RO',
+      updatedAt: new Date().toISOString()
+    };
+
+    // 1. Instantly update local React state & localStorage
+    setDb(prev => {
+      const existing = (prev.categoryVideos || []).filter(
+        v => v.category?.toLowerCase()?.trim() !== cleanCat.toLowerCase()
+      );
+      const merged = [updatedEntry, ...existing];
+      try {
+        localStorage.setItem('nitte_saved_category_videos', JSON.stringify(merged));
+      } catch (e) {}
+      return {
+        ...prev,
+        categoryVideos: merged
+      };
+    });
+
+    // 2. Broadcast immediately across open browser tabs for real-time sync (e.g., RO tab -> Student tab)
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const videoBc = new BroadcastChannel('nitte_video_sync');
+        videoBc.postMessage({
+          type: 'category_video_updated',
+          entry: updatedEntry
+        });
+        setTimeout(() => {
+          try { videoBc.close(); } catch (e) {}
+        }, 500);
+      }
+    } catch (e) {}
+
+    // 3. Sync to PostgreSQL backend
+    try {
+      const res = await fetch(`/api/category-videos/${encodeURIComponent(cleanCat)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: cleanCat, videoUrl, title, description, roId })
+      });
+      if (res.ok) {
+        await fetchDbState();
+      }
+    } catch (err) {
+      console.warn('Backend sync for updateCategoryVideo failed, keeping local state.', err);
+    }
   };
 
   const resolveIssue = async (issueId, roId, resolutionNotes) => {
@@ -916,7 +1162,9 @@ export const DatabaseProvider = ({ children }) => {
       sendCustomEmail,
       simulateGmailResponse,
       bulkUploadStudents,
-      saveMeetingRecording
+      saveMeetingRecording,
+      updateCategoryVideo,
+      getYoutubeEmbedUrl
     }}>
       {children}
     </DatabaseContext.Provider>

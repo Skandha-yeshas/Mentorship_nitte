@@ -57,6 +57,12 @@ app.get('/api/db-state', async (req, res) => {
     const resourcesRes = await query(`SELECT id, mentor_id AS "mentorId", title, type, content, date_shared AS "dateShared" FROM resources ORDER BY date_shared DESC`);
     const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, which_class AS "whichClass", location, created_at AS "createdAt" FROM mentor_session_records ORDER BY session_date DESC`);
     const logsRes = await query(`SELECT id, text, timestamp, user_role AS "userRole", user_id AS "userId" FROM system_logs ORDER BY timestamp DESC LIMIT 100`);
+    let categoryVideosRes = { rows: [] };
+    try {
+      categoryVideosRes = await query(`SELECT category, title, video_url AS "videoUrl", description, updated_by AS "updatedBy", updated_at AS "updatedAt" FROM category_videos`);
+    } catch (e) {
+      console.warn('Could not query category_videos:', e.message);
+    }
     const emailLogs = await getEmailLogs();
 
     // Map issues database columns to camelCase matching frontend layout
@@ -96,6 +102,7 @@ app.get('/api/db-state', async (req, res) => {
       groupSessions: sessionsRes.rows,
       resources: resourcesRes.rows,
       mentorSessionRecords: mentorRecordsRes.rows,
+      categoryVideos: categoryVideosRes.rows,
       systemLogs: logsRes.rows,
       gmailAddress: GMAIL_ADDRESS,
       gmailLogs: emailLogs,
@@ -697,12 +704,115 @@ app.put('/api/meetings/:id', async (req, res) => {
   const { status } = req.body;
 
   try {
-    await query(`UPDATE meetings SET status = $1 WHERE id = $2`, [status, meetId]);
+    await query(`UPDATE meetings SET status = $1 WHERE id = $2 OR UPPER(issue_id) = UPPER($2)`, [status, meetId]);
     await logSystemEvent(`Meeting ${meetId} status updated to ${status}`, 'RO', 'MEETING_MGR');
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating meeting status:', err);
     res.status(500).json({ error: 'Failed to update meeting' });
+  }
+});
+
+// WebRTC Signaling Relay for Real-Time Peer-to-Peer Video Meetings
+const webrtcSignals = new Map(); // issueId -> array of { sender, type, data, timestamp }
+
+app.post('/api/meetings/signal', (req, res) => {
+  const signal = req.body;
+  if (!signal || !signal.issueId) return res.status(400).json({ error: 'issueId required' });
+  const key = signal.issueId.toUpperCase();
+  if (!webrtcSignals.has(key)) {
+    webrtcSignals.set(key, []);
+  }
+  const list = webrtcSignals.get(key);
+  list.push({ ...signal, timestamp: Date.now() });
+  if (list.length > 100) list.splice(0, list.length - 100);
+  res.json({ success: true });
+});
+
+app.get('/api/meetings/signals/:issueId', (req, res) => {
+  const key = req.params.issueId.toUpperCase();
+  const since = parseInt(req.query.since) || 0;
+  const list = webrtcSignals.get(key) || [];
+  const signals = list.filter(s => s.timestamp > since);
+  res.json({ signals, now: Date.now() });
+});
+
+app.delete('/api/meetings/signals/:issueId', (req, res) => {
+  webrtcSignals.delete(req.params.issueId.toUpperCase());
+  res.json({ success: true });
+});
+
+// Category Guidance & Solution Videos (RO YouTube Video Management)
+app.get('/api/category-videos', async (req, res) => {
+  try {
+    const r = await query(`SELECT category, title, video_url AS "videoUrl", description, updated_by AS "updatedBy", updated_at AS "updatedAt" FROM category_videos ORDER BY category ASC`);
+    res.json(r.rows);
+  } catch (err) {
+    console.error('Error fetching category videos:', err);
+    res.status(500).json({ error: 'Failed to fetch category videos' });
+  }
+});
+
+app.put('/api/category-videos/:category', async (req, res) => {
+  const rawCat = decodeURIComponent(req.params.category || '').trim();
+  const { title, videoUrl, video_url, description, roId } = req.body;
+  const finalCat = (req.body.category || rawCat).trim();
+  const finalVideoUrl = videoUrl || video_url;
+
+  if (!finalVideoUrl) {
+    return res.status(400).json({ error: 'videoUrl is required' });
+  }
+
+  try {
+    // 1. Primary insert/update
+    await query(`
+      INSERT INTO category_videos (category, title, video_url, description, updated_by, updated_at)
+      VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+      ON CONFLICT (category) DO UPDATE SET
+        title = EXCLUDED.title,
+        video_url = EXCLUDED.video_url,
+        description = EXCLUDED.description,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = CURRENT_TIMESTAMP
+    `, [finalCat, title || `${finalCat} Guidance Video`, finalVideoUrl, description || '', roId || 'RO']);
+
+    // 2. Synchronize main category and Support Desk variations
+    const MAIN_DEPTS = ['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'];
+    
+    // If saving 'Academic', also update 'Academic Support Desk'
+    if (MAIN_DEPTS.includes(finalCat)) {
+      await query(`
+        INSERT INTO category_videos (category, title, video_url, description, updated_by, updated_at)
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+        ON CONFLICT (category) DO UPDATE SET
+          title = EXCLUDED.title,
+          video_url = EXCLUDED.video_url,
+          description = EXCLUDED.description,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = CURRENT_TIMESTAMP
+      `, [`${finalCat} Support Desk`, title || `${finalCat} Guidance Video`, finalVideoUrl, description || '', roId || 'RO']);
+    }
+
+    // If saving 'Academic Support Desk', also update 'Academic'
+    const matchedDept = MAIN_DEPTS.find(d => finalCat.toLowerCase().startsWith(d.toLowerCase()));
+    if (matchedDept && finalCat.toLowerCase().includes('support desk')) {
+      await query(`
+        INSERT INTO category_videos (category, title, video_url, description, updated_by, updated_at)
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+        ON CONFLICT (category) DO UPDATE SET
+          title = EXCLUDED.title,
+          video_url = EXCLUDED.video_url,
+          description = EXCLUDED.description,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = CURRENT_TIMESTAMP
+      `, [matchedDept, title || `${matchedDept} Guidance Video`, finalVideoUrl, description || '', roId || 'RO']);
+    }
+
+    await logSystemEvent(`RO ${roId || 'RO'} updated solution video for category "${finalCat}"`, 'RO', roId || 'RO');
+    res.json({ success: true, category: finalCat });
+  } catch (err) {
+    console.error('Error updating category video:', err);
+    res.status(500).json({ error: 'Failed to update category video' });
   }
 });
 
@@ -713,7 +823,7 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
   const timestamp = new Date().toISOString();
   const logText = userRole === 'Admin'
     ? `Issue resolved by Administrator: ${resolutionNotes}`
-    : `Issue resolved by RO: ${resolutionNotes}`;
+    : (userRole === 'Student' ? `Issue self-resolved by Student via guidance video: ${resolutionNotes}` : `Issue resolved by RO (${roId || 'RO'}): ${resolutionNotes}`);
 
   try {
     const issueRes = await query(`SELECT logs FROM issues WHERE id = $1`, [issueId]);
