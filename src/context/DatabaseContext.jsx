@@ -457,17 +457,25 @@ export const DatabaseProvider = ({ children }) => {
     }
   };
 
-  const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes) => {
-    const student = (db.users?.students || []).find(s => s.id === studentId) || {};
-    const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase());
-    if (!issue) return;
-    const studentName = student.name || issue.studentName || 'Student';
+  const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes, discussionMinutes, actionItems, reassignFeedback) => {
+    const issue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase()) || {};
+    const student = db.users.students.find(s => (s.id || s.student_id)?.toUpperCase() === (studentId || issue.studentId)?.toUpperCase());
+    const studentName = issue.studentName || (student ? student.name : 'Student');
+    const existingMeet = (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === issueId?.toUpperCase());
+
+    const isReschedule = Boolean(
+      existingMeet ||
+      issue.status === 'Meeting Scheduled' ||
+      issue.status === 'Meeting Started' ||
+      issue.status === 'In-Progress' ||
+      issue.status === 'In Progress'
+    );
 
     const getLogText = (l) => {
       if (!l) return '';
       if (typeof l === 'string') {
         if (l.trim().startsWith('{') && l.includes('"text"')) {
-          try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) {}
+          try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) { }
         }
         return l;
       }
@@ -475,18 +483,11 @@ export const DatabaseProvider = ({ children }) => {
       return String(l);
     };
 
-    const existingMeet = (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === issueId?.toUpperCase());
     const reassignLogs = (issue.logs || []).filter(l => {
       const txt = getLogText(l).toLowerCase();
       return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
-    });
-    const isReschedule = Boolean(
-      existingMeet ||
-      issue.status === 'Meeting Scheduled' ||
-      issue.status === 'Meeting Started' ||
-      issue.status === 'In-Progress' ||
-      issue.status === 'In Progress' ||
-      (issue.logs || []).some(l => {
+    }).concat(
+      (existingMeet?.logs || []).filter(l => {
         const txt = getLogText(l).toLowerCase();
         return txt.includes('meeting scheduled') || txt.includes('meeting rescheduled') || txt.includes('meeting reassigned');
       })
@@ -497,7 +498,14 @@ export const DatabaseProvider = ({ children }) => {
       throw new Error('RO Limit Reached: Maximum 2 meeting reassignments allowed per issue.');
     }
 
-    const meetingLocation = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk');
+    const meetingLocation = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk 1 (Admin Block)');
+    const cleanMinutes = mode === 'Online' ? (discussionMinutes || '').trim() : '';
+    const cleanActions = (actionItems || '').trim();
+    const cleanFeedback = (reassignFeedback || (mode === 'Offline' ? discussionMinutes : '') || '').trim();
+
+    const finalNotes = cleanFeedback
+      ? (notes ? `${notes} | [Feedback / Switch Reason]: ${cleanFeedback}` : `[Feedback / Switch Reason]: ${cleanFeedback}`)
+      : (notes || '');
 
     const newMeeting = {
       id: existingMeet ? existingMeet.id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -513,13 +521,21 @@ export const DatabaseProvider = ({ children }) => {
       time,
       mode: mode || 'Offline',
       location: meetingLocation,
-      notes: notes || '',
+      notes: finalNotes,
+      discussionSummary: mode === 'Online' ? (cleanMinutes || (existingMeet?.mode === 'Online' ? existingMeet.discussionSummary : '')) : '',
+      actionItems: cleanActions || (existingMeet ? existingMeet.actionItems : ''),
       status: 'Confirmed'
     };
     const timestamp = new Date().toLocaleString();
-    const logMsg = isReschedule
+    let logMsg = isReschedule
       ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`
       : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`;
+
+    if (cleanFeedback) {
+      logMsg += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
+    } else if (cleanMinutes) {
+      logMsg += ` | [LOGGED DISCUSSION MINUTES]: "${cleanMinutes}"`;
+    }
 
     // 1. Instantly update local React state so Student & RO Dashboards update immediately
     setDb(prev => ({
@@ -546,7 +562,10 @@ export const DatabaseProvider = ({ children }) => {
           time,
           mode: mode || 'Offline',
           location: meetingLocation,
-          notes: notes || ''
+          notes: finalNotes,
+          discussionSummary: cleanMinutes || undefined,
+          actionItems: cleanActions || undefined,
+          reassignFeedback: cleanFeedback || undefined
         })
       });
       if (res.ok) {
@@ -727,6 +746,70 @@ export const DatabaseProvider = ({ children }) => {
         } : i)
       };
     });
+  };
+
+  // RO Action: Submit Post-Meeting Discussion Minutes & Feedback
+  const submitRoMeetingFeedback = async (meetId, issueId, roId, { discussionSummary, actionItems, outcome, followUpNeeded }) => {
+    const timestamp = new Date().toLocaleString();
+    const cleanDiscussion = (discussionSummary || '').trim();
+    const cleanActions = (actionItems || '').trim();
+
+    // 1. Update local meetings & ticket state
+    setDb(prev => {
+      const updatedMeetings = (prev.meetings || []).map(m => {
+        const isTarget = m.id === meetId || m.issueId === meetId || m.issue_id === meetId || 
+                         (m.issueId && issueId && m.issueId.toUpperCase() === issueId.toUpperCase());
+        if (!isTarget) return m;
+        return {
+          ...m,
+          status: 'Completed',
+          discussionSummary: cleanDiscussion,
+          actionItems: cleanActions,
+          outcome: outcome || 'In-Progress',
+          followUpNeeded: Boolean(followUpNeeded),
+          notes: cleanDiscussion ? (m.notes ? `${m.notes} | Discussions: ${cleanDiscussion}` : cleanDiscussion) : m.notes
+        };
+      });
+
+      const logText = `[RO POST-MEETING DISCUSSION RECORD] Deliberations: "${cleanDiscussion}"${cleanActions ? ` | Action Items: "${cleanActions}"` : ''} (Outcome: ${outcome || 'Session Concluded'})`;
+
+      const updatedIssues = (prev.issues || []).map(i => {
+        if (i.id?.toUpperCase() !== issueId?.toUpperCase()) return i;
+        return {
+          ...i,
+          logs: [...(i.logs || []), { time: timestamp, text: logText }]
+        };
+      });
+
+      return {
+        ...prev,
+        meetings: updatedMeetings,
+        issues: updatedIssues
+      };
+    });
+
+    // 2. Resolve or Escalate ticket if selected by RO
+    if (outcome === 'Resolved') {
+      await resolveIssue(issueId, roId, `Resolved via online meeting deliberation: ${cleanDiscussion}`);
+    } else if (outcome === 'Escalated') {
+      await escalateIssue(issueId, roId, `Escalated post-meeting deliberation: ${cleanDiscussion}`);
+    }
+
+    // 3. Persist meeting update to backend server
+    try {
+      await fetch(`/api/meetings/${meetId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Completed',
+          notes: cleanDiscussion ? `Discussions: ${cleanDiscussion}` : undefined,
+          discussionSummary: cleanDiscussion,
+          actionItems: cleanActions
+        })
+      });
+    } catch (e) {
+      console.warn('Failed to persist meeting feedback to backend:', e);
+    }
   };
 
   // RO Action: Update or add YouTube guidance video for a category
@@ -1164,6 +1247,7 @@ export const DatabaseProvider = ({ children }) => {
       bulkUploadStudents,
       saveMeetingRecording,
       updateCategoryVideo,
+      submitRoMeetingFeedback,
       getYoutubeEmbedUrl
     }}>
       {children}

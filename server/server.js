@@ -578,13 +578,21 @@ app.post('/api/issues', async (req, res) => {
 
 // 3. SCHEDULE / RESCHEDULE A MEETING (RO ASSIGNED)
 app.post('/api/meetings', async (req, res) => {
-  const { issueId, studentId, studentName, roId, date, time, mode, location, notes } = req.body;
+  const { issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
   if (!issueId || !studentId || !roId || !date || !time) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   const timestamp = new Date().toISOString();
-  const meetLoc = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Desk Office');
+  const meetLoc = location || (mode === 'Online' ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk 1 (Admin Block)');
+  const cleanSummary = (discussionSummary || '').trim();
+  const cleanFeedback = (reassignFeedback || '').trim();
+  let finalNotes = notes || '';
+  if (cleanFeedback && !finalNotes.includes(cleanFeedback)) {
+    finalNotes = finalNotes ? `${finalNotes} | [Feedback / Switch Reason]: ${cleanFeedback}` : `[Feedback / Switch Reason]: ${cleanFeedback}`;
+  } else if (cleanSummary && !finalNotes.includes(cleanSummary)) {
+    finalNotes = finalNotes ? `${finalNotes} | Discussions: ${cleanSummary}` : `Discussions: ${cleanSummary}`;
+  }
 
   try {
     // Ensure student_id exists in database or fallback to issue's student_id
@@ -640,19 +648,24 @@ app.post('/api/meetings', async (req, res) => {
       await query(
         `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
+        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
       );
     } else {
       await query(
         `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, notes || '']
+        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
       );
     }
 
-    const logMessage = isReschedule
+    let logMessage = isReschedule
       ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
       : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`;
+    if (cleanFeedback) {
+      logMessage += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
+    } else if (cleanSummary) {
+      logMessage += ` | [LOGGED DISCUSSION MINUTES]: "${cleanSummary}"`;
+    }
 
     // Update issue logs and status (reset status to Meeting Scheduled)
     const issueRes = await query(`SELECT logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
@@ -683,6 +696,7 @@ app.post('/api/meetings', async (req, res) => {
                <li><strong>Mode:</strong> ${mode || 'Offline'}</li>
                <li><strong>Location:</strong> ${meetLoc}</li>
                <li><strong>Notes:</strong> ${notes || 'None'}</li>
+               ${cleanFeedback ? `<li><strong>Feedback / Switch Reason:</strong> ${cleanFeedback}</li>` : (cleanSummary ? `<li><strong>Logged Minutes / Agenda:</strong> ${cleanSummary}</li>` : '')}
              </ul>
              <hr/>
              <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
@@ -698,14 +712,22 @@ app.post('/api/meetings', async (req, res) => {
   }
 });
 
-// 4. UPDATE MEETING STATUS (Confirm/Cancel)
+// 4. UPDATE MEETING STATUS & DISCUSSION MINUTES (Confirm/Cancel/Notes)
 app.put('/api/meetings/:id', async (req, res) => {
   const meetId = req.params.id;
-  const { status } = req.body;
+  const { status, notes, discussionSummary, actionItems } = req.body;
 
   try {
-    await query(`UPDATE meetings SET status = $1 WHERE id = $2 OR UPPER(issue_id) = UPPER($2)`, [status, meetId]);
-    await logSystemEvent(`Meeting ${meetId} status updated to ${status}`, 'RO', 'MEETING_MGR');
+    const combinedNotes = notes || (discussionSummary ? `Discussions: ${discussionSummary}${actionItems ? ` | Action Items: ${actionItems}` : ''}` : null);
+    if (combinedNotes) {
+      await query(
+        `UPDATE meetings SET status = COALESCE($1, status), notes = $2 WHERE id = $3 OR UPPER(issue_id) = UPPER($3)`,
+        [status || 'Completed', combinedNotes, meetId]
+      );
+    } else {
+      await query(`UPDATE meetings SET status = $1 WHERE id = $2 OR UPPER(issue_id) = UPPER($2)`, [status, meetId]);
+    }
+    await logSystemEvent(`Meeting ${meetId} updated (${status || 'Completed'})${discussionSummary ? ' with discussion minutes' : ''}`, 'RO', 'MEETING_MGR');
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating meeting status:', err);
@@ -764,7 +786,37 @@ app.put('/api/category-videos/:category', async (req, res) => {
   }
 
   try {
-    // 1. Primary insert/update
+    // 1. Authorization check: Verify that RO is authorized to edit video for this category
+    if (roId && roId !== 'ADMIN') {
+      const cleanRoId = String(roId).trim().toUpperCase();
+      const catIdx = ALL_CATEGORIES.indexOf(finalCat);
+      const expectedRoId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : null;
+      
+      const isDesignatedRo = Boolean(expectedRoId && (
+        cleanRoId === expectedRoId ||
+        cleanRoId.includes(expectedRoId) ||
+        expectedRoId.includes(cleanRoId)
+      ));
+
+      // Also check if this RO has assigned issues in this specific category or if RO region matches
+      const roCheck = await query(
+        `SELECT 1 FROM issues WHERE (UPPER(ro_id) = $1 OR UPPER(ro_id) = $2) AND category = $3 LIMIT 1`,
+        [cleanRoId, `RO-${cleanRoId}`, finalCat]
+      );
+
+      const regionCheck = await query(
+        `SELECT 1 FROM ros WHERE (UPPER(id) = $1 OR UPPER(id) = $2) AND (region = $3 OR region LIKE $4) LIMIT 1`,
+        [cleanRoId, `RO-${cleanRoId}`, finalCat, `%${finalCat}%`]
+      );
+
+      if (!isDesignatedRo && roCheck.rowCount === 0 && regionCheck.rowCount === 0) {
+        return res.status(403).json({
+          error: `Access Denied: Relationship Officer (${roId}) is only permitted to update solution videos for their own assigned issues and categories.`
+        });
+      }
+    }
+
+    // 2. Primary insert/update for this specific category
     await query(`
       INSERT INTO category_videos (category, title, video_url, description, updated_by, updated_at)
       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
@@ -776,7 +828,7 @@ app.put('/api/category-videos/:category', async (req, res) => {
         updated_at = CURRENT_TIMESTAMP
     `, [finalCat, title || `${finalCat} Guidance Video`, finalVideoUrl, description || '', roId || 'RO']);
 
-    // 2. Synchronize main category and Support Desk variations
+    // 3. Synchronize main category and Support Desk variations only when updating main category
     const MAIN_DEPTS = ['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'];
     
     // If saving 'Academic', also update 'Academic Support Desk'

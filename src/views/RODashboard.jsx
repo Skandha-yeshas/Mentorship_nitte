@@ -1,10 +1,12 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
-import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw, Video, Mic, MicOff, VideoOff, Square, Shield, Play, Camera, AlertCircle, X, Download } from 'lucide-react';
+import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw, Video, Mic, MicOff, VideoOff, Square, Shield, Play, Camera, AlertCircle, X, Download, PhoneOff, Volume2, VolumeX, FileText, MessageSquare } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
+import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
+import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const RODashboard = ({ roId }) => {
-  const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, updateCategoryVideo } = useContext(DatabaseContext);
+  const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, updateCategoryVideo, submitRoMeetingFeedback } = useContext(DatabaseContext);
 
   // RO filters
   const [statusFilter, setStatusFilter] = useState('All'); // 'All', 'Assigned to RO', 'Meeting Scheduled', 'Re-opened by Student', 'Resolved', 'Escalated'
@@ -19,12 +21,22 @@ export const RODashboard = ({ roId }) => {
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showVideoManagerModal, setShowVideoManagerModal] = useState(false);
 
+  // Post-Meeting Discussion & Feedback Form State
+  const [showMeetingFeedbackModal, setShowMeetingFeedbackModal] = useState(false);
+  const [postMeetingData, setPostMeetingData] = useState(null);
+  const [discussionSummary, setDiscussionSummary] = useState('');
+  const [actionItems, setActionItems] = useState('');
+  const [meetingOutcome, setMeetingOutcome] = useState('In-Progress');
+  const [followUpNeeded, setFollowUpNeeded] = useState(false);
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+
   // Video Manager State
   const [managerCategory, setManagerCategory] = useState('Academic');
   const [managerVideoTitle, setManagerVideoTitle] = useState('');
   const [managerVideoUrl, setManagerVideoUrl] = useState('');
   const [managerVideoDesc, setManagerVideoDesc] = useState('');
   const [managerSaveSuccess, setManagerSaveSuccess] = useState(false);
+  const [managerTargetIssueId, setManagerTargetIssueId] = useState(null);
 
   // Online Meeting Video & Auto-Recorder Modal State
   const [showOnlineMeetingModal, setShowOnlineMeetingModal] = useState(false);
@@ -37,13 +49,14 @@ export const RODashboard = ({ roId }) => {
 
   // WebRTC Peer Connection States & References
   const [remoteStream, setRemoteStream] = useState(null);
+  const [localStream, setLocalStream] = useState(null);
   const [peerConnected, setPeerConnected] = useState(false);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const compositeRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const webrtcSessionRef = useRef(null);
+  const isEndingMeetingRef = useRef(false);
 
   // Form states
   const [resolutionNotes, setResolutionNotes] = useState('');
@@ -55,6 +68,17 @@ export const RODashboard = ({ roId }) => {
   const [meetMode, setMeetMode] = useState('Offline');
   const [meetLocation, setMeetLocation] = useState('RO Office Desk 1 (Admin Block)');
   const [meetNotes, setMeetNotes] = useState('Bring student ID card and relevant documents.');
+  const [meetReassignFeedback, setMeetReassignFeedback] = useState('');
+
+  // Online Meeting Not Conducted modal states
+  const [showOnlineNotDoneModal, setShowOnlineNotDoneModal] = useState(false);
+  const [offlineReassignFeedback, setOfflineReassignFeedback] = useState('');
+  const [offlineNotDoneActions, setOfflineNotDoneActions] = useState('');
+  const [offlineRescheduleDate, setOfflineRescheduleDate] = useState('');
+  const [offlineRescheduleTime, setOfflineRescheduleTime] = useState('10:00');
+  const [offlineRescheduleLocation, setOfflineRescheduleLocation] = useState('RO Office Desk 1 (Admin Block)');
+  const [offlineRescheduleNotes, setOfflineRescheduleNotes] = useState('Bring student ID card and relevant documents.');
+  const [isSubmittingOfflineReschedule, setIsSubmittingOfflineReschedule] = useState(false);
 
   // Helper to format local date string (YYYY-MM-DD) avoiding UTC shifts
   const getLocalDateString = (d = new Date()) => {
@@ -76,59 +100,86 @@ export const RODashboard = ({ roId }) => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Your browser does not support camera/microphone access (WebRTC).');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-        audio: true
-      });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30, max: 30 },
+            facingMode: 'user'
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+      } catch (audioErr) {
+        console.warn('Advanced audio constraints fallback, requesting standard media:', audioErr);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true
+        });
       }
+      localStreamRef.current = stream;
+      setLocalStream(stream);
       setMediaPermissionState('granted');
 
       // Initialize WebRTC Meeting Session for live peer-to-peer video with student
       if (selectedIssue) {
-        if (webrtcSessionRef.current) {
+        if (webrtcSessionRef.current && !webrtcSessionRef.current.isClosed) {
           webrtcSessionRef.current.updateLocalStream(stream);
         } else {
+          if (webrtcSessionRef.current) {
+            try { webrtcSessionRef.current.close(); } catch (e) {}
+          }
           webrtcSessionRef.current = new WebRtcMeetingSession({
             issueId: selectedIssue.id,
             role: 'ro',
             localStream: stream,
             onRemoteStream: (remStream) => {
               setRemoteStream(remStream);
-              if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = remStream;
+              if (compositeRecorderRef.current) {
+                compositeRecorderRef.current.setRemoteStream(remStream);
               }
             },
             onPeerStatus: (status) => {
               setPeerConnected(Boolean(status.connected));
+              if (!status.connected) {
+                setRemoteStream(null);
+                if (compositeRecorderRef.current) {
+                  compositeRecorderRef.current.setRemoteStream(null);
+                }
+              }
             },
-            onMeetingEnded: () => {}
+            onMeetingEnded: () => {
+              console.log('[RO] Remote peer ended session, automatically opening post-meeting feedback modal.');
+              handleStopAndSaveRecording();
+            }
           });
         }
       }
 
-      // Initialize MediaRecorder for live meeting recording
-      recordedChunksRef.current = [];
+      // Initialize CompositeMeetingRecorder to capture BOTH RO and Student side-by-side
       try {
-        let mimeType = 'video/webm;codecs=vp8,opus';
-        if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'video/webm';
+        if (compositeRecorderRef.current) {
+          try { compositeRecorderRef.current.stop(); } catch (e) {}
         }
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = '';
-        }
-        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        recorder.ondataavailable = (event) => {
-          if (event.data && event.data.size > 0) {
-            recordedChunksRef.current.push(event.data);
-          }
-        };
-        recorder.start(1000);
-        mediaRecorderRef.current = recorder;
+        compositeRecorderRef.current = new CompositeMeetingRecorder({
+          localStream: stream,
+          localLabel: ro.name || 'Relationship Officer',
+          remoteLabel: selectedIssue ? (selectedIssue.studentName || 'Student') : 'Student',
+          ticketId: selectedIssue ? selectedIssue.id : 'TICKET',
+          localRole: 'RO',
+          remoteRole: 'Student',
+          width: 1280,
+          height: 720,
+          fps: 25
+        });
+        compositeRecorderRef.current.start();
       } catch (recErr) {
-        console.warn('MediaRecorder error:', recErr);
+        console.warn('CompositeMeetingRecorder error:', recErr);
       }
     } catch (err) {
       console.warn('Camera/Mic permission error:', err);
@@ -151,6 +202,9 @@ export const RODashboard = ({ roId }) => {
         track.enabled = !nextMuted;
       });
     }
+    if (compositeRecorderRef.current) {
+      compositeRecorderRef.current.setLocalMicMuted(nextMuted);
+    }
   };
 
   const toggleCamera = () => {
@@ -160,6 +214,9 @@ export const RODashboard = ({ roId }) => {
       localStreamRef.current.getVideoTracks().forEach(track => {
         track.enabled = !nextCamOff;
       });
+    }
+    if (compositeRecorderRef.current) {
+      compositeRecorderRef.current.setLocalCamOff(nextCamOff);
     }
   };
 
@@ -174,11 +231,16 @@ export const RODashboard = ({ roId }) => {
     } else {
       setRecordingSeconds(0);
       setMediaPermissionState('idle');
+      if (compositeRecorderRef.current) {
+        try { compositeRecorderRef.current.stop(); } catch(e) {}
+        compositeRecorderRef.current = null;
+      }
       if (webrtcSessionRef.current) {
         try { webrtcSessionRef.current.close(); } catch(e) {}
         webrtcSessionRef.current = null;
       }
       setRemoteStream(null);
+      setLocalStream(null);
       setPeerConnected(false);
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
@@ -190,11 +252,16 @@ export const RODashboard = ({ roId }) => {
     }
     return () => {
       clearInterval(timer);
+      if (compositeRecorderRef.current) {
+        try { compositeRecorderRef.current.stop(); } catch(e) {}
+        compositeRecorderRef.current = null;
+      }
       if (webrtcSessionRef.current) {
         try { webrtcSessionRef.current.close(); } catch(e) {}
         webrtcSessionRef.current = null;
       }
       setRemoteStream(null);
+      setLocalStream(null);
       setPeerConnected(false);
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
@@ -223,6 +290,16 @@ export const RODashboard = ({ roId }) => {
 
   // Issues assigned to this RO
   const roIssues = db.issues.filter(i => i.roId === ro.id);
+
+  // Categories belonging strictly to this RO's assigned issues & assigned region
+  const myAssignedIssueCategories = Array.from(new Set([
+    ...roIssues.map(i => i.category),
+    ro?.region,
+    (() => {
+      const num = parseInt(String(ro?.id || '').replace('RO-', ''), 10);
+      return (!isNaN(num) && num > 0 && num <= ALL_CATEGORIES.length) ? ALL_CATEGORIES[num - 1] : null;
+    })()
+  ].filter(Boolean)));
 
   // Filtered issues list
   const filteredIssues = roIssues.filter(issue => {
@@ -287,6 +364,21 @@ export const RODashboard = ({ roId }) => {
     return now > expiryCutoff;
   })();
 
+  // Institutional Compliance: Check if issue is being handled via an active online meeting
+  // If reassigned to Offline, log minutes are NOT required to resolve (log minutes strictly belong to online sessions)
+  const isDoneThroughOnline = Boolean(activeMeeting && activeMeeting.mode === 'Online');
+
+  // Check if RO has filed the official discussion minutes for this meeting
+  const hasFiledDiscussionMinutes = Boolean(
+    activeMeeting && (
+      (activeMeeting.discussionSummary && activeMeeting.discussionSummary.trim().length > 0) ||
+      (activeMeeting.discussion_summary && activeMeeting.discussion_summary.trim().length > 0)
+    )
+  );
+
+  // If online, RO MUST file discussion minutes before ticket can be marked as Resolved
+  const isOnlineMeetingPendingMinutes = isDoneThroughOnline && !hasFiledDiscussionMinutes;
+
   const handleModeChange = (newMode) => {
     setMeetMode(newMode);
     if (newMode === 'Online') {
@@ -321,11 +413,13 @@ export const RODashboard = ({ roId }) => {
       setMeetLocation('RO Office Desk 1 (Admin Block)');
       setMeetNotes('Bring student ID card and relevant documents.');
     }
+    setMeetReassignFeedback('');
     setShowScheduleModal(true);
   };
 
   const handleLaunchOnlineMeeting = () => {
     if (!activeMeeting || !selectedIssue) return;
+    isEndingMeetingRef.current = false;
     updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started');
     setRecordingSeconds(0);
     setIsCameraOff(false);
@@ -333,37 +427,71 @@ export const RODashboard = ({ roId }) => {
     setShowOnlineMeetingModal(true);
   };
 
-  const handleStopAndSaveRecording = () => {
-    if (!activeMeeting || !selectedIssue) return;
+  const handleStopAndSaveRecording = async () => {
+    if (isEndingMeetingRef.current) return;
+    isEndingMeetingRef.current = true;
+
+    // 1. Resolve issue & meeting references safely
+    const currentIssue = selectedIssue || db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
+    if (!currentIssue) {
+      setShowOnlineMeetingModal(false);
+      return;
+    }
+    const currentMeet = activeMeeting || (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === (currentIssue.id || currentIssue.issue_id)?.toUpperCase()) || { id: `MEET-${currentIssue.id}`, issueId: currentIssue.id };
+
     const finalSecs = Math.max(recordingSeconds, 5);
+    const formattedDuration = formatTimer(finalSecs);
+    let finalVideoUrl = `https://nitte-cloud-storage.edu/recordings/rec_${currentIssue.id}_${Date.now()}.mp4`;
 
-    let finalVideoUrl = `https://nitte-cloud-storage.edu/recordings/rec_${selectedIssue.id}_${Date.now()}.mp4`;
+    // 2. Prepare feedback data and IMMEDIATELY popup the Post-Meeting Discussion Form
+    setPostMeetingData({
+      meetingId: currentMeet.id || currentMeet.issueId,
+      issueId: currentIssue.id,
+      studentName: currentIssue.studentName || 'Student',
+      studentId: currentIssue.studentId || '',
+      category: currentIssue.category || 'General',
+      durationText: formattedDuration
+    });
+    setDiscussionSummary('');
+    setActionItems('');
+    setMeetingOutcome(currentIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
+    setFollowUpNeeded(false);
 
-    // Stop MediaRecorder and produce real playable blob URL
+    // 3. Immediately close meeting stage & open feedback modal (Zero UI delay)
+    setShowOnlineMeetingModal(false);
+    setShowMeetingFeedbackModal(true);
+    setMediaPermissionState('idle');
+
+    // 4. Finalize CompositeMeetingRecorder in background
+    if (compositeRecorderRef.current) {
+      try {
+        const result = await compositeRecorderRef.current.stop();
+        if (result && result.videoUrl) {
+          finalVideoUrl = result.videoUrl;
+        }
+      } catch (e) {
+        console.warn('CompositeMeetingRecorder stop error:', e);
+      }
+      compositeRecorderRef.current = null;
+    }
+
+    // 5. Stop MediaRecorder fallback if active
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try {
+        if (mediaRecorderRef.current.requestData) mediaRecorderRef.current.requestData();
         mediaRecorderRef.current.stop();
-      } catch (e) {
-        console.warn(e);
-      }
+      } catch (e) {}
     }
 
-    if (recordedChunksRef.current && recordedChunksRef.current.length > 0) {
-      try {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        finalVideoUrl = URL.createObjectURL(blob);
-      } catch (e) {
-        console.warn('Blob creation error:', e);
-      }
-    }
-
-    // Release camera and mic tracks
+    // 6. Release camera and mic tracks
+    setLocalStream(null);
+    setRemoteStream(null);
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
 
-    // Send meeting-ended signal to student and close WebRTC session
+    // 7. Send meeting-ended signal to student and close WebRTC session
     if (webrtcSessionRef.current) {
       try {
         webrtcSessionRef.current.sendSignal({ type: 'meeting-ended' });
@@ -377,22 +505,92 @@ export const RODashboard = ({ roId }) => {
     setRemoteStream(null);
     setPeerConnected(false);
 
+    // 8. Commit meeting recording & mark Completed
     saveMeetingRecording(
-      activeMeeting.id || activeMeeting.issueId,
-      selectedIssue.id,
+      currentMeet.id || currentMeet.issueId,
+      currentIssue.id,
       finalSecs,
       finalVideoUrl,
-      `RO (${ro.name}) conducted live online session with Student (${selectedIssue.studentName}). Session webcam video & audio recorded.`
+      `Dual-Participant Live Session (RO: ${ro.name} & Student: ${currentIssue.studentName}) conducted and auto-archived with side-by-side video and dual-mic audio.`
     );
-    updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Completed');
-    setShowOnlineMeetingModal(false);
-    setMediaPermissionState('idle');
-    alert(`🎥 Online Meeting Ended & Recorded!\n\nDuration: ${formatTimer(finalSecs)}\nLive Video & Audio saved to support ticket archive.`);
+    updateMeetingStatus(currentMeet.id || currentMeet.issueId, 'Completed');
+  };
+
+  // Auto-detect remote meeting termination or external Completed status and pop up feedback modal
+  useEffect(() => {
+    if (showOnlineMeetingModal && activeMeeting && (activeMeeting.status === 'Completed' || activeMeeting.status === 'Finished') && !isEndingMeetingRef.current) {
+      console.log('[RO] Active meeting marked Completed externally, triggering feedback popup automatically.');
+      handleStopAndSaveRecording();
+    }
+  }, [showOnlineMeetingModal, activeMeeting?.status]);
+
+  const handlePostMeetingFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    if (!discussionSummary.trim()) {
+      alert('Please enter a brief summary of what was discussed during the online meeting.');
+      return;
+    }
+    if (!postMeetingData) return;
+
+    setIsSubmittingFeedback(true);
+    try {
+      await submitRoMeetingFeedback(
+        postMeetingData.meetingId,
+        postMeetingData.issueId,
+        ro.id,
+        {
+          discussionSummary: discussionSummary.trim(),
+          actionItems: actionItems.trim(),
+          outcome: meetingOutcome,
+          followUpNeeded
+        }
+      );
+      setShowMeetingFeedbackModal(false);
+      setPostMeetingData(null);
+      alert(`📋 Meeting Minutes & Feedback Saved!\n\nDiscussions and agreed action items have been officially recorded to Ticket #${postMeetingData.issueId}.`);
+    } catch (err) {
+      console.error('Failed to submit post-meeting feedback:', err);
+      alert('Could not save meeting feedback. Please try again.');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
+  const handleOpenResolveModal = () => {
+    if (isOnlineMeetingPendingMinutes) {
+      alert(
+        '🔒 Official Requirement:\n\n' +
+        'This issue involves an online meeting session. You must file the official Log Discussion Minutes before marking this issue as Resolved.\n\n' +
+        'Opening the Discussion Minutes form now...'
+      );
+      setPostMeetingData({
+        meetingId: activeMeeting?.id || activeMeeting?.issueId || `MEET-${selectedIssue.id}`,
+        issueId: selectedIssue.id,
+        studentName: selectedIssue.studentName || 'Student',
+        studentId: selectedIssue.studentId || '',
+        category: selectedIssue.category || 'General',
+        durationText: activeMeeting?.status === 'Completed' ? 'Concluded Session' : 'Online Conference'
+      });
+      setDiscussionSummary(activeMeeting?.discussionSummary || '');
+      setActionItems(activeMeeting?.actionItems || '');
+      setMeetingOutcome('Resolved');
+      setFollowUpNeeded(Boolean(activeMeeting?.followUpNeeded));
+      setShowMeetingFeedbackModal(true);
+      return;
+    }
+    setShowResolveModal(true);
   };
 
   const handleResolveSubmit = (e) => {
     e.preventDefault();
     if (!resolutionNotes.trim() || !selectedIssueId) return;
+
+    if (isOnlineMeetingPendingMinutes) {
+      alert('🔒 Requirement: Please file the Log Discussion Minutes first before marking this issue as Resolved.');
+      setShowResolveModal(false);
+      handleOpenResolveModal();
+      return;
+    }
 
     resolveIssue(selectedIssueId, ro.id, resolutionNotes);
     setResolutionNotes('');
@@ -426,8 +624,83 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
-    scheduleRoMeeting(selectedIssueId, selectedIssue.studentId, ro.id, meetDate, meetTime, meetMode, meetLocation, meetNotes);
+    scheduleRoMeeting(
+      selectedIssueId,
+      selectedIssue.studentId,
+      ro.id,
+      meetDate,
+      meetTime,
+      meetMode,
+      meetLocation,
+      meetNotes,
+      '', // No log minutes required when reassigning; log minutes strictly for online meetings
+      '', // actionItems
+      meetMode === 'Offline' ? meetReassignFeedback.trim() : ''
+    );
     setShowScheduleModal(false);
+  };
+
+  const handleOpenOnlineNotDoneModal = () => {
+    if (isReassignLimitReached) {
+      alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
+      return;
+    }
+    const currNow = new Date();
+    const currToday = getLocalDateString(currNow);
+    setOfflineRescheduleDate(currToday);
+    setOfflineRescheduleTime(getNextValidTimeSlot());
+    setOfflineRescheduleLocation('RO Office Desk 1 (Admin Block)');
+    setOfflineRescheduleNotes('Bring student ID card and relevant physical documents.');
+    setOfflineReassignFeedback('');
+    setOfflineNotDoneActions('');
+    setShowOnlineNotDoneModal(true);
+  };
+
+  const handleOfflineNotDoneSubmit = async (e) => {
+    e.preventDefault();
+    if (!offlineReassignFeedback.trim()) {
+      alert('⚠️ Required: Please provide feedback / reason why the online meeting could not be held.');
+      return;
+    }
+    if (!offlineRescheduleDate || !offlineRescheduleTime || !selectedIssueId) return;
+
+    const currNow = new Date();
+    const currTodayStr = getLocalDateString(currNow);
+    const currTimeStr = `${String(currNow.getHours()).padStart(2, '0')}:${String(currNow.getMinutes()).padStart(2, '0')}`;
+
+    if (offlineRescheduleDate < currTodayStr) {
+      alert('⚠️ Invalid Date: Meeting date cannot be in the past. Please select today or a future date.');
+      return;
+    }
+
+    if (offlineRescheduleDate === currTodayStr && offlineRescheduleTime < currTimeStr) {
+      alert(`⚠️ Invalid Time: Cannot schedule for a past time slot (${offlineRescheduleTime}). Current time is ${currTimeStr}.`);
+      return;
+    }
+
+    setIsSubmittingOfflineReschedule(true);
+    try {
+      await scheduleRoMeeting(
+        selectedIssueId,
+        selectedIssue.studentId,
+        ro.id,
+        offlineRescheduleDate,
+        offlineRescheduleTime,
+        'Offline',
+        offlineRescheduleLocation,
+        offlineRescheduleNotes,
+        '', // No log minutes! Log minutes are strictly for online meetings
+        offlineNotDoneActions.trim(),
+        offlineReassignFeedback.trim() // Feedback for switching to offline
+      );
+      setShowOnlineNotDoneModal(false);
+      alert(`📋 Online Meeting Reassigned to In-Person:\n\nFeedback recorded to Ticket #${selectedIssue.id}. Meeting mode updated to In-Person (Offline on Campus).`);
+    } catch (err) {
+      console.error('Failed to reschedule offline:', err);
+      alert(err.message || 'Could not reschedule meeting.');
+    } finally {
+      setIsSubmittingOfflineReschedule(false);
+    }
   };
 
   const loadCategoryVideoData = (cat) => {
@@ -477,21 +750,34 @@ export const RODashboard = ({ roId }) => {
     }
   };
 
-  const openVideoManagerForCategory = (cat) => {
+  const openVideoManagerForCategory = (cat, issueId = null) => {
     let targetCat = cat;
+    let targetIssueId = issueId;
+
     if (!targetCat && selectedIssue) {
       targetCat = selectedIssue.category;
+      targetIssueId = selectedIssue.id;
     }
 
-    // Normalize category name and clean Support Desk / RO prefixes
-    const MAIN_DEPTS = ['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'];
-    if (!targetCat || targetCat.includes('Support Desk')) {
-      const scopeText = `${targetCat || ''} ${ro?.region || ''} ${ro?.name || ''}`;
-      const matched = MAIN_DEPTS.find(m => scopeText.toLowerCase().includes(m.toLowerCase()));
-      targetCat = matched || 'Academic';
+    if (!targetCat) {
+      targetCat = myAssignedIssueCategories[0] || ro?.region || 'Academic';
+    }
+
+    // Verify this category belongs to RO's allowed scope
+    if (myAssignedIssueCategories.length > 0 && !myAssignedIssueCategories.includes(targetCat)) {
+      const matched = myAssignedIssueCategories.find(c => 
+        c.toLowerCase().includes(targetCat.toLowerCase()) || targetCat.toLowerCase().includes(c.toLowerCase())
+      );
+      if (matched) {
+        targetCat = matched;
+      } else {
+        alert(`⛔ Access Restricted: As Relationship Officer (${ro.name}), you can only modify YouTube solution links for your own assigned issues and categories.`);
+        targetCat = myAssignedIssueCategories[0];
+      }
     }
 
     targetCat = targetCat.trim();
+    setManagerTargetIssueId(targetIssueId);
     setManagerCategory(targetCat);
     loadCategoryVideoData(targetCat);
     setManagerSaveSuccess(false);
@@ -504,10 +790,16 @@ export const RODashboard = ({ roId }) => {
       alert('Please enter a valid YouTube or video link.');
       return;
     }
-    await updateCategoryVideo(managerCategory, managerVideoUrl, managerVideoTitle, managerVideoDesc, ro.name || ro.id);
+
+    if (myAssignedIssueCategories.length > 0 && !myAssignedIssueCategories.includes(managerCategory)) {
+      alert(`⛔ Permission Denied: As RO (${ro.name}), you are only authorized to edit YouTube solution videos for your own assigned issues and categories.`);
+      return;
+    }
+
+    await updateCategoryVideo(managerCategory, managerVideoUrl, managerVideoTitle, managerVideoDesc, ro.id);
     setManagerSaveSuccess(true);
     setTimeout(() => setManagerSaveSuccess(false), 3000);
-    alert(`🎥 Guidance Video Updated!\n\nCategory: ${managerCategory}\nStudents submitting issues in this category will now see this updated video and instructions immediately.`);
+    alert(`🎥 Solution Video Updated!\n\nCategory: ${managerCategory}\nStudents with issues in this category will now see your updated video guidance immediately.`);
   };
 
   return (
@@ -569,9 +861,10 @@ export const RODashboard = ({ roId }) => {
             className="panel-btn"
             onClick={() => openVideoManagerForCategory()}
             style={{ marginTop: '10px', background: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
+            title="Manage solution video links for issues assigned to you"
           >
             <Video size={16} />
-            <span>🎥 Manage Solution Videos</span>
+            <span>🎥 Manage My Issue Videos</span>
           </button>
         </div>
 
@@ -724,6 +1017,49 @@ export const RODashboard = ({ roId }) => {
                     </p>
                   )}
 
+                  {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
+                  {activeMeeting.discussionSummary && (
+                    <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
+                      <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <FileText size={15} /> 📋 Logged Discussion Minutes:
+                      </div>
+                      <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{activeMeeting.discussionSummary}</p>
+                      {activeMeeting.actionItems && (
+                        <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                          <strong>Agreed Action Items:</strong> {activeMeeting.actionItems}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* EDIT OR LOG DISCUSSION MINUTES BUTTON */}
+                  {activeMeeting.status === 'Completed' && (
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPostMeetingData({
+                            meetingId: activeMeeting.id || activeMeeting.issueId,
+                            issueId: selectedIssue.id,
+                            studentName: selectedIssue.studentName,
+                            studentId: selectedIssue.studentId,
+                            category: selectedIssue.category,
+                            durationText: 'Concluded Session'
+                          });
+                          setDiscussionSummary(activeMeeting.discussionSummary || '');
+                          setActionItems(activeMeeting.actionItems || '');
+                          setMeetingOutcome(selectedIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
+                          setFollowUpNeeded(Boolean(activeMeeting.followUpNeeded));
+                          setShowMeetingFeedbackModal(true);
+                        }}
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.74rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                      >
+                        <FileText size={13} /> {activeMeeting.discussionSummary ? '✏️ Edit Discussion Minutes' : '📋 Log Discussion Minutes'}
+                      </button>
+                    </div>
+                  )}
+
                   {/* START / LAUNCH MEETING ACTION BUTTON FOR RO */}
                   {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && (
                     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
@@ -733,27 +1069,71 @@ export const RODashboard = ({ roId }) => {
                             <CheckCircle2 size={16} /> 🟢 Meeting Currently In-Progress
                           </div>
                           {activeMeeting.mode === 'Online' && (
-                            <button
-                              type="button"
-                              onClick={() => setShowOnlineMeetingModal(true)}
-                              className="btn btn-primary"
-                              style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#2563eb' }}
-                            >
-                              <Video size={13} /> Open Recording Room (REC: {formatTimer(recordingSeconds)})
-                            </button>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                onClick={() => setShowOnlineMeetingModal(true)}
+                                className="btn btn-primary"
+                                style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#2563eb' }}
+                              >
+                                <Video size={13} /> Open Recording Room (REC: {formatTimer(recordingSeconds)})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleOpenOnlineNotDoneModal}
+                                style={{
+                                  fontSize: '0.75rem',
+                                  padding: '4px 10px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  background: 'rgba(239, 68, 68, 0.15)',
+                                  color: '#fca5a5',
+                                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  fontWeight: 600
+                                }}
+                                title="Declare that the online meeting could not be held, provide feedback, and reassign to offline"
+                              >
+                                🚫 Online Meeting Not Done
+                              </button>
+                            </div>
                           )}
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                           {activeMeeting.mode === 'Online' ? (
-                            <button
-                              type="button"
-                              onClick={handleLaunchOnlineMeeting}
-                              className="btn btn-primary"
-                              style={{ fontSize: '0.78rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px', background: '#2563eb' }}
-                            >
-                              <Video size={14} /> Launch Online Meeting & Auto-Record
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={handleLaunchOnlineMeeting}
+                                className="btn btn-primary"
+                                style={{ fontSize: '0.78rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px', background: '#2563eb' }}
+                              >
+                                <Video size={14} /> Launch Online Meeting & Auto-Record
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleOpenOnlineNotDoneModal}
+                                style={{
+                                  fontSize: '0.78rem',
+                                  padding: '5px 12px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  borderRadius: '4px',
+                                  background: 'rgba(245, 158, 11, 0.12)',
+                                  color: '#fbbf24',
+                                  border: '1px solid rgba(245, 158, 11, 0.4)',
+                                  cursor: 'pointer',
+                                  fontWeight: 600
+                                }}
+                                title="Declare that the online meeting could not be held, provide feedback, and reassign to offline"
+                              >
+                                🚫 Online Meeting Not Done
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"
@@ -849,6 +1229,26 @@ export const RODashboard = ({ roId }) => {
                     </div>
                   )}
 
+                  {isOnlineMeetingPendingMinutes && (
+                    <div style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                      color: '#fca5a5',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      marginBottom: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <AlertTriangle size={15} style={{ color: '#ef4444', flexShrink: 0 }} />
+                      <span>
+                        <strong>Log Discussion Minutes Required:</strong> An online session is linked to this ticket. Institutional mentorship policy requires the RO to log the official discussion minutes before this ticket can be resolved.
+                      </span>
+                    </div>
+                  )}
+
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button
                       onClick={handleOpenScheduleModal}
@@ -873,11 +1273,17 @@ export const RODashboard = ({ roId }) => {
                       }
                     </button>
                     <button
-                      onClick={() => setShowResolveModal(true)}
+                      onClick={handleOpenResolveModal}
                       className="btn btn-success"
-                      style={{ flex: 1, minWidth: '140px' }}
+                      style={{
+                        flex: 1,
+                        minWidth: '140px',
+                        background: isOnlineMeetingPendingMinutes ? 'linear-gradient(135deg, #059669 0%, #047857 100%)' : undefined,
+                        border: isOnlineMeetingPendingMinutes ? '1px dashed #34d399' : undefined
+                      }}
+                      title={isOnlineMeetingPendingMinutes ? 'Filing discussion minutes is required before resolving' : 'Mark ticket as resolved'}
                     >
-                      Mark as Resolved
+                      {isOnlineMeetingPendingMinutes ? '📋 Log Minutes & Resolve' : 'Mark as Resolved'}
                     </button>
                     <button
                       onClick={() => setShowEscalateModal(true)}
@@ -898,27 +1304,35 @@ export const RODashboard = ({ roId }) => {
                 </div>
               )}
 
-              {/* Category Guidance Video Quick Editor Button */}
-              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button
-                  type="button"
-                  onClick={() => openVideoManagerForCategory(selectedIssue.category.split(' - ')[0])}
-                  className="btn btn-secondary"
-                  style={{ width: '100%', fontSize: '0.8rem', padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}
-                >
-                  <Video size={14} style={{ color: '#ef4444' }} />
-                  <span>🎥 Edit Main Video for "{selectedIssue.category.split(' - ')[0]}"</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openVideoManagerForCategory(selectedIssue.category)}
-                  className="btn btn-secondary"
-                  style={{ width: '100%', fontSize: '0.76rem', padding: '5px 10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'rgba(59, 130, 246, 0.08)', borderColor: 'rgba(59, 130, 246, 0.3)', color: '#93c5fd' }}
-                >
-                  <Video size={13} style={{ color: '#3b82f6' }} />
-                  <span>⚙️ Edit Dedicated Subcategory Video ("{selectedIssue.category.split(' - ')[1] || selectedIssue.category}")</span>
-                </button>
-              </div>
+              {/* Solution Video Editor for this Specific Issue */}
+              {selectedIssue.roId === ro.id && (
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <button
+                    type="button"
+                    onClick={() => openVideoManagerForCategory(selectedIssue.category, selectedIssue.id)}
+                    className="btn btn-secondary"
+                    style={{
+                      width: '100%',
+                      fontSize: '0.82rem',
+                      padding: '8px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      borderColor: 'rgba(239, 68, 68, 0.4)',
+                      color: '#fca5a5',
+                      fontWeight: 600
+                    }}
+                  >
+                    <Video size={15} style={{ color: '#ef4444' }} />
+                    <span>🎥 Edit Solution Video for this Issue ({selectedIssue.category})</span>
+                  </button>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', textAlign: 'center', marginTop: '4px' }}>
+                    🔒 As the assigned RO ({ro.id}), this YouTube link applies specifically to this issue's category
+                  </span>
+                </div>
+              )}
 
               {/* Logs */}
               <div style={{ marginTop: '20px' }}>
@@ -939,6 +1353,203 @@ export const RODashboard = ({ roId }) => {
 
       </div>
 
+      {/* POST-MEETING RO DISCUSSION & FEEDBACK FORM MODAL */}
+      {showMeetingFeedbackModal && postMeetingData && (
+        <div className="modal-overlay" style={{ zIndex: 1250 }}>
+          <div className="modal-content" style={{ maxWidth: '680px', width: '92%' }}>
+            <div className="modal-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    Post-Meeting Discussion & Feedback Record
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    Official minutes of meeting & deliberations for student ticket archive
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMeetingFeedbackModal(false)}
+                className="btn-icon-only"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Top Meeting Metadata Card */}
+            <div style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', padding: '12px 20px', display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '0.8rem' }}>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Student: </span>
+                <strong style={{ color: 'var(--text-primary)' }}>{postMeetingData.studentName}</strong> ({postMeetingData.studentId})
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Ticket: </span>
+                <strong style={{ color: 'var(--nitte-blue)' }}>#{postMeetingData.issueId}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Category: </span>
+                <span style={{ fontWeight: 600 }}>{postMeetingData.category}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#10b981', fontWeight: 700 }}>
+                <span>⏱️ {postMeetingData.durationText}</span>
+                <span style={{ fontSize: '0.72rem', background: 'rgba(16,185,129,0.15)', padding: '2px 6px', borderRadius: '4px' }}>Recorded</span>
+              </div>
+            </div>
+
+            <form onSubmit={handlePostMeetingFeedbackSubmit}>
+              <div className="modal-body" style={{ padding: '20px', maxHeight: '68vh', overflowY: 'auto' }}>
+                {/* Official Compliance Notice */}
+                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.78rem', marginBottom: '18px', color: 'var(--text-secondary)' }}>
+                  📌 <strong>Officer Requirement:</strong> Please document the key points discussed, student statements, and decisions taken during this meeting. This record is linked to the ticket audit trail for institutional review and student transparency.
+                </div>
+
+                {/* Primary Question: Discussions Taken Place */}
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label className="form-label" style={{ fontWeight: '700', fontSize: '0.88rem', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>1. Discussions Taken Place & Key Deliberations <span style={{ color: '#ef4444' }}>*</span></span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 400 }}>Required</span>
+                  </label>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '2px 0 6px 0' }}>
+                    What were the main discussions that had taken place with the student during this session?
+                  </p>
+                  <textarea
+                    className="form-textarea"
+                    rows={4}
+                    required
+                    value={discussionSummary}
+                    onChange={(e) => setDiscussionSummary(e.target.value)}
+                    placeholder="e.g., Reviewed student's attendance shortage and medical discharge certificates. Student explained the circumstances. RO explained the condonation policy and verified university requirements..."
+                    style={{ fontSize: '0.84rem', lineHeight: 1.5 }}
+                  />
+                </div>
+
+                {/* Question 2: Agreed Action Items & Responsibilities */}
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label className="form-label" style={{ fontWeight: '700', fontSize: '0.88rem' }}>
+                    2. Agreed Action Items & Responsibilities (Optional)
+                  </label>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '2px 0 6px 0' }}>
+                    Specific next steps or submissions agreed during the meeting.
+                  </p>
+                  <textarea
+                    className="form-textarea"
+                    rows={2}
+                    value={actionItems}
+                    onChange={(e) => setActionItems(e.target.value)}
+                    placeholder="e.g., Student to submit hard copy to HOD office by Thursday; RO to forward approval note to Dean of Academic Affairs..."
+                    style={{ fontSize: '0.84rem', lineHeight: 1.5 }}
+                  />
+                </div>
+
+                {/* Question 3: Meeting Outcome & Ticket Transition */}
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label className="form-label" style={{ fontWeight: '700', fontSize: '0.88rem', marginBottom: '8px', display: 'block' }}>
+                    3. Meeting Outcome & Ticket Status Transition
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                    <div
+                      onClick={() => setMeetingOutcome('In-Progress')}
+                      style={{
+                        padding: '12px',
+                        borderRadius: '8px',
+                        border: meetingOutcome === 'In-Progress' ? '2px solid #2563eb' : '1px solid var(--border-color)',
+                        background: meetingOutcome === 'In-Progress' ? 'rgba(37, 99, 235, 0.08)' : 'var(--bg-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ fontWeight: '700', fontSize: '0.82rem', color: meetingOutcome === 'In-Progress' ? '#2563eb' : 'var(--text-primary)' }}>
+                        ⏳ In-Progress
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        Follow-up action or student submission pending
+                      </div>
+                    </div>
+
+                    <div
+                      onClick={() => setMeetingOutcome('Resolved')}
+                      style={{
+                        padding: '12px',
+                        borderRadius: '8px',
+                        border: meetingOutcome === 'Resolved' ? '2px solid #10b981' : '1px solid var(--border-color)',
+                        background: meetingOutcome === 'Resolved' ? 'rgba(16, 185, 129, 0.08)' : 'var(--bg-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ fontWeight: '700', fontSize: '0.82rem', color: meetingOutcome === 'Resolved' ? '#10b981' : 'var(--text-primary)' }}>
+                        ✅ Mark Resolved
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        Meeting fully solved the problem; close ticket
+                      </div>
+                    </div>
+
+                    <div
+                      onClick={() => setMeetingOutcome('Escalated')}
+                      style={{
+                        padding: '12px',
+                        borderRadius: '8px',
+                        border: meetingOutcome === 'Escalated' ? '2px solid #f59e0b' : '1px solid var(--border-color)',
+                        background: meetingOutcome === 'Escalated' ? 'rgba(245, 158, 11, 0.08)' : 'var(--bg-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ fontWeight: '700', fontSize: '0.82rem', color: meetingOutcome === 'Escalated' ? '#f59e0b' : 'var(--text-primary)' }}>
+                        ⚠️ Escalate Ticket
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        Requires intervention from HOD or Principal
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Follow-up Required Toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <input
+                    type="checkbox"
+                    id="roFollowUpCheck"
+                    checked={followUpNeeded}
+                    onChange={(e) => setFollowUpNeeded(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="roFollowUpCheck" style={{ fontSize: '0.82rem', cursor: 'pointer', color: 'var(--text-primary)' }}>
+                    Schedule follow-up conference or review checkpoint needed with student
+                  </label>
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowMeetingFeedbackModal(false)}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8rem' }}
+                >
+                  Skip for Now
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-success"
+                  disabled={isSubmittingFeedback || !discussionSummary.trim()}
+                  style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px', background: '#10b981', borderColor: '#10b981' }}
+                >
+                  <CheckCircle2 size={16} />
+                  {isSubmittingFeedback ? 'Saving Minutes...' : 'Save Discussion Minutes to Ticket'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* RESOLVE MODAL */}
       {showResolveModal && (
         <div className="modal-overlay">
@@ -949,6 +1560,11 @@ export const RODashboard = ({ roId }) => {
             </div>
             <form onSubmit={handleResolveSubmit}>
               <div className="modal-body">
+                {isOnlineMeetingPendingMinutes && (
+                  <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5', padding: '10px 14px', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '14px' }}>
+                    ⚠️ <strong>Institutional Policy Notice:</strong> An online session was conducted for this ticket. You must log the official discussion minutes before this ticket can be resolved. Submitting will redirect you to file the minutes.
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Resolution Summary / Actions Taken</label>
                   <textarea
@@ -1057,6 +1673,25 @@ export const RODashboard = ({ roId }) => {
                   </select>
                 </div>
 
+                {meetMode === 'Offline' && activeMeeting?.mode === 'Online' && (
+                  <div className="form-group" style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '12px 14px', borderRadius: '8px' }}>
+                    <label className="form-label" style={{ fontWeight: '700', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>💬 Feedback / Reason for Switching to Offline</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Optional</span>
+                    </label>
+                    <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '3px 0 8px 0' }}>
+                      Provide brief feedback or note why this session is being moved to in-person (e.g. connectivity drop, student preference).
+                    </p>
+                    <textarea
+                      className="form-textarea"
+                      rows={2}
+                      value={meetReassignFeedback}
+                      onChange={(e) => setMeetReassignFeedback(e.target.value)}
+                      placeholder="e.g. Student requested in-person consultation at RO desk due to network issues."
+                    />
+                  </div>
+                )}
+
                 <div className="form-group">
                   <label className="form-label">Meeting Location / Venue</label>
                   <input
@@ -1091,56 +1726,263 @@ export const RODashboard = ({ roId }) => {
         </div>
       )}
 
+      {/* ONLINE MEETING NOT DONE & RESCHEDULE TO OFFLINE MODAL */}
+      {showOnlineNotDoneModal && selectedIssue && (
+        <div className="modal-overlay" style={{ zIndex: 1250 }}>
+          <div className="modal-content" style={{ maxWidth: '640px', width: '92%' }}>
+            <div className="modal-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    Online Meeting Not Done - Reassign to In-Person
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    Provide feedback & reschedule meeting to In-Person (Offline on Campus)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOnlineNotDoneModal(false)}
+                className="btn-icon-only"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Ticket Info Strip */}
+            <div style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', padding: '10px 18px', display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '0.8rem' }}>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Student: </span>
+                <strong style={{ color: 'var(--text-primary)' }}>{selectedIssue.studentName}</strong> ({selectedIssue.studentId})
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Ticket: </span>
+                <strong style={{ color: 'var(--nitte-blue)' }}>#{selectedIssue.id}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Category: </span>
+                <strong style={{ color: '#10b981' }}>{selectedIssue.category}</strong>
+              </div>
+            </div>
+
+            <form onSubmit={handleOfflineNotDoneSubmit}>
+              <div className="modal-body" style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '72vh', overflowY: 'auto' }}>
+                
+                {/* Institutional Note */}
+                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  📌 <strong>Reassign Notice:</strong> When an online conference could not take place, please provide feedback explaining why the session is moving to in-person and set the campus desk schedule.
+                </div>
+
+                {/* 1. Feedback / Reason for Switching to Offline (Required) */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '700', fontSize: '0.86rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>1. Feedback / Reason for Switching to Offline <span style={{ color: '#ef4444' }}>*</span></span>
+                    <span style={{ fontSize: '0.72rem', color: '#fca5a5', fontWeight: 600 }}>Required</span>
+                  </label>
+                  <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '2px 0 6px 0' }}>
+                    Explain why the online session was not held and student communication held (e.g. connectivity failure, student preference).
+                  </p>
+                  <textarea
+                    className="form-textarea"
+                    required
+                    rows={3}
+                    value={offlineReassignFeedback}
+                    onChange={(e) => setOfflineReassignFeedback(e.target.value)}
+                    placeholder="e.g. Student reported network connectivity issues during online attempt; spoke on phone and agreed to meet at RO desk for in-person document review."
+                  />
+                </div>
+
+                {/* 2. Action Items for Offline Meeting (Optional) */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '600', fontSize: '0.84rem' }}>
+                    2. Action Items / Documents Student Must Bring (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={offlineNotDoneActions}
+                    onChange={(e) => setOfflineNotDoneActions(e.target.value)}
+                    placeholder="e.g. Bring college ID, fee challan copy, and USN admission letter"
+                  />
+                </div>
+
+                {/* 3. New Offline Meeting Schedule Details */}
+                <div style={{ background: 'var(--bg-secondary)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.84rem', fontWeight: 700, color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Calendar size={15} /> Reschedule as In-Person (Offline) Session:
+                  </h4>
+
+                  <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: '0.78rem' }}>Offline Date</label>
+                      <input
+                        type="date"
+                        required
+                        min={todayStr}
+                        className="form-control"
+                        value={offlineRescheduleDate}
+                        onChange={(e) => setOfflineRescheduleDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: '0.78rem' }}>Time Slot</label>
+                      <input
+                        type="time"
+                        required
+                        className="form-control"
+                        value={offlineRescheduleTime}
+                        onChange={(e) => setOfflineRescheduleTime(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '10px' }}>
+                    <label className="form-label" style={{ fontSize: '0.78rem' }}>Campus Venue / Desk</label>
+                    <input
+                      type="text"
+                      required
+                      className="form-control"
+                      value={offlineRescheduleLocation}
+                      onChange={(e) => setOfflineRescheduleLocation(e.target.value)}
+                      placeholder="e.g. RO Office Desk 1 (Admin Block)"
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.78rem' }}>Instructions for Student</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={offlineRescheduleNotes}
+                      onChange={(e) => setOfflineRescheduleNotes(e.target.value)}
+                      placeholder="e.g. Meet in person at RO desk with student USN card."
+                    />
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowOnlineNotDoneModal(false)}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.8rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-success"
+                  disabled={isSubmittingOfflineReschedule || !offlineReassignFeedback.trim()}
+                  style={{ fontSize: '0.84rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', background: '#059669', borderColor: '#059669' }}
+                >
+                  <CheckCircle2 size={16} />
+                  {isSubmittingOfflineReschedule ? 'Reassigning...' : '🤝 Confirm & Reassign to In-Person'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ONLINE VIDEO MEETING ROOM & AUTOMATED RECORDER MODAL FOR RO */}
       {showOnlineMeetingModal && selectedIssue && activeMeeting && (
-        <div className="modal-overlay" style={{ zIndex: 1100, background: 'rgba(0,0,0,0.85)' }}>
-          <div className="modal-content" style={{ maxWidth: '850px', width: '95%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
-
+        <div className="modal-overlay" style={{ zIndex: 1100, background: 'rgba(3, 7, 18, 0.88)', backdropFilter: 'blur(10px)' }}>
+          <div
+            className="modal-content"
+            style={{
+              maxWidth: '1120px',
+              width: '95vw',
+              maxHeight: '94vh',
+              background: 'linear-gradient(180deg, #0b1120 0%, #060911 100%)',
+              color: '#f8fafc',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              borderRadius: '20px',
+              boxShadow: '0 30px 70px -15px rgba(0, 0, 0, 0.9)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}
+          >
             {/* Modal Header */}
-            <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ background: 'rgba(239, 68, 68, 0.2)', padding: '10px', borderRadius: '50%', color: '#ef4444' }}>
+            <div style={{
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '16px 24px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'rgba(15, 23, 42, 0.5)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={{
+                  background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
+                  padding: '10px',
+                  borderRadius: '12px',
+                  color: '#ffffff',
+                  boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)'
+                }}>
                   <Video size={22} />
                 </div>
                 <div>
-                  <h3 style={{ fontWeight: '700', color: '#ffffff', fontSize: '1.1rem', margin: 0 }}>
-                    NITTE Online Meeting Room & Cloud Auto-Recorder
-                  </h3>
-                  <p style={{ fontSize: '0.78rem', color: '#94a3b8', margin: '2px 0 0 0' }}>
-                    Student: <strong>{selectedIssue.studentName}</strong> ({selectedIssue.studentId}) &nbsp;|&nbsp; Ticket: <strong>{selectedIssue.id}</strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ fontWeight: '800', color: '#ffffff', fontSize: '1.15rem', margin: 0, letterSpacing: '-0.02em' }}>
+                      NITTE Online Conference Room & Auto-Recorder
+                    </h3>
+                    <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '0.68rem', fontWeight: 700 }}>
+                      Ticket #{selectedIssue.id}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: '#94a3b8', margin: '3px 0 0 0' }}>
+                    Student: <strong>{selectedIssue.studentName}</strong> ({selectedIssue.studentId}) &nbsp;|&nbsp; Category: <strong>{selectedIssue.category}</strong>
                   </p>
                 </div>
               </div>
 
-              {/* Pulsing Red Auto-Recording Active Badge */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(220, 38, 38, 0.2)', border: '1px solid #ef4444', padding: '6px 14px', borderRadius: '20px' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444' }} />
-                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fca5a5', letterSpacing: '0.05em' }}>
-                  🔴 AUTO-RECORDING: {formatTimer(recordingSeconds)}
-                </span>
+              {/* Header Badges */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {/* Pulsing Red Auto-Recording Active Badge */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'rgba(220, 38, 38, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  padding: '6px 14px',
+                  borderRadius: '30px'
+                }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444' }} />
+                  <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#fca5a5', letterSpacing: '0.04em' }}>
+                    REC • {formatTimer(recordingSeconds)}
+                  </span>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'rgba(16, 185, 129, 0.12)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  padding: '6px 12px',
+                  borderRadius: '30px',
+                  fontSize: '0.74rem',
+                  color: '#6ee7b7',
+                  fontWeight: 600
+                }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                  {peerConnected ? '⚡ 18ms P2P Live' : 'Waiting...'}
+                </div>
               </div>
             </div>
 
-            {/* Modal Body */}
-            <div className="modal-body" style={{ padding: '20px 0' }}>
-              {/* Permission & Device Status Banners */}
-              {mediaPermissionState === 'requesting' && (
-                <div style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6', color: '#93c5fd', padding: '10px 14px', borderRadius: '8px', fontSize: '0.82rem', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Camera size={16} />
-                  <span><strong>Requesting Camera & Microphone Access:</strong> Please click <em>"Allow"</em> on your browser's prompt to enable your live video and audio feed.</span>
-                </div>
-              )}
-
-              {mediaPermissionState === 'granted' && (
-                <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#6ee7b7', padding: '8px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <CheckCircle2 size={16} />
-                    <span><strong>Live Camera & Microphone Active:</strong> Browser permissions granted. Real webcam video & audio are active & recording.</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', background: '#065f46', color: '#a7f3d0', padding: '2px 8px', borderRadius: '12px' }}>🔒 HD Streaming</span>
-                </div>
-              )}
-
+            {/* Modal Body - Video Stage */}
+            <div style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+              {/* Permission Notice Banner */}
               {mediaPermissionState === 'denied' && (
                 <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1151,106 +1993,156 @@ export const RODashboard = ({ roId }) => {
                     type="button"
                     onClick={requestMediaPermissions}
                     className="btn btn-warning"
-                    style={{ fontSize: '0.74rem', padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    style={{ fontSize: '0.74rem', padding: '4px 12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                   >
                     <RotateCcw size={12} /> Retry Permissions
                   </button>
                 </div>
               )}
 
-              {/* Video Feed Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+              {/* Large Cinematic Video Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px', marginBottom: '16px', flex: 1 }}>
 
                 {/* RO OFFICER LIVE WEBCAM VIDEO FEED */}
-                <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', position: 'relative', height: '230px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                <div style={{
+                  background: '#0a0f1d',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '14px',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  height: '380px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
+                }}>
                   {isCameraOff ? (
-                    <div style={{ color: '#64748b', textAlign: 'center' }}>
-                      <VideoOff size={40} style={{ marginBottom: '8px' }} />
-                      <p style={{ fontSize: '0.8rem', margin: 0 }}>RO Camera Disabled</p>
-                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Click 'Start Camera' below to turn on</span>
-                    </div>
-                  ) : mediaPermissionState === 'granted' ? (
-                    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#000' }}>
-                      <video
-                        ref={(el) => {
-                          localVideoRef.current = el;
-                          if (el && localStreamRef.current) {
-                            el.srcObject = localStreamRef.current;
-                          }
-                        }}
-                        autoPlay
-                        playsInline
-                        muted
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                      <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.7rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} /> Live HD WebCam
+                    <div style={{ color: '#64748b', textAlign: 'center', padding: '20px' }}>
+                      <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto' }}>
+                        <VideoOff size={32} />
                       </div>
+                      <p style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>RO Camera Disabled</p>
+                      <button
+                        type="button"
+                        onClick={toggleCamera}
+                        style={{ marginTop: '12px', background: '#3b82f6', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                      >
+                        Turn Camera Back On
+                      </button>
                     </div>
+                  ) : mediaPermissionState === 'granted' && localStream ? (
+                    <VideoStreamPlayer
+                      stream={localStream}
+                      muted={true}
+                      badge={{ text: 'Live HD WebCam (Host)', color: '#10b981' }}
+                      participantName={ro.name}
+                    />
                   ) : (
-                    <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: '#3b82f6', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 'bold', boxShadow: '0 0 15px rgba(59, 130, 246, 0.4)' }}>
+                    <div style={{
+                      width: '100%',
+                      height: '100%',
+                      background: 'radial-gradient(circle at center, #1e293b 0%, #090d16 100%)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative'
+                    }}>
+                      <div style={{
+                        width: '84px',
+                        height: '84px',
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '2rem',
+                        fontWeight: '800',
+                        boxShadow: '0 0 25px rgba(37, 99, 235, 0.5)',
+                        border: '2px solid rgba(255, 255, 255, 0.2)'
+                      }}>
                         RO
                       </div>
-                      <p style={{ marginTop: '10px', fontWeight: '700', fontSize: '0.9rem', color: '#ffffff' }}>{ro.name} (Host)</p>
-                      <span style={{ fontSize: '0.7rem', color: '#93c5fd' }}>
+                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>{ro.name} (Host)</p>
+                      <span style={{ fontSize: '0.75rem', color: '#93c5fd' }}>
                         {mediaPermissionState === 'requesting' ? 'Connecting live camera...' : 'Webcam simulated fallback'}
                       </span>
                     </div>
                   )}
 
-                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', background: 'rgba(0,0,0,0.7)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
-                    {isMicMuted ? <MicOff size={12} style={{ color: '#ef4444' }} /> : <Mic size={12} style={{ color: '#10b981' }} />}
-                    <span>{isMicMuted ? 'Muted' : 'Audio Live'}</span>
+                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: '#10b981', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
+                    🟢 Host Feed
                   </div>
                 </div>
 
                 {/* STUDENT VIDEO FEED */}
-                <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden', position: 'relative', height: '230px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                <div style={{
+                  background: '#0a0f1d',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '14px',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  height: '380px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
+                }}>
                   {remoteStream ? (
-                    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#000' }}>
-                      <video
-                        ref={(el) => {
-                          remoteVideoRef.current = el;
-                          if (el && remoteStream) {
-                            el.srcObject = remoteStream;
-                          }
-                        }}
-                        autoPlay
-                        playsInline
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                      <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.7rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} /> 🟢 Student Live WebCam
-                      </div>
-                    </div>
+                    <VideoStreamPlayer
+                      stream={remoteStream}
+                      muted={false}
+                      badge={{ text: '🟢 Student Live WebCam', color: '#10b981' }}
+                      participantName={selectedIssue.studentName}
+                    />
                   ) : (
-                    <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #047857 0%, #064e3b 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: '#10b981', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 'bold', boxShadow: '0 0 15px rgba(16, 185, 129, 0.4)' }}>
+                    <div style={{
+                      width: '100%',
+                      height: '100%',
+                      background: 'radial-gradient(circle at center, #064e3b 0%, #090d16 100%)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative'
+                    }}>
+                      <div style={{
+                        width: '84px',
+                        height: '84px',
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '2rem',
+                        fontWeight: '800',
+                        boxShadow: '0 0 25px rgba(16, 185, 129, 0.4)',
+                        border: '2px solid rgba(255, 255, 255, 0.2)'
+                      }}>
                         {selectedIssue.studentName ? selectedIssue.studentName.charAt(0) : 'S'}
                       </div>
-                      <p style={{ marginTop: '10px', fontWeight: '700', fontSize: '0.9rem', color: '#ffffff' }}>{selectedIssue.studentName}</p>
-                      <span style={{ fontSize: '0.7rem', color: '#a7f3d0' }}>
-                        {peerConnected ? 'Connecting student camera feed...' : 'Waiting for Student to join...'}
+                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>{selectedIssue.studentName}</p>
+                      <span style={{ fontSize: '0.75rem', color: '#a7f3d0' }}>
+                        {peerConnected ? 'Connecting student camera feed...' : 'Waiting for Student to join call...'}
                       </span>
                     </div>
                   )}
 
-                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', background: 'rgba(0,0,0,0.7)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#fff' }}>
-                    <Mic size={12} style={{ color: remoteStream ? '#10b981' : '#94a3b8' }} />
-                    <span>{remoteStream ? 'Student Audio Live' : (peerConnected ? 'Connecting Audio...' : 'Awaiting Connection')}</span>
-                  </div>
-                  <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '4px', fontSize: '0.68rem', color: remoteStream ? '#10b981' : '#f59e0b' }}>
-                    {remoteStream ? '📶 Live HD Stream' : '⏳ Ready'}
+                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: remoteStream ? '#10b981' : '#f59e0b', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
+                    {remoteStream ? '🟢 Student Live P2P' : (peerConnected ? '🟡 Connecting...' : '⚪ Waiting')}
                   </div>
                 </div>
 
               </div>
 
               {/* Encrypted Storage Info Bar */}
-              <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '12px 16px', borderRadius: '6px', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ background: 'rgba(15, 23, 42, 0.4)', border: '1px solid rgba(255, 255, 255, 0.06)', padding: '10px 16px', borderRadius: '10px', fontSize: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
-                  <Shield size={16} style={{ color: '#10b981' }} />
+                  <Shield size={14} style={{ color: '#10b981' }} />
                   <span><strong>256-bit Encrypted Session</strong> &nbsp;|&nbsp; MediaRecorder capturing live camera & audio stream</span>
                 </div>
                 <div style={{ color: '#fca5a5', fontWeight: 600 }}>
@@ -1260,42 +2152,86 @@ export const RODashboard = ({ roId }) => {
             </div>
 
             {/* Controls Bar & Stop Button */}
-            <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={toggleMic}
-                  style={{ background: isMicMuted ? '#ef4444' : '#334155', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
-                >
-                  {isMicMuted ? <MicOff size={15} /> : <Mic size={15} />}
-                  {isMicMuted ? 'Unmute Mic' : 'Mute Mic'}
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleCamera}
-                  style={{ background: isCameraOff ? '#ef4444' : '#334155', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
-                >
-                  {isCameraOff ? <VideoOff size={15} /> : <Video size={15} />}
-                  {isCameraOff ? 'Start Camera' : 'Stop Camera'}
-                </button>
-                {mediaPermissionState !== 'granted' && (
-                  <button
-                    type="button"
-                    onClick={requestMediaPermissions}
-                    style={{ background: '#2563eb', color: '#ffffff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
-                  >
-                    <Camera size={15} /> Request Cam/Mic Access
-                  </button>
-                )}
-              </div>
+            <div style={{
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '16px 24px',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: '16px',
+              background: 'rgba(11, 15, 25, 0.85)',
+              backdropFilter: 'blur(16px)'
+            }}>
+              {/* Mic Button */}
+              <button
+                type="button"
+                onClick={toggleMic}
+                style={{
+                  background: isMicMuted ? '#ef4444' : 'rgba(16, 185, 129, 0.15)',
+                  color: isMicMuted ? '#ffffff' : '#10b981',
+                  border: isMicMuted ? '1px solid #dc2626' : '1px solid rgba(16, 185, 129, 0.35)',
+                  padding: '10px 20px',
+                  borderRadius: '30px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  transition: 'all 0.2s ease',
+                  boxShadow: isMicMuted ? '0 4px 14px rgba(239, 68, 68, 0.3)' : '0 4px 14px rgba(16, 185, 129, 0.15)'
+                }}
+              >
+                {isMicMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                <span>{isMicMuted ? 'Unmute Mic' : 'Mute Mic'}</span>
+              </button>
 
+              {/* Camera Button */}
+              <button
+                type="button"
+                onClick={toggleCamera}
+                style={{
+                  background: isCameraOff ? '#ef4444' : 'rgba(255, 255, 255, 0.08)',
+                  color: isCameraOff ? '#ffffff' : '#f1f5f9',
+                  border: isCameraOff ? '1px solid #dc2626' : '1px solid rgba(255, 255, 255, 0.15)',
+                  padding: '10px 20px',
+                  borderRadius: '30px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {isCameraOff ? <VideoOff size={16} /> : <Video size={16} />}
+                <span>{isCameraOff ? 'Start Camera' : 'Stop Camera'}</span>
+              </button>
+
+              {/* End Meeting Button */}
               <button
                 type="button"
                 onClick={handleStopAndSaveRecording}
-                className="btn btn-danger"
-                style={{ padding: '8px 20px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}
+                style={{
+                  background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '12px 28px',
+                  borderRadius: '30px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  boxShadow: '0 4px 16px rgba(220, 38, 38, 0.4)',
+                  transition: 'all 0.2s ease',
+                  marginLeft: '8px'
+                }}
               >
-                <Square size={16} /> Stop Recording & End Meeting
+                <Square size={16} />
+                <span>Stop Recording & End Meeting</span>
               </button>
             </div>
 
@@ -1381,10 +2317,10 @@ export const RODashboard = ({ roId }) => {
                   </div>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff', fontWeight: '700' }}>
-                      Category Solution & Guidance Video Manager
+                      {managerTargetIssueId ? `Issue Solution Video (Ticket #${managerTargetIssueId})` : 'My Assigned Issue Solution Video'}
                     </h3>
                     <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
-                      Update the tutorial video shown to students immediately upon raising an issue
+                      Assigned to <strong>{ro.name}</strong> ({ro.id}) &nbsp;|&nbsp; Category: <strong style={{ color: '#6ee7b7' }}>{managerCategory}</strong>
                     </p>
                   </div>
                 </div>
@@ -1401,32 +2337,54 @@ export const RODashboard = ({ roId }) => {
               <form onSubmit={handleSaveCategoryVideo}>
                 <div className="modal-body" style={{ padding: '18px 0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   
-                  {/* Category Selector */}
+                  {/* Category Field - Strictly Scoped to this RO's assigned issue */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                      Select Issue Category:
-                    </label>
-                    <select
-                      value={managerCategory}
-                      onChange={(e) => {
-                        const newCat = e.target.value;
-                        setManagerCategory(newCat);
-                        loadCategoryVideoData(newCat);
-                      }}
-                      className="form-control"
-                      style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155' }}
-                    >
-                      <optgroup label="Main Categories (Default Guides)">
-                        {['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'].map(c => (
-                          <option key={c} value={c}>{c}</option>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8' }}>
+                        Issue Category:
+                      </label>
+                      <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)', fontWeight: 600 }}>
+                        {managerTargetIssueId ? `🔒 Locked to Ticket #${managerTargetIssueId}` : `🔒 Scoped to ${ro.id}`}
+                      </span>
+                    </div>
+
+                    {managerTargetIssueId || myAssignedIssueCategories.length <= 1 ? (
+                      <div style={{
+                        background: 'rgba(30, 41, 59, 0.8)',
+                        color: '#f8fafc',
+                        border: '1px solid #334155',
+                        borderRadius: '6px',
+                        padding: '10px 14px',
+                        fontSize: '0.88rem',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                      }}>
+                        <span>{managerCategory}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Authorized RO Category</span>
+                      </div>
+                    ) : (
+                      <select
+                        value={managerCategory}
+                        onChange={(e) => {
+                          const newCat = e.target.value;
+                          setManagerCategory(newCat);
+                          loadCategoryVideoData(newCat);
+                        }}
+                        className="form-control"
+                        style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155' }}
+                      >
+                        {myAssignedIssueCategories.map(c => (
+                          <option key={c} value={c}>
+                            {c} (Assigned to {ro.id})
+                          </option>
                         ))}
-                      </optgroup>
-                      <optgroup label="Specific Subcategories (Dedicated Overrides)">
-                        {ALL_CATEGORIES.map(c => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </optgroup>
-                    </select>
+                      </select>
+                    )}
+                    <span style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                      Security Policy: Each RO can only change the YouTube link for their respective assigned issues.
+                    </span>
                   </div>
 
                   {/* Video Title */}
