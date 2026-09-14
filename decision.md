@@ -385,7 +385,17 @@ This document records every meaningful architectural, technical, and UX decision
   - Refined `isDoneThroughOnline` in [src/views/RODashboard.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/views/RODashboard.jsx) to strictly check `activeMeeting?.mode === 'Online'`.
   - Updated `showOnlineNotDoneModal` and `showScheduleModal` to collect switch feedback rather than log minutes.
   - Updated `scheduleRoMeeting` in [src/context/DatabaseContext.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/context/DatabaseContext.jsx) and `POST /api/meetings` in [server/server.js](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/server/server.js).
-- **Impact**: Clear separation of concerns — formal discussion minutes remain strictly enforced for online video sessions, while offline reassignments smoothly capture switch feedback without inappropriate administrative friction.
+---
+
+### Decision 22: Contributor 6-Field Faculty Session Reports Preservation & Admin Direct Access
+- **Context**: 
+  A comprehensive code audit was conducted comparing contributor commit `683f92f` against the current codebase to verify that the 6-field Faculty Mentor Session Reports feature was not lost or overridden during WebRTC, meeting auto-recording, and offline reassignment development.
+- **Audit Findings**:
+  1. *Mentor Dashboard Form*: 100% intact. All 6 required flowchart fields (`whichClass`, `recordDate`, `recordLocation`, `recordCount`, `recordTopic`, `recordNotes`) and the Friday 5:00 PM submission notice are fully operational.
+  2. *Database & Server Endpoints*: 100% intact. `mentor_session_records` table columns (`which_class`, `location`), `POST /api/mentor/session-records`, and `DatabaseContext.submitMentorSessionRecord` persist all parameters accurately.
+  3. *Admin Dashboard Accessibility*: In [src/views/AdminDashboard.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/views/AdminDashboard.jsx), added a direct sidebar button **"Faculty Session Logs"** (`Tab 3.5`) with live report counter, providing 1-click administrative access directly to the 6-column session audit table.
+- **Impact**: Full backward compatibility and verified preservation of contributor features with streamlined admin visibility.
+
 
 
 

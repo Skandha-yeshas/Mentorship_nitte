@@ -476,11 +476,25 @@ export const AdminDashboard = () => {
 
         {/* Tab 3: Faculty Mentors */}
         <button 
-          className={`panel-btn ${activeTab === 'mentors' ? 'active Admin' : ''}`}
-          onClick={() => setActiveTab('mentors')}
+          className={`panel-btn ${activeTab === 'mentors' && mentorSubTab === 'directory' ? 'active Admin' : ''}`}
+          onClick={() => { setActiveTab('mentors'); setMentorSubTab('directory'); }}
         >
           <UserCheck size={18} />
           <span>Faculty Mentors ({db.users.mentors.length})</span>
+        </button>
+
+        {/* Tab 3.5: Faculty Session Logs (6-Field Audit Reports) */}
+        <button 
+          className={`panel-btn ${activeTab === 'mentors' && mentorSubTab === 'session-reports' ? 'active Admin' : ''}`}
+          onClick={() => { setActiveTab('mentors'); setMentorSubTab('session-reports'); }}
+        >
+          <FileText size={18} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <span>Faculty Session Logs</span>
+            <span style={{ background: 'rgba(99, 102, 241, 0.2)', color: '#a5b4fc', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+              {(db.mentorSessionRecords || []).length}
+            </span>
+          </div>
         </button>
 
         {/* Tab 4: Relationship Officers */}
