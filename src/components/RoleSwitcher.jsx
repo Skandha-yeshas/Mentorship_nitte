@@ -1,10 +1,10 @@
 import React, { useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers, Mail, Key } from 'lucide-react';
+import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers, Mail, Key, LogIn, LogOut } from 'lucide-react';
 import { NitteLogo } from './NitteLogo';
 
-export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpenLoginModal }) => {
-  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
+export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpenLoginModal, onOpenLoginPage }) => {
+  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser, logoutUser, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
 
   const roles = [
     { name: 'Student', icon: GraduationCap, label: 'Student (Mentee)' },
@@ -18,11 +18,11 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
     
     // Automatically set default sub-profile
     if (roleName === 'Student') {
-      setSelectedSubProfile(db.users.students[0].id);
+      setSelectedSubProfile(db.users.students[0]?.id || 'u18cm24s0058');
     } else if (roleName === 'Mentor') {
-      setSelectedSubProfile(db.users.mentors[0].id);
+      setSelectedSubProfile(db.users.mentors[0]?.id || 'M-101');
     } else if (roleName === 'RO') {
-      setSelectedSubProfile(db.users.ros[0].id);
+      setSelectedSubProfile(db.users.ros[0]?.id || 'RO-01');
     } else {
       setSelectedSubProfile('ADMIN');
     }
@@ -96,29 +96,77 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
         </div>
 
         {/* Profile Details Select & Role Switcher */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          {/* Computer Password Login Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {/* Main Portal Login Page Switcher */}
+          <button
+            onClick={onOpenLoginPage}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: 'rgba(59, 130, 246, 0.15)',
+              color: '#60a5fa',
+              border: '1px solid rgba(59, 130, 246, 0.4)',
+              borderRadius: '8px',
+              padding: '6px 12px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            title="Go to Multi-Role Portal Login Page"
+          >
+            <LogIn size={14} />
+            <span>Portal Login Page</span>
+          </button>
+
+          {/* Computer Password Login / Status Button */}
           <button
             onClick={onOpenLoginModal}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: authenticatedUser ? '#10b981' : '#2563eb',
-              color: '#ffffff',
-              border: 'none',
+              backgroundColor: authenticatedUser ? '#10b981' : 'var(--bg-card)',
+              color: authenticatedUser ? '#ffffff' : 'var(--text-secondary)',
+              border: '1px solid var(--border-color)',
               borderRadius: '8px',
-              padding: '6px 12px',
-              fontSize: '0.8rem',
+              padding: '6px 10px',
+              fontSize: '0.78rem',
               fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+              cursor: 'pointer'
             }}
-            title="Log in or Generate Computer Password"
+            title="Quick Login Modal"
           >
-            <Key size={14} />
-            <span>{authenticatedUser ? `Auth: ${authenticatedUser.id}` : 'Student Sign-Up / Login'}</span>
+            <Key size={13} />
+            <span>{authenticatedUser ? `${authenticatedUser.name}` : 'Quick Modal'}</span>
           </button>
+
+          {authenticatedUser && (
+            <button
+              onClick={() => {
+                logoutUser();
+                if (onOpenLoginPage) onOpenLoginPage();
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                color: '#fca5a5',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+              title="Log out and return to Login Page"
+            >
+              <LogOut size={12} />
+              <span>Exit</span>
+            </button>
+          )}
 
           {activeSubProfiles.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

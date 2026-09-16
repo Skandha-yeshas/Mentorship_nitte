@@ -1214,6 +1214,46 @@ export const DatabaseProvider = ({ children }) => {
     }
   };
 
+  const bulkUploadMentors = async (mentors) => {
+    try {
+      const res = await fetch('/api/admin/bulk-upload-mentors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mentors })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchDbState();
+        return data;
+      } else {
+        throw new Error(data.error || 'Failed to process mentors bulk upload.');
+      }
+    } catch (err) {
+      console.error('Error uploading mentors roster:', err);
+      throw err;
+    }
+  };
+
+  const bulkUploadRos = async (ros) => {
+    try {
+      const res = await fetch('/api/admin/bulk-upload-ros', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ros })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchDbState();
+        return data;
+      } else {
+        throw new Error(data.error || 'Failed to process ROs bulk upload.');
+      }
+    } catch (err) {
+      console.error('Error uploading ROs roster:', err);
+      throw err;
+    }
+  };
+
   return (
     <DatabaseContext.Provider value={{
       db,
@@ -1245,6 +1285,8 @@ export const DatabaseProvider = ({ children }) => {
       sendCustomEmail,
       simulateGmailResponse,
       bulkUploadStudents,
+      bulkUploadMentors,
+      bulkUploadRos,
       saveMeetingRecording,
       updateCategoryVideo,
       submitRoMeetingFeedback,

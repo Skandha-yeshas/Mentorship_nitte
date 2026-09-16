@@ -364,6 +364,264 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
   });
 });
 
+// ADMIN BULK FACULTY MENTORS ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
+app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
+  const { mentors } = req.body;
+  if (!Array.isArray(mentors) || mentors.length === 0) {
+    return res.status(400).json({ error: 'Payload must contain a non-empty "mentors" array.' });
+  }
+
+  const results = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < mentors.length; i++) {
+    const m = mentors[i];
+    const rawId = m.id || m.mentorId || m['Mentor ID'] || m['FAC ID'] || m['Faculty ID'] || m['Employee ID'] || m['Mentor Id'];
+    const rawName = m.name || m.mentorName || m['Faculty Name'] || m['Mentor Name'] || m['Name'] || m['Full Name'];
+    const rawEmail = m.email || m.mentorEmail || m['Faculty Email'] || m['Mentor Email'] || m['Email'] || m['Gmail'] || m['Email Address'];
+    const dept = m.dept || m.Dept || m['Department'] || m['Dept'] || m['Branch'] || 'CSE';
+    const assignedClass = m.class || m['Class'] || m['Assigned Class'] || m['Section'] || m['Class & Section'] || 'General Faculty Mentorship';
+
+    if (!rawId || !rawName || !rawEmail) {
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: rawId || 'N/A',
+        name: rawName || 'N/A',
+        email: rawEmail || 'N/A',
+        reason: 'Missing required Mentor ID, Faculty Name, or Email.'
+      });
+      failureCount++;
+      continue;
+    }
+
+    const mentorId = String(rawId).trim().toUpperCase();
+    const name = String(rawName).trim();
+    const email = String(rawEmail).trim().toLowerCase();
+    const generatedPassword = m.password && String(m.password).trim() ? String(m.password).trim() : generateComputerPassword();
+
+    try {
+      // Upsert into PostgreSQL mentors table
+      await query(
+        `INSERT INTO mentors (id, name, email, dept, class, password)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           dept = EXCLUDED.dept,
+           class = EXCLUDED.class,
+           password = EXCLUDED.password`,
+        [mentorId, name, email, dept, assignedClass, generatedPassword]
+      );
+
+      // Send automated onboarding credential email via Gmail SMTP
+      const emailHtml = `
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px;">NITTE Student Mentorship & Support System</h1>
+            <p style="margin: 6px 0 0 0; font-size: 0.9rem; color: #93c5fd;">Official Faculty Mentor Account Onboarding</p>
+          </div>
+          <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
+            <p style="font-size: 1rem; margin-top: 0;">Dear <strong>${name}</strong>,</p>
+            <p>Welcome! Your official Faculty Mentor account has been registered on the NITTE Student Mentorship & Escalation Portal by Institutional Administration.</p>
+            
+            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #2563eb; padding: 18px; border-radius: 6px; margin: 20px 0;">
+              <h3 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 1rem;">🔐 Your Faculty Mentor Login Credentials:</h3>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #2563eb; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Faculty Mentor ID:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${mentorId}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Department:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${dept}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Assigned Mentorship Class:</strong> <span>${assignedClass}</span></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Registered Email:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
+            </div>
+
+            <p style="font-size: 0.9rem; color: #475569;">You can log in to the portal as <strong>Faculty Mentor</strong> using your Mentor ID or Registered Email along with the password above.</p>
+            
+            <div style="text-align: center; margin-top: 24px;">
+              <a href="http://localhost:5173" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;">Log In to Faculty Mentor Dashboard</a>
+            </div>
+          </div>
+          <div style="background-color: #f1f5f9; padding: 14px 24px; text-align: center; font-size: 0.78rem; color: #64748b; border-top: 1px solid #e2e8f0;">
+            This automated credential notification was dispatched by NITTE System Administration via ${GMAIL_ADDRESS}.
+          </div>
+        </div>
+      `;
+
+      await sendGmailNotification({
+        to: email,
+        replyTo: GMAIL_ADDRESS,
+        fromName: 'NITTE Admin Desk',
+        subject: `[NITTE FACULTY MENTOR CREDENTIALS] Welcome ${name} - Faculty Account Onboarding (${mentorId})`,
+        html: emailHtml,
+        text: `Welcome ${name}! Your Faculty Mentor account has been registered. Mentor ID: ${mentorId}, Department: ${dept}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        eventType: 'BULK_MENTOR_ONBOARDING'
+      });
+
+      await logSystemEvent(`Bulk Upload: Registered faculty mentor ${name} (${mentorId}, ${dept}) with generated password and dispatched Gmail credentials to ${email}`, 'Admin', 'ADMIN');
+
+      results.push({
+        status: 'SUCCESS',
+        index: i + 1,
+        id: mentorId,
+        name,
+        email,
+        dept,
+        class: assignedClass,
+        password: generatedPassword,
+        emailStatus: 'DELIVERED_GMAIL'
+      });
+      successCount++;
+    } catch (err) {
+      console.error(`[Bulk Upload Error] Failed for mentor ${mentorId}:`, err);
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: mentorId,
+        name,
+        email,
+        reason: err.message || 'Database insertion error'
+      });
+      failureCount++;
+    }
+  }
+
+  res.json({
+    success: true,
+    totalProcessed: mentors.length,
+    successCount,
+    failureCount,
+    results
+  });
+});
+
+// ADMIN BULK RELATIONSHIP OFFICERS (ROS) ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
+app.post('/api/admin/bulk-upload-ros', async (req, res) => {
+  const { ros } = req.body;
+  if (!Array.isArray(ros) || ros.length === 0) {
+    return res.status(400).json({ error: 'Payload must contain a non-empty "ros" array.' });
+  }
+
+  const results = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < ros.length; i++) {
+    const r = ros[i];
+    const rawId = r.id || r.roId || r['RO ID'] || r['Officer ID'] || r['Officer Code'] || r['RO Id'];
+    const rawName = r.name || r.roName || r['Officer Name'] || r['RO Name'] || r['Name'] || r['Full Name'];
+    const rawEmail = r.email || r.roEmail || r['Officer Email'] || r['Email'] || r['Gmail'] || r['Email Address'] || GMAIL_ADDRESS;
+    const region = r.region || r['Region'] || r['Jurisdiction'] || r['Category Jurisdiction'] || r['Category'] || r['Department'] || 'General Student Support';
+
+    if (!rawId || !rawName) {
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: rawId || 'N/A',
+        name: rawName || 'N/A',
+        email: rawEmail || 'N/A',
+        reason: 'Missing required RO ID or Officer Name.'
+      });
+      failureCount++;
+      continue;
+    }
+
+    const roId = String(rawId).trim().toUpperCase();
+    const name = String(rawName).trim();
+    const email = String(rawEmail).trim().toLowerCase();
+    const generatedPassword = r.password && String(r.password).trim() ? String(r.password).trim() : generateComputerPassword();
+
+    try {
+      // Upsert into PostgreSQL ros table
+      await query(
+        `INSERT INTO ros (id, name, email, region, password)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           region = EXCLUDED.region,
+           password = EXCLUDED.password`,
+        [roId, name, email, region, generatedPassword]
+      );
+
+      // Send automated onboarding credential email via Gmail SMTP
+      const emailHtml = `
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <div style="background: linear-gradient(135deg, #065f46 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px;">NITTE Student Mentorship & Support System</h1>
+            <p style="margin: 6px 0 0 0; font-size: 0.9rem; color: #6ee7b7;">Relationship Officer (RO) Account Onboarding</p>
+          </div>
+          <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
+            <p style="font-size: 1rem; margin-top: 0;">Dear Officer <strong>${name}</strong>,</p>
+            <p>Welcome! Your official Relationship Officer account has been registered on the NITTE Mentorship & Escalation Portal to oversee dedicated category resolutions.</p>
+            
+            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #059669; padding: 18px; border-radius: 6px; margin: 20px 0;">
+              <h3 style="margin: 0 0 12px 0; color: #065f46; font-size: 1rem;">🔐 Your RO Login Credentials:</h3>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #059669; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Officer ID / Code:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${roId}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Jurisdiction Category:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${region}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Official Gmail:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
+            </div>
+
+            <p style="font-size: 0.9rem; color: #475569;">You can log in to the portal as <strong>Relationship Officer (RO)</strong> using your Officer ID or Official Gmail along with the password above to manage escalated student tickets and online WebRTC hearings.</p>
+            
+            <div style="text-align: center; margin-top: 24px;">
+              <a href="http://localhost:5173" style="display: inline-block; background: #059669; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;">Log In to RO Portal</a>
+            </div>
+          </div>
+          <div style="background-color: #f1f5f9; padding: 14px 24px; text-align: center; font-size: 0.78rem; color: #64748b; border-top: 1px solid #e2e8f0;">
+            This automated credential notification was dispatched by NITTE System Administration via ${GMAIL_ADDRESS}.
+          </div>
+        </div>
+      `;
+
+      await sendGmailNotification({
+        to: email,
+        replyTo: GMAIL_ADDRESS,
+        fromName: 'NITTE Admin Desk',
+        subject: `[NITTE RELATIONSHIP OFFICER CREDENTIALS] Welcome ${name} - RO Account Onboarding (${roId})`,
+        html: emailHtml,
+        text: `Welcome ${name}! Your Relationship Officer account has been registered. RO ID: ${roId}, Category Jurisdiction: ${region}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        eventType: 'BULK_RO_ONBOARDING'
+      });
+
+      await logSystemEvent(`Bulk Upload: Registered relationship officer ${name} (${roId}, ${region}) with generated password and dispatched Gmail credentials to ${email}`, 'Admin', 'ADMIN');
+
+      results.push({
+        status: 'SUCCESS',
+        index: i + 1,
+        id: roId,
+        name,
+        email,
+        region,
+        password: generatedPassword,
+        emailStatus: 'DELIVERED_GMAIL'
+      });
+      successCount++;
+    } catch (err) {
+      console.error(`[Bulk Upload Error] Failed for RO ${roId}:`, err);
+      results.push({
+        status: 'FAILED',
+        index: i + 1,
+        id: roId,
+        name,
+        email,
+        reason: err.message || 'Database insertion error'
+      });
+      failureCount++;
+    }
+  }
+
+  res.json({
+    success: true,
+    totalProcessed: ros.length,
+    successCount,
+    failureCount,
+    results
+  });
+});
+
 
 app.post('/api/auth/login', async (req, res) => {
   const { id, email, password, role } = req.body;

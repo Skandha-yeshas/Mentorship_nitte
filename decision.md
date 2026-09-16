@@ -396,6 +396,46 @@ This document records every meaningful architectural, technical, and UX decision
   3. *Admin Dashboard Accessibility*: In [src/views/AdminDashboard.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/views/AdminDashboard.jsx), added a direct sidebar button **"Faculty Session Logs"** (`Tab 3.5`) with live report counter, providing 1-click administrative access directly to the 6-column session audit table.
 - **Impact**: Full backward compatibility and verified preservation of contributor features with streamlined admin visibility.
 
+---
+
+### Decision 23: Bulk Excel/CSV Roster Import for Faculty Mentors & Relationship Officers
+- **Context**: 
+  The administrator required bulk onboarding capabilities for Faculty Mentors and Relationship Officers (ROs), mirroring the existing bulk student roster import system.
+- **Architectural Solution**:
+  1. *Backend Endpoints*:
+     - Implemented `POST /api/admin/bulk-upload-mentors` in [server/server.js](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/server/server.js): normalizes spreadsheet headers (`Mentor ID`, `Faculty Name`, `Faculty Email`, `Department`, `Assigned Class`), generates computer passwords, upserts into PostgreSQL `mentors`, and dispatches official welcome emails via Gmail SMTP (`skandhayashu2906@gmail.com`).
+     - Implemented `POST /api/admin/bulk-upload-ros` in [server/server.js](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/server/server.js): normalizes spreadsheet headers (`RO ID`, `Officer Name`, `Category Jurisdiction`, `Officer Email`), generates computer passwords, upserts into PostgreSQL `ros`, and dispatches official welcome emails via Gmail SMTP.
+  2. *Database Context*:
+     - Added `bulkUploadMentors` and `bulkUploadRos` in [src/context/DatabaseContext.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/context/DatabaseContext.jsx) with state refresh.
+  3. *Admin Dashboard UI*:
+     - In [src/views/AdminDashboard.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/views/AdminDashboard.jsx), added sub-tabs for both Mentors and ROs sections:
+       - Sample template downloaders: `nitte_mentor_roster_template.xlsx` and `nitte_ro_roster_template.xlsx`.
+       - Drag-and-drop file uploaders for `.xlsx`, `.xls`, and `.csv`.
+       - Real-time preview tables showing parsed columns prior to database submission.
+       - Enrolment audit results tables showing password credentials generated and `DELIVERED GMAIL` status badges.
+       - "Export Credentials CSV" button for offline administrative archiving.
+
+---
+
+### Decision 24: Unified Multi-Role Login Portal with Demo Mode Live Roster 1-Click Access
+- **Context**: 
+  The user requested a dedicated multi-role login page tailored for Students, Faculty Mentors, Relationship Officers (ROs), and System Administrators, while preserving Demo Mode access and reflecting the database roster forms.
+- **Architectural Solution**:
+  1. *Dedicated Login View*:
+     - Created [src/views/LoginPage.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/views/LoginPage.jsx) featuring a modern institutional design with glassmorphism, gradient backdrops, and active PostgreSQL live connection indicator.
+     - Role switch pills across all 4 roles: 🎓 Student, 👨‍🏫 Faculty Mentor, 👔 Relationship Officer, and 🛡️ System Admin.
+  2. *Dual-Column Layout*:
+     - **Left Column**: Standard credential authentication form supporting manual credentials (ID/Email and password) and student self-registration with automated Gmail onboarding.
+     - **Right Column (Demo Mode Live Rosters)**: Direct 1-click roster browser displaying live profiles from the PostgreSQL/local database:
+       - Students: USN, Name, Email, Sem/Branch, and Passwords.
+       - Mentors: Mentor ID, Name, Dept, Assigned Class, and Passwords.
+       - ROs: 49 Category ROs with department filter (Academic, Exams, Financial, Hostels, etc.) and Passwords.
+       - Admin: Master profile with 1-click access.
+       - Evaluators can click any row to auto-fill and log in immediately without manual typing.
+  3. *Navigation Integration*:
+     - Updated [src/App.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/App.jsx) and [src/components/RoleSwitcher.jsx](file:///c:/Users/Yeshas%20M/OneDrive/Desktop/Mentorship_app_nittte/src/components/RoleSwitcher.jsx) to seamlessly toggle between the Login Page and active Dashboards, with "Portal Login Page" and "Exit / Switch Account" triggers.
+
+
 
 
 

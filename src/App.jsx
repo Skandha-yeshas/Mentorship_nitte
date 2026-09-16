@@ -5,12 +5,14 @@ import { StudentDashboard } from './views/StudentDashboard';
 import { MentorDashboard } from './views/MentorDashboard';
 import { RODashboard } from './views/RODashboard';
 import { AdminDashboard } from './views/AdminDashboard';
+import { LoginPage } from './views/LoginPage';
 import { LoginModal } from './components/LoginModal';
 
 function AppContent() {
-  const { currentUser, db, loading, error } = useContext(DatabaseContext);
+  const { currentUser, setCurrentUser, db, loading, error, authenticatedUser, logoutUser } = useContext(DatabaseContext);
   const [selectedSubProfile, setSelectedSubProfile] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isLoginPageVisible, setIsLoginPageVisible] = useState(false);
 
   // Automatically initialize default sub-profile when switching roles or if selectedSubProfile is invalid
   useEffect(() => {
@@ -33,6 +35,24 @@ function AppContent() {
       setSelectedSubProfile('ADMIN');
     }
   }, [currentUser, db.users]);
+
+  // Handle successful authentication from LoginPage
+  const handleLoginSuccess = (user, role, profileId) => {
+    setCurrentUser(role);
+    if (profileId) {
+      setSelectedSubProfile(profileId);
+    }
+    setIsLoginPageVisible(false);
+  };
+
+  // Handle fast demo bypass from LoginPage
+  const handleBypassToDashboard = (role, profileId) => {
+    setCurrentUser(role);
+    if (profileId) {
+      setSelectedSubProfile(profileId);
+    }
+    setIsLoginPageVisible(false);
+  };
 
   // Loading Screen
   if (loading) {
@@ -74,12 +94,23 @@ function AppContent() {
     );
   }
 
+  // If user requested Login Page view
+  if (isLoginPageVisible) {
+    return (
+      <LoginPage 
+        onLoginSuccess={handleLoginSuccess}
+        onBypassToDashboard={handleBypassToDashboard}
+      />
+    );
+  }
+
   return (
     <div className="app-container">
       <RoleSwitcher 
         selectedSubProfile={selectedSubProfile} 
         setSelectedSubProfile={setSelectedSubProfile} 
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
+        onOpenLoginPage={() => setIsLoginPageVisible(true)}
       />
       <main className="main-content">
         {currentUser === 'Student' && selectedSubProfile && (
