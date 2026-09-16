@@ -157,6 +157,44 @@ const MOCK_DB = {
     }
   ],
   mentorSessionRecords: [],
+  mentorFeedbacks: [
+    {
+      id: 1,
+      studentId: 'u18cm24s0058',
+      studentName: 'Aarav Sharma',
+      mentorId: 'M-101',
+      mentorName: 'Dr. Suresh Kumar',
+      regularityRating: 5,
+      clarityRating: 4,
+      participationRating: 5,
+      difficulties: 'Mentoring sessions are well conducted and regular. It would be great to have more interactive problem-solving discussions on competitive programming and campus placements.',
+      createdAt: new Date(Date.now() - 86400000 * 3).toISOString()
+    },
+    {
+      id: 2,
+      studentId: 'u18cm24s0056',
+      studentName: 'Ananya Rao',
+      mentorId: 'M-102',
+      mentorName: 'Prof. Lakshmi Devi',
+      regularityRating: 4,
+      clarityRating: 5,
+      participationRating: 4,
+      difficulties: 'The sessions are very clear. Sometimes the schedule overlaps with departmental lab submissions, so prior notice of 2 days would be very helpful.',
+      createdAt: new Date(Date.now() - 86400000 * 5).toISOString()
+    },
+    {
+      id: 3,
+      studentId: 'u18cm24s0053',
+      studentName: 'Rohan Mehta',
+      mentorId: 'M-103',
+      mentorName: 'Dr. Rajesh Hegde',
+      regularityRating: 4,
+      clarityRating: 4,
+      participationRating: 5,
+      difficulties: 'Great guidance on technical project topics. We would appreciate more one-on-one time to review our individual elective course selections.',
+      createdAt: new Date(Date.now() - 86400000 * 7).toISOString()
+    }
+  ],
   systemLogs: [],
   gmailAddress: 'skandhayashu2906@gmail.com',
   gmailLogs: [
@@ -244,7 +282,36 @@ export const DatabaseProvider = ({ children }) => {
     return saved || 'Student';
   });
 
-  const [db, setDb] = useState(MOCK_DB);
+  const [db, setDb] = useState(() => {
+    let base = MOCK_DB;
+    try {
+      const savedIssues = localStorage.getItem('nitte_saved_issues');
+      if (savedIssues) {
+        const parsed = JSON.parse(savedIssues);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const issueMap = new Map();
+          (base.issues || []).forEach(i => issueMap.set(i.id, i));
+          parsed.forEach(i => issueMap.set(i.id, i));
+          base = { ...base, issues: Array.from(issueMap.values()) };
+        }
+      }
+    } catch (e) {}
+
+    try {
+      const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
+      if (savedMf) {
+        const parsedMf = JSON.parse(savedMf);
+        if (Array.isArray(parsedMf) && parsedMf.length > 0) {
+          const mfMap = new Map();
+          (base.mentorFeedbacks || []).forEach(f => mfMap.set(f.id, f));
+          parsedMf.forEach(f => mfMap.set(f.id, f));
+          base = { ...base, mentorFeedbacks: Array.from(mfMap.values()) };
+        }
+      }
+    } catch (e) {}
+
+    return base;
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isPgConnected, setIsPgConnected] = useState(false);
@@ -280,10 +347,34 @@ export const DatabaseProvider = ({ children }) => {
           } catch (e) {}
         }
 
+        // Save server issues into local storage cache
+        if (data.issues && data.issues.length) {
+          try {
+            localStorage.setItem('nitte_saved_issues', JSON.stringify(data.issues));
+          } catch (e) {}
+        }
+
+        // Save mentor feedbacks into local storage cache
+        let currentFeedbacks = (data.mentorFeedbacks && data.mentorFeedbacks.length) ? data.mentorFeedbacks : (prev.mentorFeedbacks || []);
+        if (!currentFeedbacks || !currentFeedbacks.length) {
+          try {
+            const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
+            if (savedMf) currentFeedbacks = JSON.parse(savedMf);
+          } catch (e) {}
+        }
+        if (!currentFeedbacks || !currentFeedbacks.length) {
+          currentFeedbacks = MOCK_DB.mentorFeedbacks;
+        } else {
+          try {
+            localStorage.setItem('nitte_saved_mentor_feedbacks', JSON.stringify(currentFeedbacks));
+          } catch (e) {}
+        }
+
         return {
           ...data,
           recordings: recs || [],
-          categoryVideos: catVideos
+          categoryVideos: catVideos,
+          mentorFeedbacks: currentFeedbacks
         };
       });
       setIsPgConnected(true);
@@ -311,8 +402,38 @@ export const DatabaseProvider = ({ children }) => {
           catVideos = MOCK_DB.categoryVideos;
         }
 
+        let currentIssues = (prev.issues && prev.issues.length) ? prev.issues : [];
+        if (!currentIssues.length) {
+          try {
+            const saved = localStorage.getItem('nitte_saved_issues');
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) currentIssues = parsed;
+            }
+          } catch (e) {}
+        }
+        if (!currentIssues.length) {
+          currentIssues = MOCK_DB.issues;
+        }
+
+        let currentFeedbacks = (prev.mentorFeedbacks && prev.mentorFeedbacks.length) ? prev.mentorFeedbacks : [];
+        if (!currentFeedbacks.length) {
+          try {
+            const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
+            if (savedMf) {
+              const parsedMf = JSON.parse(savedMf);
+              if (Array.isArray(parsedMf) && parsedMf.length > 0) currentFeedbacks = parsedMf;
+            }
+          } catch (e) {}
+        }
+        if (!currentFeedbacks.length) {
+          currentFeedbacks = MOCK_DB.mentorFeedbacks;
+        }
+
         return {
           ...(prev.users?.students?.length ? prev : MOCK_DB),
+          issues: currentIssues,
+          mentorFeedbacks: currentFeedbacks,
           recordings: recs,
           categoryVideos: catVideos
         };
@@ -395,65 +516,97 @@ export const DatabaseProvider = ({ children }) => {
     });
   };
 
+  // Local issue creator for offline / client fallback mode
+  const createLocalIssue = (studentId, studentName, category, description, priority) => {
+    const catIdx = ALL_CATEGORIES.indexOf(category);
+    const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
+    const ro = (db.users?.ros || []).find(r => r.id === roId);
+
+    // Check total attempts in this category for this student
+    const prevCatIssues = (db.issues || []).filter(i => 
+      (i.studentId === studentId || i.student_id === studentId) && 
+      (i.category === category || i.roId === roId || i.ro_id === roId)
+    );
+    let totalAttempts = prevCatIssues.length;
+    prevCatIssues.forEach(iss => {
+      const lArr = Array.isArray(iss.logs) ? iss.logs : [];
+      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+      totalAttempts += reopens;
+    });
+
+    const isThirdAttempt = totalAttempts >= 2;
+    const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
+    const initialLogText = isThirdAttempt
+      ? `[AUTO-ESCALATED TO ADMIN] 3rd issue attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
+      : `Ticket raised by ${studentName} (Attempt #${totalAttempts + 1} for ${category}).`;
+
+    const newIssue = {
+      id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
+      studentId,
+      studentName,
+      category,
+      description,
+      priority,
+      status: initialStatus,
+      roId,
+      roName: ro ? ro.name : (catIdx !== -1 ? `RO - ${category.split(' - ')[1] || 'Officer'}` : 'RO Officer'),
+      createdAt: new Date().toISOString(),
+      logs: [{ time: new Date().toLocaleString(), text: initialLogText }]
+    };
+
+    setDb(prev => {
+      const updatedIssues = [newIssue, ...(prev.issues || [])];
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) {}
+      return { ...prev, issues: updatedIssues };
+    });
+
+    return newIssue.id;
+  };
+
   // ISSUE SUBMISSION (Supports 2 Issues / Week Limit & Demo Mode Bypass)
   const submitIssue = async (studentId, category, description, priority) => {
-    const student = db.users.students.find(s => s.id === studentId) || { name: 'Student' };
+    const student = (db.users?.students || []).find(s => s.id === studentId) || { name: 'Student' };
 
-    let res;
+    // If backend is offline or connecting, immediately create local issue
+    if (!isPgConnected) {
+      return createLocalIssue(studentId, student.name, category, description, priority);
+    }
+
     try {
-      res = await fetch('/api/issues', {
+      const res = await fetch('/api/issues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ studentId, studentName: student.name, category, description, priority, bypassLimit: isDemoLimitBypassed })
       });
-    } catch (networkErr) {
-      // Local state fallback only when network fetch completely fails/offline
-      const catIdx = ALL_CATEGORIES.indexOf(category);
-      const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
-      const ro = db.users.ros.find(r => r.id === roId);
 
-      // Check total attempts in this category for this student
-      const prevCatIssues = (db.issues || []).filter(i => i.studentId === studentId && (i.category === category || i.roId === roId));
-      let totalAttempts = prevCatIssues.length;
-      prevCatIssues.forEach(iss => {
-        const reopens = (iss.logs || []).filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-        totalAttempts += reopens;
-      });
-
-      const isThirdAttempt = totalAttempts >= 2;
-      const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
-      const initialLogText = isThirdAttempt
-        ? `[AUTO-ESCALATED TO ADMIN] 3rd issue attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-        : `Ticket raised by ${student.name} (Attempt #${totalAttempts + 1} for ${category}).`;
-
-      const newIssue = {
-        id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
-        studentId,
-        studentName: student.name,
-        category,
-        description,
-        priority,
-        status: initialStatus,
-        roId,
-        roName: ro ? ro.name : 'RO Officer',
-        createdAt: new Date().toISOString(),
-        logs: [{ time: new Date().toLocaleString(), text: initialLogText }]
-      };
-      setDb(prev => ({ ...prev, issues: [newIssue, ...prev.issues] }));
-      return newIssue.id;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      try {
-        await fetchDbState();
-      } catch (e) {
-        console.warn('Could not refresh DB state after issue creation:', e);
+      if (res.ok) {
+        const data = await res.json();
+        try {
+          await fetchDbState();
+        } catch (e) {
+          console.warn('Could not refresh DB state after issue creation:', e);
+        }
+        return data.id;
       }
-      return data.id;
-    } else {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'Failed to submit issue');
+
+      // If server returned 400 (validation/business rule error like rate limit)
+      if (res.status === 400) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to submit issue');
+      }
+
+      // If server returned 5xx (proxy error, timeout, crash), fallback to local creation
+      console.warn('Server error status', res.status, 'falling back to local issue creation');
+      return createLocalIssue(studentId, student.name, category, description, priority);
+    } catch (networkErr) {
+      // If it was an intentional Error thrown above for 400, rethrow
+      if (networkErr.message && !networkErr.message.includes('fetch') && !networkErr.message.includes('Failed to submit')) {
+        throw networkErr;
+      }
+      // Otherwise network/proxy failed, use local creation
+      return createLocalIssue(studentId, student.name, category, description, priority);
     }
   };
 
@@ -673,6 +826,48 @@ export const DatabaseProvider = ({ children }) => {
       }
     } catch (err) {
       console.warn('Backend sync failed for session record, relying on updated local state.', err);
+    }
+  };
+
+  // STUDENT MENTOR FEEDBACK
+  const submitMentorFeedback = async (studentId, studentName, mentorId, mentorName, regularityRating, clarityRating, participationRating, difficulties) => {
+    const newFeedback = {
+      id: Date.now(),
+      studentId,
+      studentName,
+      mentorId,
+      mentorName,
+      regularityRating,
+      clarityRating,
+      participationRating,
+      difficulties: difficulties || '',
+      createdAt: new Date().toISOString()
+    };
+
+    // 1. Instantly update local React state and cache
+    setDb(prev => {
+      const updated = [newFeedback, ...(prev.mentorFeedbacks || [])];
+      try {
+        localStorage.setItem('nitte_saved_mentor_feedbacks', JSON.stringify(updated));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentorFeedbacks: updated
+      };
+    });
+
+    // 2. Also sync to backend API
+    try {
+      const res = await fetch('/api/mentor-feedbacks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, studentName, mentorId, mentorName, regularityRating, clarityRating, participationRating, difficulties })
+      });
+      if (res.ok) {
+        await fetchDbState();
+      }
+    } catch (err) {
+      console.warn('Backend sync failed for mentor feedback, relying on updated local state.', err);
     }
   };
 
@@ -1290,7 +1485,8 @@ export const DatabaseProvider = ({ children }) => {
       saveMeetingRecording,
       updateCategoryVideo,
       submitRoMeetingFeedback,
-      getYoutubeEmbedUrl
+      getYoutubeEmbedUrl,
+      submitMentorFeedback
     }}>
       {children}
     </DatabaseContext.Provider>

@@ -1,12 +1,12 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
-import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, PhoneOff, Volume2, VolumeX } from 'lucide-react';
+import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, PhoneOff, Volume2, VolumeX, MessageSquare } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, isDemoLimitBypassed, toggleDemoLimitBypass, updateMeetingStatus, saveMeetingRecording } = useContext(DatabaseContext);
+  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, updateMeetingStatus, saveMeetingRecording } = useContext(DatabaseContext);
   
   // Submission Self-Help Video Modal State
   const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
@@ -26,6 +26,13 @@ export const StudentDashboard = ({ studentId }) => {
   const [feedbackComments, setFeedbackComments] = useState('');
   const [showReopenForm, setShowReopenForm] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
+
+  // Mentor feedback form states
+  const [mfRegularity, setMfRegularity] = useState(0);
+  const [mfClarity, setMfClarity] = useState(0);
+  const [mfParticipation, setMfParticipation] = useState(0);
+  const [mfDifficulties, setMfDifficulties] = useState('');
+  const [mfSuccess, setMfSuccess] = useState('');
 
   // Fetch current student profile & assigned RO
   const student = db.users.students.find(s => s.id === studentId) || db.users.students[0];
@@ -477,6 +484,28 @@ export const StudentDashboard = ({ studentId }) => {
     setShowReopenForm(false);
   };
 
+  const handleMentorFeedbackSubmit = (e) => {
+    e.preventDefault();
+    if (mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0) return;
+    if (!myMentor) return;
+
+    submitMentorFeedback(
+      student.id, student.name, myMentor.id, myMentor.name,
+      mfRegularity, mfClarity, mfParticipation, mfDifficulties
+    );
+    setMfRegularity(0);
+    setMfClarity(0);
+    setMfParticipation(0);
+    setMfDifficulties('');
+    setMfSuccess('Mentor feedback submitted successfully! Thank you.');
+    setTimeout(() => setMfSuccess(''), 3000);
+  };
+
+  // Get feedbacks submitted by this student
+  const myMentorFeedbacks = (db.mentorFeedbacks || []).filter(f => 
+    (f.studentId || '').toLowerCase() === student.id.toLowerCase()
+  );
+
   return (
     <div className="dashboard-layout">
       {/* Sidebar Panel */}
@@ -516,6 +545,14 @@ export const StudentDashboard = ({ studentId }) => {
         >
           <Calendar size={18} />
           <span>Mentorship Hub</span>
+        </button>
+
+        <button 
+          className={`panel-btn ${activeTab === 'mentor-feedback' ? 'active Student' : ''}`}
+          onClick={() => setActiveTab('mentor-feedback')}
+        >
+          <MessageSquare size={18} />
+          <span>Mentor Feedback</span>
         </button>
 
         {/* Routing Explanation Card */}
@@ -1080,7 +1117,7 @@ export const StudentDashboard = ({ studentId }) => {
 
         {/* TAB 3: MENTORSHIP HUB */}
         {activeTab === 'mentor-hub' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
             
             {/* Group Mentoring Sessions */}
             <div className="glass-card">
@@ -1162,6 +1199,155 @@ export const StudentDashboard = ({ studentId }) => {
               )}
             </div>
 
+          </div>
+        )}
+
+        {/* TAB 4: MENTOR / MENTORING CLASS FEEDBACK */}
+        {(activeTab === 'mentor-feedback' || activeTab === 'mentor-hub') && (
+          <div className="glass-card" style={{ gridColumn: '1 / -1' }}>
+            <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <MessageSquare size={20} style={{ color: 'var(--accent-amber)' }} />
+              Mentor / Mentoring Class Feedback
+            </h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+              Share your feedback about your mentor <strong>{myMentor ? myMentor.name : 'Faculty'}</strong> and mentoring classes. Your honest feedback helps improve the mentorship experience.
+            </p>
+
+            {mfSuccess && (
+              <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#34d399' }}>
+                <CheckCircle2 size={16} />
+                <span>{mfSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleMentorFeedbackSubmit}>
+              {/* Mentor Name (Read-only) */}
+              <div className="form-group">
+                <label className="form-label">Mentor Name</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  readOnly 
+                  disabled 
+                  value={myMentor ? `${myMentor.name} (${myMentor.dept} — ${myMentor.class || 'All'})` : 'Not Assigned'} 
+                />
+              </div>
+
+              {/* Star Rating Fields */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '16px' }}>
+                {/* Regularity */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Regularity of Mentoring Classes</label>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 3, 4, 5].map(num => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setMfRegularity(num)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <Star size={22} fill={mfRegularity >= num ? '#f59e0b' : 'none'} stroke="#f59e0b" />
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                    {mfRegularity > 0 ? `${mfRegularity} / 5` : 'Click to rate'}
+                  </span>
+                </div>
+
+                {/* Clarity */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Clarity of Explanation</label>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 3, 4, 5].map(num => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setMfClarity(num)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <Star size={22} fill={mfClarity >= num ? '#3b82f6' : 'none'} stroke="#3b82f6" />
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                    {mfClarity > 0 ? `${mfClarity} / 5` : 'Click to rate'}
+                  </span>
+                </div>
+
+                {/* Participation */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Opportunity to Participate & Express Opinions</label>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 3, 4, 5].map(num => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setMfParticipation(num)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
+                      >
+                        <Star size={22} fill={mfParticipation >= num ? '#10b981' : 'none'} stroke="#10b981" />
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                    {mfParticipation > 0 ? `${mfParticipation} / 5` : 'Click to rate'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Difficulties Textarea */}
+              <div className="form-group">
+                <label className="form-label">What difficulties or issues do you face with the mentoring classes or the way they are conducted?</label>
+                <textarea 
+                  className="form-textarea"
+                  style={{ minHeight: '100px' }}
+                  placeholder="Describe any challenges, suggestions, or concerns about the mentoring sessions..."
+                  value={mfDifficulties}
+                  onChange={(e) => setMfDifficulties(e.target.value)}
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                className="btn btn-primary" 
+                disabled={mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0}
+                style={{ 
+                  width: '100%', 
+                  justifyContent: 'center',
+                  opacity: (mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0) ? 0.5 : 1
+                }}
+              >
+                <Send size={16} /> Submit Mentor Feedback
+              </button>
+            </form>
+
+            {/* Previously submitted feedbacks */}
+            {myMentorFeedbacks.length > 0 && (
+              <div style={{ marginTop: '24px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                <h4 style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                  Your Previous Feedback ({myMentorFeedbacks.length})
+                </h4>
+                {myMentorFeedbacks.map((fb, idx) => (
+                  <div key={fb.id || idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', padding: '12px 14px', borderRadius: '8px', marginBottom: '10px', fontSize: '0.82rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>Feedback for {fb.mentorName}</strong>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{new Date(fb.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '16px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span>Regularity: <strong style={{ color: '#f59e0b' }}>{fb.regularityRating}/5</strong></span>
+                      <span>Clarity: <strong style={{ color: '#3b82f6' }}>{fb.clarityRating}/5</strong></span>
+                      <span>Participation: <strong style={{ color: '#10b981' }}>{fb.participationRating}/5</strong></span>
+                    </div>
+                    {fb.difficulties && (
+                      <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', margin: '4px 0 0 0' }}>
+                        "{fb.difficulties}"
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

@@ -56,6 +56,7 @@ app.get('/api/db-state', async (req, res) => {
     const sessionsRes = await query(`SELECT id, mentor_id AS "mentorId", mentor_name AS "mentorName", title, date_time AS "dateTime", description, link FROM group_sessions ORDER BY date_time ASC`);
     const resourcesRes = await query(`SELECT id, mentor_id AS "mentorId", title, type, content, date_shared AS "dateShared" FROM resources ORDER BY date_shared DESC`);
     const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, which_class AS "whichClass", location, created_at AS "createdAt" FROM mentor_session_records ORDER BY session_date DESC`);
+    const mentorFeedbacksRes = await query(`SELECT id, student_id AS "studentId", student_name AS "studentName", mentor_id AS "mentorId", mentor_name AS "mentorName", regularity_rating AS "regularityRating", clarity_rating AS "clarityRating", participation_rating AS "participationRating", difficulties, created_at AS "createdAt" FROM mentor_feedbacks ORDER BY created_at DESC`);
     const logsRes = await query(`SELECT id, text, timestamp, user_role AS "userRole", user_id AS "userId" FROM system_logs ORDER BY timestamp DESC LIMIT 100`);
     let categoryVideosRes = { rows: [] };
     try {
@@ -103,6 +104,7 @@ app.get('/api/db-state', async (req, res) => {
       resources: resourcesRes.rows,
       mentorSessionRecords: mentorRecordsRes.rows,
       categoryVideos: categoryVideosRes.rows,
+      mentorFeedbacks: mentorFeedbacksRes.rows,
       systemLogs: logsRes.rows,
       gmailAddress: GMAIL_ADDRESS,
       gmailLogs: emailLogs,
@@ -1434,6 +1436,28 @@ app.post('/api/mentor/session-records', async (req, res) => {
   } catch (err) {
     console.error('Error logging mentor session record:', err);
     res.status(500).json({ error: 'Failed to save session record' });
+  }
+});
+
+// 10.6. SUBMIT MENTOR FEEDBACK (Student feedback on mentoring classes)
+app.post('/api/mentor-feedbacks', async (req, res) => {
+  const { studentId, studentName, mentorId, mentorName, regularityRating, clarityRating, participationRating, difficulties } = req.body;
+  if (!studentId || !mentorId || !regularityRating || !clarityRating || !participationRating) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  try {
+    const result = await query(
+      `INSERT INTO mentor_feedbacks (student_id, student_name, mentor_id, mentor_name, regularity_rating, clarity_rating, participation_rating, difficulties)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [studentId, studentName || 'Student', mentorId, mentorName || 'Mentor', regularityRating, clarityRating, participationRating, difficulties || '']
+    );
+
+    await logSystemEvent(`Student ${studentName} (${studentId}) submitted mentor feedback for ${mentorName} (${mentorId})`, 'Student', studentId);
+    res.status(201).json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error('Error submitting mentor feedback:', err);
+    res.status(500).json({ error: 'Failed to submit mentor feedback' });
   }
 });
 
