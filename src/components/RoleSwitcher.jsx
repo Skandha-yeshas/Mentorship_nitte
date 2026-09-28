@@ -104,15 +104,16 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: 'rgba(59, 130, 246, 0.15)',
-              color: '#60a5fa',
-              border: '1px solid rgba(59, 130, 246, 0.4)',
+              backgroundColor: '#eff6ff',
+              color: '#1e40af',
+              border: '1px solid #bfdbfe',
               borderRadius: '8px',
               padding: '6px 12px',
               fontSize: '0.8rem',
               fontWeight: 600,
               cursor: 'pointer',
-              transition: 'all 0.2s ease'
+              transition: 'all 0.2s ease',
+              boxShadow: '0 1px 2px rgba(30, 64, 175, 0.05)'
             }}
             title="Go to Multi-Role Portal Login Page"
           >
@@ -127,14 +128,15 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: authenticatedUser ? '#10b981' : 'var(--bg-card)',
-              color: authenticatedUser ? '#ffffff' : 'var(--text-secondary)',
+              backgroundColor: authenticatedUser ? '#10b981' : '#ffffff',
+              color: authenticatedUser ? '#ffffff' : '#334155',
               border: '1px solid var(--border-color)',
               borderRadius: '8px',
               padding: '6px 10px',
               fontSize: '0.78rem',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)'
             }}
             title="Quick Login Modal"
           >
@@ -152,9 +154,9 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '4px',
-                backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                color: '#fca5a5',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
+                backgroundColor: '#fef2f2',
+                color: '#dc2626',
+                border: '1px solid #fecaca',
                 borderRadius: '6px',
                 padding: '4px 8px',
                 fontSize: '0.72rem',

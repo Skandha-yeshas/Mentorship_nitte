@@ -2415,21 +2415,67 @@ export const AdminDashboard = () => {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3 style={{ fontWeight: '700' }}>Ticket Audit Trail — {viewLogIssueId}</h3>
+              <h3 style={{ fontWeight: '700' }}>Administrative Ticket Inspection & Audit — {viewLogIssueId}</h3>
               <button onClick={() => setViewLogIssueId(null)} className="btn-icon-only">✕</button>
             </div>
             <div className="modal-body">
               {(() => {
                 const targetIssue = db.issues.find(i => i.id === viewLogIssueId);
                 if (!targetIssue) return <p>Issue not found.</p>;
+                const feedbackData = targetIssue.feedback || (targetIssue.rating ? { rating: targetIssue.rating, comments: targetIssue.feedbackComments } : null);
                 return (
                   <div>
-                    <div style={{ marginBottom: '12px', fontSize: '0.85rem' }}>
-                      <p><strong>Category:</strong> {targetIssue.category}</p>
-                      <p><strong>Student:</strong> {targetIssue.studentName} ({targetIssue.studentId})</p>
-                      <p><strong>Assigned RO:</strong> {targetIssue.roId}</p>
-                      <p><strong>Status:</strong> <span className={`badge badge-${targetIssue.status.toLowerCase().replace(' ', '-')}`}>{targetIssue.status}</span></p>
+                    <div style={{ marginBottom: '14px', fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px' }}>
+                      <p style={{ margin: 0 }}><strong>Category:</strong> {targetIssue.category}</p>
+                      <p style={{ margin: 0 }}><strong>Student:</strong> {targetIssue.studentName} ({targetIssue.studentId})</p>
+                      <p style={{ margin: 0 }}><strong>Assigned RO:</strong> {targetIssue.roId}</p>
+                      <p style={{ margin: 0 }}><strong>Status:</strong> <span className={`badge badge-${targetIssue.status.toLowerCase().replace(' ', '-')}`}>{targetIssue.status}</span></p>
                     </div>
+
+                    <div style={{ marginBottom: '14px' }}>
+                      <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>Student Description:</h4>
+                      <p style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.2)', padding: '10px 12px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
+                        {targetIssue.description}
+                      </p>
+                    </div>
+
+                    {targetIssue.resolutionNotes && (
+                      <div style={{ marginBottom: '14px', borderLeft: '3px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.06)', padding: '10px 12px', borderRadius: '4px', fontSize: '0.85rem' }}>
+                        <strong style={{ color: '#10b981' }}>Resolution Action Taken:</strong>
+                        <p style={{ margin: '4px 0 0 0' }}>{targetIssue.resolutionNotes}</p>
+                      </div>
+                    )}
+
+                    {/* CONFIDENTIAL STUDENT FEEDBACK - ADMIN INSPECTION ONLY */}
+                    {feedbackData && feedbackData.rating ? (
+                      <div style={{ marginBottom: '14px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', padding: '12px 14px', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontWeight: 700, color: '#fbbf24', fontSize: '0.88rem' }}>
+                            ⭐ Student Rating & Feedback (Administrative Audit)
+                          </span>
+                          <span style={{ fontWeight: 800, color: '#fbbf24', fontSize: '0.9rem' }}>
+                            {'★'.repeat(feedbackData.rating)}{'☆'.repeat(5 - feedbackData.rating)} ({feedbackData.rating} / 5)
+                          </span>
+                        </div>
+                        {feedbackData.comments ? (
+                          <p style={{ margin: 0, fontStyle: 'italic', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            "{feedbackData.comments}"
+                          </p>
+                        ) : (
+                          <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            (Student submitted rating without written comments)
+                          </p>
+                        )}
+                        <p style={{ margin: '6px 0 0 0', fontSize: '0.72rem', color: '#94a3b8' }}>
+                          Archived in Local Storage • Submitted by {targetIssue.studentName}
+                        </p>
+                      </div>
+                    ) : (targetIssue.status === 'Resolved' && (
+                      <div style={{ marginBottom: '14px', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        ⏳ Student has not submitted rating or feedback yet.
+                      </div>
+                    ))}
+
                     <h4 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Timeline Logs:</h4>
                     <div className="log-timeline">
                       {(targetIssue.logs || []).map((log, idx) => (

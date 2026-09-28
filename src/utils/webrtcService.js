@@ -14,7 +14,7 @@
  */
 
 export class WebRtcMeetingSession {
-  constructor({ issueId, role, localStream, onRemoteStream, onPeerStatus, onMeetingEnded }) {
+  constructor({ issueId, role, localStream, onRemoteStream, onPeerStatus, onMeetingEnded, onRemoteMediaState }) {
     this.issueId = (issueId || 'default').toUpperCase();
     this.role = role; // 'ro' | 'student'
     this.sessionId = `${this.role}-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
@@ -23,12 +23,13 @@ export class WebRtcMeetingSession {
     this.onRemoteStream = onRemoteStream || (() => {});
     this.onPeerStatus = onPeerStatus || (() => {});
     this.onMeetingEnded = onMeetingEnded || (() => {});
+    this.onRemoteMediaState = onRemoteMediaState || (() => {});
 
     this.pc = null;
     this.bc = null;
     this.pollTimer = null;
     this.readyTimer = null;
-    this.lastSignalTimestamp = Date.now() - 2000; // Ignore stale signals from past sessions
+    this.lastSignalTimestamp = Date.now() - 500; // Fresh window so stale past session offers are never processed
     this.isClosed = false;
     this.isConnected = false;
     this.hasRemoteStream = false;
@@ -37,6 +38,8 @@ export class WebRtcMeetingSession {
     this.remoteMediaStream = new MediaStream();
     this.pendingCandidates = [];
     this.processedSignalIds = new Set();
+    this.lastOfferTime = 0;
+    this.storageListener = null;
 
     this.init();
   }
@@ -55,6 +58,21 @@ export class WebRtcMeetingSession {
     } catch (e) {
       console.warn('BroadcastChannel not supported:', e);
     }
+
+    // 1b. Redundant cross-window communication via localStorage storage event
+    try {
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        this.storageListener = (e) => {
+          if (e.key && e.key.startsWith(`nitte_sig_${this.issueId}_`) && !e.key.endsWith(`_${this.role}`) && e.newValue) {
+            try {
+              const sig = JSON.parse(e.newValue);
+              this.handleSignal(sig);
+            } catch (err) {}
+          }
+        };
+        window.addEventListener('storage', this.storageListener);
+      }
+    } catch (e) {}
 
     // 2. Setup RTCPeerConnection
     this.setupPeerConnection();
@@ -132,10 +150,9 @@ export class WebRtcMeetingSession {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
+        { urls: 'stun:stun.cloudflare.com:3478' }
       ],
-      iceCandidatePoolSize: 10
+      iceCandidatePoolSize: 2
     };
 
     try {
@@ -145,11 +162,17 @@ export class WebRtcMeetingSession {
       if (this.localStream) {
         this.localStream.getTracks().forEach((track) => {
           try {
+            if (track.kind === 'video' && 'contentHint' in track) {
+              track.contentHint = 'motion';
+            } else if (track.kind === 'audio' && 'contentHint' in track) {
+              track.contentHint = 'speech';
+            }
             this.pc.addTrack(track, this.localStream);
           } catch (e) {
             console.warn('Error adding track to WebRTC:', e);
           }
         });
+        this.optimizeSenders();
       }
 
       // When remote audio/video tracks arrive from peer
@@ -161,6 +184,29 @@ export class WebRtcMeetingSession {
         if (this.readyTimer) {
           clearInterval(this.readyTimer);
           this.readyTimer = null;
+        }
+
+        // Optimize incoming track jitter buffer and playback smoothness
+        if (event.receiver) {
+          try {
+            // Playout delay hint (0.04s = 40ms) smooths out jitter fluctuations
+            if ('playoutDelayHint' in event.receiver) {
+              event.receiver.playoutDelayHint = 0.04;
+            }
+            // Chromium 120+ jitterBufferTarget in milliseconds
+            if ('jitterBufferTarget' in event.receiver) {
+              event.receiver.jitterBufferTarget = 40;
+            }
+          } catch (e) {}
+        }
+        if (event.track) {
+          try {
+            if (event.track.kind === 'video' && 'contentHint' in event.track) {
+              event.track.contentHint = 'motion';
+            } else if (event.track.kind === 'audio' && 'contentHint' in event.track) {
+              event.track.contentHint = 'speech';
+            }
+          } catch (e) {}
         }
 
         // Aggregate incoming tracks into stable persistent container
@@ -177,19 +223,18 @@ export class WebRtcMeetingSession {
           });
         }
 
-        // Notify React consumer of the stable MediaStream reference
-        if (!this.hasNotifiedRemoteStream && this.remoteMediaStream.getTracks().length > 0) {
-          this.hasNotifiedRemoteStream = true;
-          this.onRemoteStream(this.remoteMediaStream);
-        }
-
+        // Notify React consumer of a new MediaStream instance so state update is ALWAYS triggered
+        const streamToDispatch = new MediaStream(this.remoteMediaStream.getTracks());
+        this.hasNotifiedRemoteStream = true;
+        this.onRemoteStream(streamToDispatch);
         this.onPeerStatus({ connected: true, live: true });
       };
 
       // Candidate discovery
       this.pc.onicecandidate = (event) => {
         if (event.candidate) {
-          this.sendSignal({ type: 'candidate', candidate: event.candidate, sessionId: this.sessionId });
+          const candJson = event.candidate.toJSON ? event.candidate.toJSON() : event.candidate;
+          this.sendSignal({ type: 'candidate', candidate: candJson, sessionId: this.sessionId });
         }
       };
 
@@ -206,30 +251,33 @@ export class WebRtcMeetingSession {
             this.readyTimer = null;
           }
 
+          if (this.remoteMediaStream.getTracks().length > 0) {
+            this.onRemoteStream(new MediaStream(this.remoteMediaStream.getTracks()));
+          }
           this.onPeerStatus({ connected: true, live: true });
 
-          // Throttle background HTTP polling to reduce socket traffic once connected
+          // Throttle background HTTP polling once connected
           if (this.pollTimer) {
             clearInterval(this.pollTimer);
-            this.pollTimer = setInterval(() => this.pollSignals(), 6000);
+            this.pollTimer = setInterval(() => this.pollSignals(), 3000);
           }
-        } else if (state === 'disconnected' || state === 'failed') {
-          console.log(`[WebRTC ${this.role}] Peer disconnected or failed. Preparing for reconnect.`);
+        } else if (state === 'failed') {
+          console.log(`[WebRTC ${this.role}] Peer connection failed. Resetting for retry.`);
           this.isConnected = false;
           this.hasRemoteStream = false;
           this.onPeerStatus({ connected: false, live: false });
           this.onRemoteStream(null);
-
-          // Restore fast polling to detect peer return
-          if (this.pollTimer) {
-            clearInterval(this.pollTimer);
-            this.pollTimer = setInterval(() => this.pollSignals(), 1200);
-          }
+          this.resetPeerConnection();
+        } else if (state === 'disconnected') {
+          console.log(`[WebRTC ${this.role}] Peer disconnected.`);
+          this.isConnected = false;
+          this.onPeerStatus({ connected: false, live: false });
         }
       };
 
       this.pc.oniceconnectionstatechange = () => {
         const iceState = this.pc ? this.pc.iceConnectionState : 'closed';
+        console.log(`[WebRTC ${this.role}] ICE state:`, iceState);
         if (iceState === 'connected' || iceState === 'completed') {
           this.isConnected = true;
           this.hasRemoteStream = true;
@@ -237,11 +285,12 @@ export class WebRtcMeetingSession {
             clearInterval(this.readyTimer);
             this.readyTimer = null;
           }
-        } else if (iceState === 'disconnected' || iceState === 'failed') {
+          this.onPeerStatus({ connected: true, live: true });
+        } else if (iceState === 'failed') {
+          console.log(`[WebRTC ${this.role}] ICE failed.`);
           this.isConnected = false;
           this.hasRemoteStream = false;
           this.onPeerStatus({ connected: false, live: false });
-          this.onRemoteStream(null);
         }
       };
     } catch (err) {
@@ -265,9 +314,97 @@ export class WebRtcMeetingSession {
           } catch (e) {}
         }
       });
+      this.optimizeSenders();
     } catch (err) {
       console.warn('Error updating local stream tracks:', err);
     }
+  }
+
+  optimizeSenders() {
+    if (!this.pc) return;
+    try {
+      const senders = this.pc.getSenders ? this.pc.getSenders() : [];
+      senders.forEach((sender) => {
+        if (!sender.track) return;
+        const trackKind = sender.track.kind;
+
+        // Apply content hints to tracks
+        if (trackKind === 'video' && 'contentHint' in sender.track) {
+          sender.track.contentHint = 'motion';
+        } else if (trackKind === 'audio' && 'contentHint' in sender.track) {
+          sender.track.contentHint = 'speech';
+        }
+
+        // Apply bandwidth & degradation preference to video encoder
+        if (trackKind === 'video' && sender.getParameters && sender.setParameters) {
+          try {
+            const params = sender.getParameters();
+            if (params && params.encodings && params.encodings.length > 0) {
+              let changed = false;
+              // Maintain framerate ensures smooth 30fps motion rather than stuttering down to 10fps
+              if (params.degradationPreference !== 'maintain-framerate') {
+                params.degradationPreference = 'maintain-framerate';
+                changed = true;
+              }
+              // Cap video bitrate to 1.2 Mbps to avoid packet bursts and network jitter buffer bloat
+              if (!params.encodings[0].maxBitrate || params.encodings[0].maxBitrate > 1400000) {
+                params.encodings[0].maxBitrate = 1200000;
+                params.encodings[0].maxFramerate = 30;
+                changed = true;
+              }
+              if (changed) {
+                sender.setParameters(params).catch(() => {});
+              }
+            }
+          } catch (pErr) {}
+        }
+      });
+    } catch (err) {
+      console.warn('optimizeSenders err:', err);
+    }
+  }
+
+  optimizeSdp(sdp) {
+    if (!sdp || typeof sdp !== 'string') return sdp;
+    // RTCRtpSender.setParameters() in optimizeSenders() enforces bitrate and framerate natively.
+    // Return clean standard SDP to guarantee RFC 4566 compliance and prevent line-order parse exceptions in setLocalDescription.
+    return sdp;
+  }
+
+  setAudioEnabled(enabled) {
+    if (this.localStream) {
+      this.localStream.getAudioTracks().forEach(track => {
+        track.enabled = enabled;
+      });
+    }
+    if (this.pc) {
+      try {
+        this.pc.getSenders().forEach(sender => {
+          if (sender.track && sender.track.kind === 'audio') {
+            sender.track.enabled = enabled;
+          }
+        });
+      } catch (e) {}
+    }
+    this.sendSignal({ type: 'media_state', audio: enabled, role: this.role });
+  }
+
+  setVideoEnabled(enabled) {
+    if (this.localStream) {
+      this.localStream.getVideoTracks().forEach(track => {
+        track.enabled = enabled;
+      });
+    }
+    if (this.pc) {
+      try {
+        this.pc.getSenders().forEach(sender => {
+          if (sender.track && sender.track.kind === 'video') {
+            sender.track.enabled = enabled;
+          }
+        });
+      } catch (e) {}
+    }
+    this.sendSignal({ type: 'media_state', video: enabled, role: this.role });
   }
 
   async sendSignal(payload) {
@@ -282,14 +419,19 @@ export class WebRtcMeetingSession {
       timestamp: Date.now()
     };
 
-    // Broadcast cross-tab (instant 0ms)
+    // 1. Broadcast cross-tab (instant 0ms)
     if (this.bc) {
       try {
         this.bc.postMessage(signalData);
       } catch (e) {}
     }
 
-    // Backend relay
+    // 2. Redundant localStorage signaling for cross-window / cross-tab delivery
+    try {
+      localStorage.setItem(`nitte_sig_${this.issueId}_${this.role}`, JSON.stringify(signalData));
+    } catch (e) {}
+
+    // 3. Backend relay via Vite / Express
     try {
       fetch('/api/meetings/signal', {
         method: 'POST',
@@ -302,7 +444,9 @@ export class WebRtcMeetingSession {
   async pollSignals() {
     if (this.isClosed) return;
     try {
-      const res = await fetch(`/api/meetings/signals/${this.issueId}?since=${this.lastSignalTimestamp}`);
+      // Query signals with a 4s lookback overlap so in-flight signals are never skipped
+      const querySince = Math.max(0, this.lastSignalTimestamp - 4000);
+      const res = await fetch(`/api/meetings/signals/${this.issueId}?since=${querySince}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.now) this.lastSignalTimestamp = data.now;
@@ -320,10 +464,15 @@ export class WebRtcMeetingSession {
     if (!this.pc || !this.pc.remoteDescription) return;
     while (this.pendingCandidates.length > 0) {
       const c = this.pendingCandidates.shift();
+      if (!c) continue;
       try {
         await this.pc.addIceCandidate(new RTCIceCandidate(c));
       } catch (e) {
-        console.warn('Queued candidate apply error:', e);
+        try {
+          await this.pc.addIceCandidate(c);
+        } catch (e2) {
+          console.warn('Queued candidate apply error:', e2);
+        }
       }
     }
   }
@@ -349,24 +498,58 @@ export class WebRtcMeetingSession {
         return;
       }
 
+      // Remote media mute / camera state signal
+      if (signal.type === 'media_state') {
+        this.onRemoteMediaState({
+          audio: signal.audio,
+          video: signal.video,
+          role: signal.role || signal.sender
+        });
+        return;
+      }
+
       // Track remote peer session ID; if it changed, peer restarted or rejoined
       if (signal.sessionId) {
         if (this.remoteSessionId && this.remoteSessionId !== signal.sessionId) {
           console.log(`[WebRTC ${this.role}] Peer session changed (${this.remoteSessionId} -> ${signal.sessionId}). Resetting connection.`);
+          this.remoteSessionId = signal.sessionId;
           this.resetPeerConnection();
+          if (this.role === 'ro') {
+            await this.createAndSendOffer();
+            return;
+          }
+        } else {
+          this.remoteSessionId = signal.sessionId;
         }
-        this.remoteSessionId = signal.sessionId;
       }
 
       if (signal.type === 'ready') {
-        // If peer is rejoining and we are in disconnected/failed state or without remote stream, reset connection cleanly
-        if (!this.isConnected || !this.hasRemoteStream || !this.pc || this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed') {
+        // Only reset if connection actually failed or disconnected
+        if (this.pc && (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed')) {
           this.resetPeerConnection();
         }
 
         this.onPeerStatus({ connected: true, peerReady: true });
         if (this.role === 'ro') {
-          await this.createAndSendOffer();
+          if (!this.isConnected) {
+            if (this.pc && this.pc.signalingState === 'have-local-offer') {
+              // If offer was created recently (<6s), re-send existing offer so student gets it, NEVER abort/reset!
+              if (Date.now() - this.lastOfferTime < 6000 && this.pc.localDescription) {
+                console.log(`[WebRTC ${this.role}] In-flight offer already active. Re-sending offer to peer.`);
+                this.sendSignal({
+                  type: 'offer',
+                  sdp: { type: this.pc.localDescription.type, sdp: this.pc.localDescription.sdp },
+                  sessionId: this.sessionId
+                });
+              } else {
+                console.log(`[WebRTC ${this.role}] Offer timed out (>6s). Resetting for fresh offer.`);
+                this.resetPeerConnection();
+                await this.createAndSendOffer();
+              }
+            } else if (this.pc && this.pc.signalingState === 'stable') {
+              await this.createAndSendOffer();
+            }
+          }
         } else {
           this.sendSignal({ type: 'ready_ack', role: 'student', sessionId: this.sessionId });
         }
@@ -374,35 +557,78 @@ export class WebRtcMeetingSession {
       }
 
       if (signal.type === 'ready_ack' && this.role === 'ro') {
-        if (!this.isConnected || !this.hasRemoteStream || !this.hasOfferSent) {
-          await this.createAndSendOffer();
+        if (!this.isConnected) {
+          if (this.pc && this.pc.signalingState === 'have-local-offer') {
+            if (Date.now() - this.lastOfferTime < 6000 && this.pc.localDescription) {
+              console.log(`[WebRTC ${this.role}] Peer ready_ack arrived. Re-sending active offer.`);
+              this.sendSignal({
+                type: 'offer',
+                sdp: { type: this.pc.localDescription.type, sdp: this.pc.localDescription.sdp },
+                sessionId: this.sessionId
+              });
+            } else {
+              this.resetPeerConnection();
+              await this.createAndSendOffer();
+            }
+          } else if (this.pc && this.pc.signalingState === 'stable') {
+            await this.createAndSendOffer();
+          }
         }
         return;
       }
 
       if (signal.type === 'offer' && signal.sdp) {
         console.log(`[WebRTC ${this.role}] Received offer, preparing answer`);
-        // If our current PC is in an incompatible state, reset it for the fresh offer
-        if (!this.pc || this.pc.signalingState !== 'stable') {
+        if (!this.pc || this.pc.connectionState === 'closed') {
           this.resetPeerConnection();
         }
-        await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        if (this.pc.signalingState !== 'stable') {
+          console.warn(`[WebRTC ${this.role}] Offer arrived in signalingState ${this.pc.signalingState}. Rolling back to stable.`);
+          try {
+            await this.pc.setLocalDescription({ type: 'rollback' });
+          } catch (rbErr) {
+            this.resetPeerConnection();
+          }
+        }
+        let rawSdp = signal.sdp;
+        if (typeof rawSdp === 'string' && rawSdp.startsWith('{')) {
+          try { rawSdp = JSON.parse(rawSdp); } catch (e) {}
+        }
+        const offerDesc = (rawSdp && rawSdp.type && rawSdp.sdp)
+          ? rawSdp
+          : { type: 'offer', sdp: rawSdp?.sdp || rawSdp };
+        await this.pc.setRemoteDescription(new RTCSessionDescription(offerDesc));
         await this.drainPendingCandidates();
 
         const answer = await this.pc.createAnswer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
         });
-        await this.pc.setLocalDescription(answer);
-        this.sendSignal({ type: 'answer', sdp: this.pc.localDescription, sessionId: this.sessionId });
+        const optimizedAnswerSdp = this.optimizeSdp(answer.sdp);
+        await this.pc.setLocalDescription(new RTCSessionDescription({ type: 'answer', sdp: optimizedAnswerSdp }));
+        this.sendSignal({
+          type: 'answer',
+          sdp: { type: this.pc.localDescription.type, sdp: this.pc.localDescription.sdp },
+          sessionId: this.sessionId
+        });
+        this.optimizeSenders();
         return;
       }
 
       if (signal.type === 'answer' && signal.sdp && this.pc) {
         console.log(`[WebRTC ${this.role}] Received answer, setting remote description`);
         if (this.pc.signalingState === 'have-local-offer') {
-          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          let rawSdp = signal.sdp;
+          if (typeof rawSdp === 'string' && rawSdp.startsWith('{')) {
+            try { rawSdp = JSON.parse(rawSdp); } catch (e) {}
+          }
+          const answerDesc = (rawSdp && rawSdp.type && rawSdp.sdp)
+            ? rawSdp
+            : { type: 'answer', sdp: rawSdp?.sdp || rawSdp };
+          await this.pc.setRemoteDescription(new RTCSessionDescription(answerDesc));
           await this.drainPendingCandidates();
+        } else {
+          console.log(`[WebRTC ${this.role}] Ignoring answer: signalingState is ${this.pc.signalingState}`);
         }
         return;
       }
@@ -412,7 +638,11 @@ export class WebRtcMeetingSession {
           if (!this.pc.remoteDescription || !this.pc.remoteDescription.type) {
             this.pendingCandidates.push(signal.candidate);
           } else {
-            await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            try {
+              await this.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            } catch (candErr) {
+              await this.pc.addIceCandidate(signal.candidate);
+            }
           }
         } catch (e) {
           console.warn('Candidate error:', e);
@@ -425,19 +655,27 @@ export class WebRtcMeetingSession {
   }
 
   async createAndSendOffer() {
-    if (!this.pc || this.isClosed) return;
+    if (!this.pc || this.isClosed || this.isConnected) return;
     try {
       if (this.pc.signalingState !== 'stable') {
-        this.resetPeerConnection();
+        console.log(`[WebRTC ${this.role}] Cannot create offer: signalingState is ${this.pc.signalingState}`);
+        return;
       }
 
       this.hasOfferSent = true;
+      this.lastOfferTime = Date.now();
       const offer = await this.pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true
       });
-      await this.pc.setLocalDescription(offer);
-      this.sendSignal({ type: 'offer', sdp: this.pc.localDescription, sessionId: this.sessionId });
+      const optimizedOfferSdp = this.optimizeSdp(offer.sdp);
+      await this.pc.setLocalDescription(new RTCSessionDescription({ type: 'offer', sdp: optimizedOfferSdp }));
+      this.sendSignal({
+        type: 'offer',
+        sdp: { type: this.pc.localDescription.type, sdp: this.pc.localDescription.sdp },
+        sessionId: this.sessionId
+      });
+      this.optimizeSenders();
     } catch (err) {
       this.hasOfferSent = false;
       console.warn('Error creating WebRTC offer:', err);
@@ -452,6 +690,11 @@ export class WebRtcMeetingSession {
     // Notify peer immediately before closing
     try {
       this.sendSignal({ type: 'peer-left', role: this.role, sessionId: this.sessionId });
+    } catch (e) {}
+
+    // Clean up stale signals from relay so subsequent reconnects start completely fresh
+    try {
+      fetch(`/api/meetings/signals/${this.issueId}`, { method: 'DELETE' }).catch(() => {});
     } catch (e) {}
 
     this.isClosed = true;
@@ -470,6 +713,12 @@ export class WebRtcMeetingSession {
         this.bc.close();
       } catch (e) {}
       this.bc = null;
+    }
+    if (this.storageListener) {
+      try {
+        window.removeEventListener('storage', this.storageListener);
+      } catch (e) {}
+      this.storageListener = null;
     }
   }
 }

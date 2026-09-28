@@ -214,55 +214,57 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'radial-gradient(ellipse at top, #0f172a 0%, #020617 100%)',
-      color: '#ffffff',
+      background: 'linear-gradient(135deg, #f0f7ff 0%, #f8fafc 50%, #eef2ff 100%)',
+      color: '#0f172a',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif"
+      fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, Roboto, sans-serif"
     }}>
       {/* Top Portal Banner */}
       <header style={{
-        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-        backdropFilter: 'blur(12px)',
-        background: 'rgba(15, 23, 42, 0.75)',
-        padding: '12px 24px',
+        borderBottom: '1px solid #e2e8f0',
+        backdropFilter: 'blur(16px)',
+        background: 'rgba(255, 255, 255, 0.95)',
+        padding: '10px 24px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
         position: 'sticky',
         top: 0,
-        zIndex: 50
+        zIndex: 50,
+        boxShadow: '0 2px 10px rgba(30, 58, 138, 0.05)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <NitteLogo height={34} />
           <div>
-            <h1 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, letterSpacing: '0.5px', color: '#f8fafc' }}>
+            <h1 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, letterSpacing: '0.3px', color: '#1e3a8a' }}>
               NITTE (Deemed to be University)
             </h1>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>
+            <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
               Smart Student Mentorship & Escalation Support Portal
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
-            background: isPgConnected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-            border: `1px solid ${isPgConnected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+            background: isPgConnected ? '#ecfdf5' : '#fffbeb',
+            border: `1px solid ${isPgConnected ? '#a7f3d0' : '#fde68a'}`,
             padding: '4px 10px',
             borderRadius: '20px',
-            fontSize: '0.75rem',
-            color: isPgConnected ? '#6ee7b7' : '#fcd34d'
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            color: isPgConnected ? '#047857' : '#b45309'
           }}>
             <span style={{
-              width: '8px',
-              height: '8px',
+              width: '7px',
+              height: '7px',
               borderRadius: '50%',
               backgroundColor: isPgConnected ? '#10b981' : '#f59e0b',
-              boxShadow: isPgConnected ? '0 0 8px #10b981' : '0 0 8px #f59e0b'
+              boxShadow: isPgConnected ? '0 0 6px #10b981' : '0 0 6px #f59e0b'
             }} />
             <span>{isPgConnected ? 'PostgreSQL Database Live' : 'Local Demo Mode'}</span>
           </div>
@@ -278,9 +280,10 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
               border: 'none',
               borderRadius: '20px',
               padding: '4px 12px',
-              fontSize: '0.75rem',
+              fontSize: '0.72rem',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              boxShadow: isDemoLimitBypassed ? '0 2px 6px rgba(5, 150, 105, 0.25)' : '0 2px 6px rgba(217, 119, 6, 0.25)'
             }}
             title="Toggle demo limit mode"
           >
@@ -292,52 +295,53 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
       {/* Main Login Screen Container */}
       <main style={{
         flex: 1,
-        maxWidth: '1280px',
+        maxWidth: '1240px',
         margin: '0 auto',
         width: '100%',
-        padding: '32px 20px',
+        padding: '20px 20px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center'
       }}>
-        {/* Institutional Welcome Heading */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+        {/* Institutional Welcome Heading - Compact */}
+        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ 
             display: 'inline-flex', 
             alignItems: 'center', 
-            gap: '8px', 
-            background: 'rgba(59, 130, 246, 0.12)', 
-            border: '1px solid rgba(59, 130, 246, 0.25)', 
-            padding: '4px 14px', 
+            gap: '6px', 
+            background: '#eff6ff', 
+            border: '1px solid #bfdbfe', 
+            padding: '3px 12px', 
             borderRadius: '20px',
-            fontSize: '0.8rem',
-            color: '#60a5fa',
-            marginBottom: '10px'
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            color: '#1d4ed8',
+            marginBottom: '8px'
           }}>
-            <Sparkles size={14} /> Multi-Role Portal Authentication System
+            <Sparkles size={13} /> Multi-Role Portal Authentication System
           </div>
-          <h2 style={{ fontSize: '1.75rem', fontWeight: 800, margin: '0 0 8px 0', letterSpacing: '-0.5px' }}>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: '0 0 4px 0', letterSpacing: '-0.4px', color: '#1e3a8a' }}>
             Welcome to NITTE Mentorship Portal
           </h2>
-          <p style={{ margin: 0, fontSize: '0.9rem', color: '#94a3b8', maxWidth: '600px', marginInline: 'auto' }}>
+          <p style={{ margin: 0, fontSize: '0.84rem', color: '#64748b', maxWidth: '620px', marginInline: 'auto' }}>
             Choose your official role below to sign in with your institution credentials, or select an active account from the live roster database in Demo Mode.
           </p>
         </div>
 
-        {/* 4-Role Navigation Pills */}
+        {/* 4-Role Navigation Pills - Sleek & Compact */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
           gap: '10px',
           maxWidth: '820px',
-          margin: '0 auto 28px auto',
+          margin: '0 auto 16px auto',
           width: '100%'
         }}>
           {[
-            { id: 'Student', label: 'Student (Mentee)', icon: GraduationCap, color: '#3b82f6' },
-            { id: 'Mentor', label: 'Faculty Mentor', icon: UserCheck, color: '#8b5cf6' },
-            { id: 'RO', label: 'Relationship Officer', icon: Briefcase, color: '#10b981' },
-            { id: 'Admin', label: 'System Admin', icon: Shield, color: '#f59e0b' }
+            { id: 'Student', label: 'Student (Mentee)', icon: GraduationCap, color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+            { id: 'Mentor', label: 'Faculty Mentor', icon: UserCheck, color: '#059669', bg: '#ecfdf5', border: '#a7f3d0' },
+            { id: 'RO', label: 'Relationship Officer', icon: Briefcase, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+            { id: 'Admin', label: 'System Admin', icon: Shield, color: '#e11d48', bg: '#fff1f2', border: '#fecdd3' }
           ].map(r => {
             const Icon = r.icon;
             const isSel = selectedRole === r.id;
@@ -350,50 +354,49 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '10px',
-                  padding: '12px 14px',
-                  borderRadius: '12px',
-                  border: isSel ? `2px solid ${r.color}` : '1px solid rgba(255, 255, 255, 0.1)',
-                  background: isSel ? `rgba(${r.color === '#3b82f6' ? '59, 130, 246' : r.color === '#8b5cf6' ? '139, 92, 246' : r.color === '#10b981' ? '16, 185, 129' : '245, 158, 11'}, 0.15)` : 'rgba(255, 255, 255, 0.03)',
-                  color: isSel ? '#ffffff' : '#94a3b8',
-                  fontWeight: isSel ? 700 : 600,
-                  fontSize: '0.88rem',
+                  gap: '8px',
+                  padding: '9px 12px',
+                  borderRadius: '10px',
+                  border: isSel ? `2px solid ${r.color}` : '1px solid #e2e8f0',
+                  background: isSel ? r.bg : '#ffffff',
+                  color: isSel ? r.color : '#475569',
+                  fontWeight: isSel ? 800 : 600,
+                  fontSize: '0.82rem',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  boxShadow: isSel ? `0 8px 20px -4px rgba(0, 0, 0, 0.4)` : 'none'
+                  transition: 'all 0.16s ease',
+                  boxShadow: isSel ? `0 4px 12px -2px rgba(30, 58, 138, 0.12)` : '0 1px 3px rgba(0, 0, 0, 0.02)'
                 }}
               >
-                <Icon size={18} style={{ color: isSel ? r.color : '#64748b' }} />
+                <Icon size={16} style={{ color: isSel ? r.color : '#94a3b8' }} />
                 <span>{r.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Two-Column Grid: Form Left, Live Roster Demo Right */}
+        {/* Two-Column Grid: Form Left, Live Roster Demo Right - Compact */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: '1fr 1.1fr',
-          gap: '24px',
+          gridTemplateColumns: '1fr 1.15fr',
+          gap: '16px',
           alignItems: 'start'
         }}>
           {/* COLUMN 1: LOGIN FORM */}
           <div style={{
-            background: 'rgba(30, 41, 59, 0.5)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '16px',
-            padding: '28px',
-            backdropFilter: 'blur(16px)',
-            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.4)'
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '14px',
+            padding: '20px',
+            boxShadow: '0 4px 20px -2px rgba(30, 58, 138, 0.07)'
           }}>
             {/* Form Top Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Lock size={20} style={{ color: '#38bdf8' }} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px', color: '#1e3a8a' }}>
+                  <Lock size={18} style={{ color: '#2563eb' }} />
                   {authMode === 'signup' ? 'Student Registration' : `${selectedRole} Sign In`}
                 </h3>
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#94a3b8' }}>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.76rem', color: '#64748b' }}>
                   {authMode === 'signup' 
                     ? 'Register your student profile with Gmail for immediate access.' 
                     : `Enter your ${selectedRole} credentials or pick from the roster.`}
@@ -409,13 +412,13 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     setSuccessMsg('');
                   }}
                   style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(59, 130, 246, 0.4)',
-                    color: '#60a5fa',
-                    padding: '6px 12px',
-                    borderRadius: '8px',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    color: '#1d4ed8',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '0.74rem',
+                    fontWeight: 700,
                     cursor: 'pointer'
                   }}
                 >
@@ -427,45 +430,45 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
             {/* Error and Success Alerts */}
             {errorMsg && (
               <div style={{
-                background: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#fca5a5',
-                padding: '12px 16px',
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#b91c1c',
+                padding: '10px 14px',
                 borderRadius: '8px',
-                marginBottom: '18px',
+                marginBottom: '14px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                fontSize: '0.85rem'
+                fontSize: '0.8rem'
               }}>
-                <AlertCircle size={18} />
+                <AlertCircle size={16} />
                 <span>{errorMsg}</span>
               </div>
             )}
 
             {successMsg && (
               <div style={{
-                background: 'rgba(16, 185, 129, 0.15)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                color: '#6ee7b7',
-                padding: '12px 16px',
+                background: '#ecfdf5',
+                border: '1px solid #a7f3d0',
+                color: '#047857',
+                padding: '10px 14px',
                 borderRadius: '8px',
-                marginBottom: '18px',
+                marginBottom: '14px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                fontSize: '0.85rem'
+                fontSize: '0.8rem'
               }}>
-                <CheckCircle2 size={18} />
+                <CheckCircle2 size={16} />
                 <span>{successMsg}</span>
               </div>
             )}
 
             {/* LOGIN TAB FORM */}
             {authMode === 'login' ? (
-              <form onSubmit={handleSubmitLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <form onSubmit={handleSubmitLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '6px' }}>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
                     {selectedRole === 'Student' ? 'Student USN / ID or Registered Gmail Address *' :
                      selectedRole === 'Mentor' ? 'Faculty Mentor ID or Official Email *' :
                      selectedRole === 'RO' ? 'Relationship Officer ID (e.g. RO-01) or Email *' :
@@ -484,27 +487,27 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       }
                       style={{
                         width: '100%',
-                        padding: '11px 14px',
-                        paddingLeft: '38px',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        padding: '9px 12px',
+                        paddingLeft: '34px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '8px',
-                        color: '#ffffff',
-                        fontSize: '0.9rem',
+                        color: '#0f172a',
+                        fontSize: '0.86rem',
                         outline: 'none',
                         boxSizing: 'border-box'
                       }}
                     />
-                    <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                    <Mail size={15} style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#cbd5e1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>
                       Account Password *
                     </label>
-                    <span style={{ fontSize: '0.75rem', color: '#60a5fa' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#2563eb' }}>
                       Default: <code>{selectedRole === 'Student' ? 'Nit#Stu2026' : selectedRole === 'Mentor' ? 'Nit#Mnt2026' : selectedRole === 'RO' ? 'Nit#Ro2026' : 'Admin@2026'}</code>
                     </span>
                   </div>
@@ -517,34 +520,34 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       placeholder="Enter password..."
                       style={{
                         width: '100%',
-                        padding: '11px 14px',
-                        paddingLeft: '38px',
-                        paddingRight: '38px',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        padding: '9px 12px',
+                        paddingLeft: '34px',
+                        paddingRight: '34px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '8px',
-                        color: '#ffffff',
-                        fontSize: '0.9rem',
+                        color: '#0f172a',
+                        fontSize: '0.86rem',
                         outline: 'none',
                         boxSizing: 'border-box'
                       }}
                     />
-                    <Key size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                    <Key size={15} style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       style={{
                         position: 'absolute',
-                        right: '12px',
+                        right: '10px',
                         top: '50%',
                         transform: 'translateY(-50%)',
                         background: 'none',
                         border: 'none',
-                        color: '#64748b',
+                        color: '#94a3b8',
                         cursor: 'pointer'
                       }}
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
                 </div>
@@ -554,37 +557,37 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                   type="submit"
                   disabled={isLoading}
                   style={{
-                    marginTop: '8px',
-                    padding: '12px',
+                    marginTop: '4px',
+                    padding: '10px',
                     borderRadius: '8px',
                     border: 'none',
-                    background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                    background: 'linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)',
                     color: '#ffffff',
                     fontWeight: 700,
-                    fontSize: '0.95rem',
+                    fontSize: '0.88rem',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)'
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)'
                   }}
                 >
                   {isLoading ? (
                     <>
-                      <RefreshCw size={18} className="spin" />
+                      <RefreshCw size={16} className="spin" />
                       <span>Authenticating Credentials...</span>
                     </>
                   ) : (
                     <>
                       <span>Sign In as {selectedRole}</span>
-                      <ArrowRight size={18} />
+                      <ArrowRight size={16} />
                     </>
                   )}
                 </button>
 
                 {/* Instant Bypass Button for Evaluators */}
-                <div style={{ textAlign: 'center', marginTop: '6px' }}>
+                <div style={{ textAlign: 'center', marginTop: '2px' }}>
                   <button
                     type="button"
                     onClick={() => {
@@ -593,8 +596,8 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#94a3b8',
-                      fontSize: '0.78rem',
+                      color: '#64748b',
+                      fontSize: '0.74rem',
                       cursor: 'pointer',
                       textDecoration: 'underline'
                     }}
@@ -605,9 +608,9 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
               </form>
             ) : (
               /* STUDENT SIGN-UP FORM */
-              <form onSubmit={handleStudentSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <form onSubmit={handleStudentSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                  <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                     Student Full Name *
                   </label>
                   <input
@@ -618,19 +621,19 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     onChange={(e) => setRegName(e.target.value)}
                     style={{
                       width: '100%',
-                      padding: '10px 12px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      padding: '8px 10px',
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
                       borderRadius: '8px',
-                      color: '#ffffff',
-                      fontSize: '0.88rem',
+                      color: '#0f172a',
+                      fontSize: '0.84rem',
                       boxSizing: 'border-box'
                     }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                  <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                     Registered Gmail Address *
                   </label>
                   <input
@@ -641,20 +644,20 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     onChange={(e) => setRegEmail(e.target.value)}
                     style={{
                       width: '100%',
-                      padding: '10px 12px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      padding: '8px 10px',
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
                       borderRadius: '8px',
-                      color: '#ffffff',
-                      fontSize: '0.88rem',
+                      color: '#0f172a',
+                      fontSize: '0.84rem',
                       boxSizing: 'border-box'
                     }}
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '8px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                       USN / ID
                     </label>
                     <input
@@ -664,19 +667,19 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       onChange={(e) => setRegUsn(e.target.value)}
                       style={{
                         width: '100%',
-                        padding: '10px 10px',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        padding: '8px 8px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '8px',
-                        color: '#ffffff',
-                        fontSize: '0.85rem',
+                        color: '#0f172a',
+                        fontSize: '0.82rem',
                         boxSizing: 'border-box'
                       }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                       Branch
                     </label>
                     <select
@@ -684,12 +687,12 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       onChange={(e) => setRegBranch(e.target.value)}
                       style={{
                         width: '100%',
-                        padding: '10px 8px',
-                        background: 'rgba(15, 23, 42, 0.9)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        padding: '8px 6px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '8px',
-                        color: '#ffffff',
-                        fontSize: '0.85rem',
+                        color: '#0f172a',
+                        fontSize: '0.82rem',
                         boxSizing: 'border-box'
                       }}
                     >
@@ -702,7 +705,7 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                   </div>
 
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                    <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                       Semester
                     </label>
                     <select
@@ -710,12 +713,12 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       onChange={(e) => setRegSem(e.target.value)}
                       style={{
                         width: '100%',
-                        padding: '10px 8px',
-                        background: 'rgba(15, 23, 42, 0.9)',
-                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        padding: '8px 6px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
                         borderRadius: '8px',
-                        color: '#ffffff',
-                        fontSize: '0.85rem',
+                        color: '#0f172a',
+                        fontSize: '0.82rem',
                         boxSizing: 'border-box'
                       }}
                     >
@@ -727,7 +730,7 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px' }}>
+                  <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                     Set Account Password *
                   </label>
                   <input
@@ -737,12 +740,12 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     onChange={(e) => setRegPassword(e.target.value)}
                     style={{
                       width: '100%',
-                      padding: '10px 12px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      padding: '8px 10px',
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
                       borderRadius: '8px',
-                      color: '#ffffff',
-                      fontSize: '0.88rem',
+                      color: '#0f172a',
+                      fontSize: '0.84rem',
                       boxSizing: 'border-box'
                     }}
                   />
@@ -752,22 +755,22 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                   type="submit"
                   disabled={isSubmittingReg}
                   style={{
-                    marginTop: '6px',
-                    padding: '11px',
+                    marginTop: '4px',
+                    padding: '9px',
                     borderRadius: '8px',
                     border: 'none',
-                    background: '#10b981',
+                    background: '#059669',
                     color: '#ffffff',
                     fontWeight: 700,
-                    fontSize: '0.9rem',
+                    fontSize: '0.85rem',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '8px'
+                    gap: '6px'
                   }}
                 >
-                  {isSubmittingReg ? <RefreshCw size={16} className="spin" /> : <ShieldCheck size={16} />}
+                  {isSubmittingReg ? <RefreshCw size={15} className="spin" /> : <ShieldCheck size={15} />}
                   <span>Register & Auto-Login Student</span>
                 </button>
               </form>
@@ -776,31 +779,31 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
 
           {/* COLUMN 2: DEMO MODE LIVE ROSTER DATABASE QUICK ACCESS */}
           <div style={{
-            background: 'rgba(30, 41, 59, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            borderRadius: '16px',
-            padding: '24px',
-            backdropFilter: 'blur(16px)',
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '14px',
+            padding: '18px',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '620px'
+            maxHeight: '560px',
+            boxShadow: '0 4px 20px -2px rgba(30, 58, 138, 0.07)'
           }}>
-            <div style={{ marginBottom: '14px' }}>
+            <div style={{ marginBottom: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: '#f1f5f9' }}>
-                  <Zap size={18} style={{ color: '#f59e0b' }} />
+                <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px', color: '#1e3a8a' }}>
+                  <Zap size={16} style={{ color: '#d97706' }} />
                   Demo Mode: Live {selectedRole} Roster
                 </h3>
-                <span style={{ fontSize: '0.75rem', background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                <span style={{ fontSize: '0.7rem', background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
                   1-Click Auto-Fill
                 </span>
               </div>
-              <p style={{ margin: '4px 0 12px 0', fontSize: '0.78rem', color: '#94a3b8' }}>
-                Click any profile below to immediately auto-fill their credentials and log in to the portal without manual typing.
+              <p style={{ margin: '2px 0 8px 0', fontSize: '0.74rem', color: '#64748b' }}>
+                Click any profile below to immediately auto-fill credentials and log in without manual typing.
               </p>
 
               {/* Roster Search Bar & Category Filter */}
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
                 <div style={{ position: 'relative', flex: 1 }}>
                   <input
                     type="text"
@@ -809,17 +812,17 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     placeholder={`Search ${selectedRole} by name or ID...`}
                     style={{
                       width: '100%',
-                      padding: '8px 12px',
-                      paddingLeft: '32px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      padding: '7px 10px',
+                      paddingLeft: '28px',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
                       borderRadius: '6px',
-                      color: '#ffffff',
-                      fontSize: '0.8rem',
+                      color: '#0f172a',
+                      fontSize: '0.78rem',
                       boxSizing: 'border-box'
                     }}
                   />
-                  <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                  <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
                 </div>
 
                 {selectedRole === 'RO' && (
@@ -827,12 +830,12 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     value={roCategoryFilter}
                     onChange={(e) => setRoCategoryFilter(e.target.value)}
                     style={{
-                      padding: '8px 10px',
-                      background: 'rgba(15, 23, 42, 0.9)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      padding: '6px 8px',
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
                       borderRadius: '6px',
-                      color: '#ffffff',
-                      fontSize: '0.8rem'
+                      color: '#0f172a',
+                      fontSize: '0.78rem'
                     }}
                   >
                     <option value="ALL">All Departments</option>
@@ -854,7 +857,7 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
-              gap: '8px',
+              gap: '6px',
               paddingRight: '4px'
             }}>
               {/* STUDENT ROSTER LIST */}
@@ -864,10 +867,10 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     key={stu.id || i}
                     onClick={() => handleQuickRosterLogin(stu, 'Student')}
                     style={{
-                      background: identifier === stu.id ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                      border: identifier === stu.id ? '1px solid rgba(59, 130, 246, 0.5)' : '1px solid rgba(255, 255, 255, 0.06)',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
+                      background: identifier === stu.id ? '#eff6ff' : '#ffffff',
+                      border: identifier === stu.id ? '1.5px solid #2563eb' : '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      padding: '9px 12px',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -875,26 +878,27 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       transition: 'all 0.15s ease'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: 'rgba(59, 130, 246, 0.2)',
-                        color: '#60a5fa',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '6px',
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        border: '1px solid #bfdbfe',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontWeight: 700,
-                        fontSize: '0.85rem'
+                        fontSize: '0.8rem'
                       }}>
                         {stu.name ? stu.name.charAt(0) : 'S'}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#f8fafc' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#0f172a' }}>
                           {stu.name}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', gap: '6px', marginTop: '1px' }}>
                           <code>{stu.id}</code>
                           <span>•</span>
                           <span>{stu.branch} - Sem {stu.sem}</span>
@@ -903,11 +907,11 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     </div>
 
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '0.72rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.68rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
                         {stu.password || 'Nit#Stu2026'}
                       </span>
-                      <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
-                        Login <ChevronRight size={12} />
+                      <span style={{ fontSize: '0.7rem', color: '#2563eb', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
+                        Login <ChevronRight size={11} />
                       </span>
                     </div>
                   </div>
@@ -921,10 +925,10 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     key={mnt.id || i}
                     onClick={() => handleQuickRosterLogin(mnt, 'Mentor')}
                     style={{
-                      background: identifier === mnt.id ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                      border: identifier === mnt.id ? '1px solid rgba(139, 92, 246, 0.5)' : '1px solid rgba(255, 255, 255, 0.06)',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
+                      background: identifier === mnt.id ? '#ecfdf5' : '#ffffff',
+                      border: identifier === mnt.id ? '1.5px solid #059669' : '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      padding: '9px 12px',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -932,41 +936,42 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       transition: 'all 0.15s ease'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: 'rgba(139, 92, 246, 0.2)',
-                        color: '#c084fc',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '6px',
+                        background: '#ecfdf5',
+                        color: '#047857',
+                        border: '1px solid #a7f3d0',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontWeight: 700,
-                        fontSize: '0.85rem'
+                        fontSize: '0.8rem'
                       }}>
                         {mnt.name ? mnt.name.charAt(0) : 'M'}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#f8fafc' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#0f172a' }}>
                           {mnt.name}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', gap: '6px', marginTop: '1px' }}>
                           <code>{mnt.id}</code>
                           <span>•</span>
                           <span>{mnt.dept || 'CSE'}</span>
                           <span>•</span>
-                          <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mnt.class || 'Assigned Mentees'}</span>
+                          <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mnt.class || 'Mentees'}</span>
                         </div>
                       </div>
                     </div>
 
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '0.72rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.68rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
                         {mnt.password || 'Nit#Mnt2026'}
                       </span>
-                      <span style={{ fontSize: '0.72rem', color: '#c084fc', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
-                        Login <ChevronRight size={12} />
+                      <span style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
+                        Login <ChevronRight size={11} />
                       </span>
                     </div>
                   </div>
@@ -980,10 +985,10 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                     key={ro.id || i}
                     onClick={() => handleQuickRosterLogin(ro, 'RO')}
                     style={{
-                      background: identifier === ro.id ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                      border: identifier === ro.id ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255, 255, 255, 0.06)',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
+                      background: identifier === ro.id ? '#fffbeb' : '#ffffff',
+                      border: identifier === ro.id ? '1.5px solid #d97706' : '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      padding: '9px 12px',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -991,39 +996,40 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                       transition: 'all 0.15s ease'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: 'rgba(16, 185, 129, 0.2)',
-                        color: '#34d399',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '6px',
+                        background: '#fffbeb',
+                        color: '#b45309',
+                        border: '1px solid #fde68a',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontWeight: 700,
-                        fontSize: '0.85rem'
+                        fontSize: '0.8rem'
                       }}>
                         {ro.id.replace('RO-', '')}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#f8fafc' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#0f172a' }}>
                           {ro.name}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '6px', marginTop: '2px', alignItems: 'center' }}>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', gap: '6px', marginTop: '1px', alignItems: 'center' }}>
                           <code>{ro.id}</code>
                           <span>•</span>
-                          <span style={{ maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ro.region}</span>
+                          <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ro.region}</span>
                         </div>
                       </div>
                     </div>
 
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '0.72rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '2px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.68rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
                         {ro.password || 'Nit#Ro2026'}
                       </span>
-                      <span style={{ fontSize: '0.72rem', color: '#34d399', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
-                        Login <ChevronRight size={12} />
+                      <span style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
+                        Login <ChevronRight size={11} />
                       </span>
                     </div>
                   </div>
@@ -1035,47 +1041,47 @@ export const LoginPage = ({ onLoginSuccess, onBypassToDashboard }) => {
                 <div
                   onClick={() => handleQuickRosterLogin({ id: 'ADMIN', name: 'System Administrator', email: 'skandhayashu2906@gmail.com', password: 'Admin@2026' }, 'Admin')}
                   style={{
-                    background: 'rgba(245, 158, 11, 0.15)',
-                    border: '1px solid rgba(245, 158, 11, 0.4)',
-                    borderRadius: '10px',
-                    padding: '16px',
+                    background: '#fff1f2',
+                    border: '1.5px solid #fecdd3',
+                    borderRadius: '8px',
+                    padding: '12px 14px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <div style={{
-                      width: '40px',
-                      height: '40px',
-                      borderRadius: '10px',
-                      background: 'rgba(245, 158, 11, 0.25)',
-                      color: '#fbbf24',
+                      width: '34px',
+                      height: '34px',
+                      borderRadius: '8px',
+                      background: '#ffe4e6',
+                      color: '#e11d48',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontWeight: 800,
-                      fontSize: '1.1rem'
+                      fontSize: '1rem'
                     }}>
-                      <Shield size={22} />
+                      <Shield size={18} />
                     </div>
                     <div>
-                      <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#ffffff' }}>
+                      <div style={{ fontWeight: 800, fontSize: '0.86rem', color: '#881337' }}>
                         System Administrator / Principal
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginTop: '3px' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#9f1239', marginTop: '1px' }}>
                         Master Email: <code>skandhayashu2906@gmail.com</code>
                       </div>
                     </div>
                   </div>
 
                   <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '3px 8px', borderRadius: '4px', fontWeight: 700, display: 'block', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.7rem', background: '#ffffff', color: '#e11d48', border: '1px solid #fecdd3', padding: '2px 6px', borderRadius: '4px', fontWeight: 700, display: 'block', marginBottom: '2px' }}>
                       Admin@2026
                     </span>
-                    <span style={{ fontSize: '0.8rem', color: '#fbbf24', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
-                      1-Click Login <ChevronRight size={14} />
+                    <span style={{ fontSize: '0.72rem', color: '#e11d48', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '2px', justifyContent: 'flex-end' }}>
+                      1-Click Login <ChevronRight size={12} />
                     </span>
                   </div>
                 </div>

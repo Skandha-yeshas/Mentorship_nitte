@@ -1,9 +1,18 @@
 import React, { useContext, useState } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck, FileText } from 'lucide-react';
+import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck, FileText, Clock, MapPin, Mail, Edit3, Sparkles, X, AlertCircle, AlertTriangle, SkipForward, RotateCcw, Info } from 'lucide-react';
 
 export const MentorDashboard = ({ mentorId }) => {
-  const { db, addResource, addGroupSession, submitMentorSessionRecord } = useContext(DatabaseContext);
+  const { 
+    db, 
+    addResource, 
+    addGroupSession, 
+    submitMentorSessionRecord, 
+    updateMentorSchedule, 
+    passMentorSession, 
+    unpassMentorSession, 
+    shootMentorDeadlineAlert 
+  } = useContext(DatabaseContext);
   const [activeTab, setActiveTab] = useState('roster'); // 'roster', 'schedule-session', 'add-resource', 'session-records'
   
   // Mentor form states
@@ -28,6 +37,46 @@ export const MentorDashboard = ({ mentorId }) => {
   // Fetch current mentor details
   const mentor = db.users.mentors.find(m => m.id === mentorId) || db.users.mentors[0];
 
+  // Scheduled Mentoring Hour details
+  const mentoringSchedule = (db.mentoringSchedules && db.mentoringSchedules[mentor.id]) || {
+    mentorId: mentor.id,
+    date: '2026-09-25',
+    day: 'Friday',
+    time: '09:00 AM',
+    endTime: '10:00 AM',
+    periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+    whichClass: mentor.class || '6th Sem CSE-A',
+    autoEmailAt9: true,
+    lastEmailSentAt: null,
+    passedSessions: []
+  };
+
+  const sessionDate = mentoringSchedule.date || '2026-09-25';
+  const isSessionPassed = Boolean(
+    mentoringSchedule.isPassed || 
+    (mentoringSchedule.passedSessions || []).some(p => p.sessionDate === sessionDate)
+  );
+  const currentPassedRecord = (mentoringSchedule.passedSessions || []).find(p => p.sessionDate === sessionDate);
+  const isReportFiled = (db.mentorSessionRecords || []).some(
+    r => r.mentorId === mentor.id && r.sessionDate === sessionDate
+  );
+  const filedRecord = (db.mentorSessionRecords || []).find(
+    r => r.mentorId === mentor.id && r.sessionDate === sessionDate
+  );
+
+  // Reschedule Modal state (Only Date & Time)
+  const [showEditScheduleModal, setShowEditScheduleModal] = useState(false);
+  const [editDate, setEditDate] = useState(mentoringSchedule.date || '2026-09-25');
+  const [editPeriodSlot, setEditPeriodSlot] = useState(mentoringSchedule.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)');
+  const [editCustomStart, setEditCustomStart] = useState(mentoringSchedule.time || '09:00 AM');
+  const [editCustomEnd, setEditCustomEnd] = useState(mentoringSchedule.endTime || '10:00 AM');
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Pass Session (Holiday / Not Conducted) Modal state
+  const [showPassModal, setShowPassModal] = useState(false);
+  const [passReason, setPassReason] = useState('Public / Government Holiday');
+  const [passRemarks, setPassRemarks] = useState('');
+
   // Assigned students (mentees)
   const mentees = db.users.students.filter(s => s.mentorId === mentor.id);
 
@@ -45,6 +94,71 @@ export const MentorDashboard = ({ mentorId }) => {
       setWhichClass(mentor.class);
     }
   }, [mentees.length, mentor]);
+
+  // Save rescheduled mentoring period (Date and Time only, mandatory 9:00 AM email)
+  const handleSaveSchedule = async (e) => {
+    e.preventDefault();
+    const periodSlotText = editPeriodSlot === 'Custom' 
+      ? `Custom (${editCustomStart} - ${editCustomEnd})`
+      : editPeriodSlot;
+
+    const timeText = editPeriodSlot === 'Custom' 
+      ? editCustomStart 
+      : (editPeriodSlot.match(/\((.*?)\s*-/)?.[1] || '09:00 AM');
+
+    const dayName = new Date(editDate).toLocaleDateString('en-US', { weekday: 'long' });
+
+    const updated = {
+      date: editDate,
+      day: dayName,
+      time: timeText,
+      endTime: editCustomEnd,
+      periodSlot: periodSlotText,
+      whichClass: mentor.class || '6th Sem CSE-A',
+      autoEmailAt9: true
+    };
+
+    setIsUpdating(true);
+    await updateMentorSchedule(mentor.id, updated, true);
+    setIsUpdating(false);
+    setShowEditScheduleModal(false);
+    setSuccessMessage(`Mentoring period rescheduled to ${dayName}, ${editDate} (${periodSlotText})! Mandatory 9:00 AM Gmail alert scheduled.`);
+    setTimeout(() => setSuccessMessage(''), 4500);
+  };
+
+  // Pass / Waive Session handler
+  const handleConfirmPassSession = async (e) => {
+    e.preventDefault();
+    await passMentorSession(mentor.id, sessionDate, passReason, passRemarks);
+    setShowPassModal(false);
+    setSuccessMessage(`Session on ${sessionDate} marked as Not Conducted (${passReason}). Next morning 9:00 AM deadline notice waived.`);
+    setTimeout(() => setSuccessMessage(''), 4500);
+  };
+
+  // Re-activate session if previously passed
+  const handleUnpassSession = async () => {
+    await unpassMentorSession(mentor.id, sessionDate);
+    setSuccessMessage(`Session on ${sessionDate} re-activated. Session report submission is active.`);
+    setTimeout(() => setSuccessMessage(''), 4000);
+  };
+
+  // Test next-morning 9:00 AM deadline reminder
+  const handleTestDeadlineNotice = async () => {
+    setIsUpdating(true);
+    try {
+      const res = await shootMentorDeadlineAlert(mentor.id, sessionDate);
+      if (res) {
+        setSuccessMessage(`Next-morning 9:00 AM deadline alert dispatched in background to ${mentor.email} for unfiled session report (${sessionDate})!`);
+      } else {
+        setSuccessMessage(`Session report is either already submitted or marked as passed/holiday. No deadline alert needed.`);
+      }
+      setTimeout(() => setSuccessMessage(''), 4500);
+    } catch (e) {
+      console.warn('Test deadline alert error:', e);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const handleAddSessionRecord = (e) => {
     e.preventDefault();
@@ -176,6 +290,319 @@ export const MentorDashboard = ({ mentorId }) => {
             </div>
           </div>
         )}
+
+        {/* SCHEDULED MENTORING HOUR & PERIOD WIDGET */}
+        <div style={{
+          background: 'linear-gradient(135deg, #eff6ff 0%, #ffffff 50%, #f0fdf4 100%)',
+          border: '1px solid #bfdbfe',
+          borderRadius: '12px',
+          padding: '16px 20px',
+          boxShadow: '0 4px 15px -3px rgba(37, 99, 235, 0.08), 0 2px 6px -2px rgba(0, 0, 0, 0.04)',
+          position: 'relative'
+        }}>
+          {/* Header Row */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
+                background: '#dbeafe',
+                color: '#1d4ed8',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.8)'
+              }}>
+                <Clock size={20} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#1e3a8a', letterSpacing: '-0.01em' }}>
+                    Scheduled Mentoring Hour & Period
+                  </h3>
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: '700',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: '#dcfce7',
+                    color: '#15803d',
+                    border: '1px solid #bbf7d0',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e' }}></span>
+                    Active Timetable Slot
+                  </span>
+                </div>
+                <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                  Weekly official guidance period for {mentoringSchedule.whichClass || mentor.class} • NAAC Audit compliant
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons: Only Change Date & Time */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditDate(mentoringSchedule.date || '2026-09-25');
+                  setEditPeriodSlot(mentoringSchedule.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)');
+                  setShowEditScheduleModal(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  fontSize: '0.78rem',
+                  fontWeight: '700',
+                  color: '#1e3a8a',
+                  background: '#ffffff',
+                  border: '1px solid #bfdbfe',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Edit3 size={14} />
+                <span>Change Date & Time</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Details Grid: Strictly Date, Time, Class, Automated 9 AM status */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '12px',
+            background: '#ffffff',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            border: '1px solid #e2e8f0'
+          }}>
+            {/* Period Slot */}
+            <div>
+              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Period / Time
+              </div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Clock size={14} color="#2563eb" />
+                <span>{mentoringSchedule.periodSlot || mentoringSchedule.time}</span>
+              </div>
+            </div>
+
+            {/* Date & Day */}
+            <div>
+              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Day & Date
+              </div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Calendar size={14} color="#059669" />
+                <span>{mentoringSchedule.day || 'Friday'}, {mentoringSchedule.date}</span>
+              </div>
+            </div>
+
+            {/* Assigned Class / Student Group */}
+            <div>
+              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Assigned Class
+              </div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Users size={14} color="#7c3aed" />
+                <span>{mentoringSchedule.whichClass || mentor.class || '6th Sem CSE-A'}</span>
+              </div>
+            </div>
+
+            {/* Automated Gmail Status */}
+            <div>
+              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Gmail 9:00 AM Alert
+              </div>
+              <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#15803d', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <Sparkles size={14} color="#16a34a" />
+                <span>Mandatory at 9:00 AM ({mentor.email})</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Session Feedback & Holiday / Pass Status Section */}
+          <div style={{ marginTop: '12px' }}>
+            {isReportFiled ? (
+              <div style={{
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <CheckCircle2 size={16} color="#16a34a" />
+                  <span style={{ fontSize: '0.8rem', color: '#14532d', fontWeight: '600' }}>
+                    <strong>Session Report Submitted for {sessionDate}:</strong> Recorded {filedRecord?.studentsAttended || mentees.length} mentees present. Feedback report is verified for institutional audit.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('session-records')}
+                  style={{
+                    fontSize: '0.74rem',
+                    fontWeight: '700',
+                    color: '#15803d',
+                    background: '#ffffff',
+                    border: '1px solid #86efac',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  View Reports Tab
+                </button>
+              </div>
+            ) : isSessionPassed ? (
+              <div style={{
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <SkipForward size={16} color="#64748b" />
+                  <span style={{ fontSize: '0.8rem', color: '#334155', fontWeight: '600' }}>
+                    <strong>Session Marked as Passed / Not Conducted ({currentPassedRecord?.reason || 'Holiday Waiver'}):</strong> Next-morning 9:00 AM feedback deadline notice is waived.
+                    {currentPassedRecord?.remarks && <span style={{ fontWeight: '400', color: '#64748b' }}> — Note: {currentPassedRecord.remarks}</span>}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleUnpassSession}
+                  title="Re-activate this session to submit the report"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '0.74rem',
+                    fontWeight: '700',
+                    color: '#475569',
+                    background: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <RotateCcw size={12} />
+                  <span>Re-activate Session</span>
+                </button>
+              </div>
+            ) : (
+              <div style={{
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', maxWidth: '780px' }}>
+                    <AlertTriangle size={17} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#92400e' }}>
+                        Mentoring Session Feedback Report Pending for {sessionDate}
+                      </div>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#b45309', lineHeight: 1.4 }}>
+                        If this session was conducted, please submit the feedback report. Unfilled sessions trigger an automated compliance notice to <strong>{mentor.email}</strong> tomorrow morning at <strong>9:00 AM</strong> with <strong>Deadline: Today!</strong>.
+                        If the session was not conducted or was a holiday, you can pass it below to waive the notice.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Actions for Pending Session */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('session-records')}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.74rem',
+                        fontWeight: '700',
+                        color: '#ffffff',
+                        background: '#d97706',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <FileText size={12} />
+                      <span>Submit Report Now</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPassModal(true)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.74rem',
+                        fontWeight: '700',
+                        color: '#78350f',
+                        background: '#fef3c7',
+                        border: '1px solid #fcd34d',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <SkipForward size={12} />
+                      <span>Pass (Holiday / Not Conducted)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTestDeadlineNotice}
+                      disabled={isUpdating}
+                      title="Test shooting the next-morning 9:00 AM deadline notice right now"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 9px',
+                        borderRadius: '6px',
+                        fontSize: '0.72rem',
+                        fontWeight: '600',
+                        color: '#6b7280',
+                        background: '#ffffff',
+                        border: '1px solid #e5e7eb',
+                        cursor: isUpdating ? 'wait' : 'pointer'
+                      }}
+                    >
+                      <Mail size={11} />
+                      <span>Test 9 AM Deadline Notice</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* TAB 1: MENTEE ROSTER */}
         {activeTab === 'roster' && (
@@ -524,6 +951,335 @@ export const MentorDashboard = ({ mentorId }) => {
         )}
 
       </div>
+
+      {/* RESCHEDULE MENTORING PERIOD MODAL */}
+      {showEditScheduleModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '540px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            border: '1px solid #bfdbfe',
+            overflow: 'hidden'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '16px 20px',
+              background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
+              color: '#ffffff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Clock size={20} />
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800' }}>
+                  Reschedule Mentoring Hour Period
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditScheduleModal(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body / Form */}
+            <form onSubmit={handleSaveSchedule} style={{ padding: '20px' }}>
+              {/* Mandatory 9:00 AM Dispatch notice banner */}
+              <div style={{
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}>
+                <Mail size={18} color="#2563eb" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ fontSize: '0.8rem', color: '#1e3a8a', lineHeight: 1.5 }}>
+                  <strong>Mandatory 9:00 AM Gmail Dispatch:</strong> On the scheduled date at 9:00 AM, the system automatically dispatches an official notification email to your faculty inbox (<code>{mentor.email}</code>) and your assigned mentees. This dispatch is mandatory under mentoring protocol.
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+                {/* Date Picker */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                    Mentoring Date
+                  </label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    required
+                    style={{ fontSize: '0.85rem' }}
+                  />
+                </div>
+
+                {/* Period Slot Selector */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                    Period / Time Slot
+                  </label>
+                  <select
+                    className="form-select"
+                    value={editPeriodSlot}
+                    onChange={(e) => setEditPeriodSlot(e.target.value)}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="Period 1 (09:00 AM - 10:00 AM)">Period 1 (09:00 AM - 10:00 AM)</option>
+                    <option value="Period 2 (10:15 AM - 11:15 AM)">Period 2 (10:15 AM - 11:15 AM)</option>
+                    <option value="Period 3 (11:30 AM - 12:30 PM)">Period 3 (11:30 AM - 12:30 PM)</option>
+                    <option value="Period 4 (02:00 PM - 03:00 PM)">Period 4 (02:00 PM - 03:00 PM)</option>
+                    <option value="Period 5 (03:15 PM - 04:15 PM)">Period 5 (03:15 PM - 04:15 PM)</option>
+                    <option value="Custom">Custom Time Slot</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Custom Time inputs if custom selected */}
+              {editPeriodSlot === 'Custom' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
+                      Start Time
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="e.g. 09:30 AM"
+                      value={editCustomStart}
+                      onChange={(e) => setEditCustomStart(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
+                      End Time
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="e.g. 10:30 AM"
+                      value={editCustomEnd}
+                      onChange={(e) => setEditCustomEnd(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowEditScheduleModal(false)}
+                  style={{ padding: '8px 16px', fontSize: '0.82rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="btn btn-primary"
+                  style={{
+                    padding: '8px 18px',
+                    fontSize: '0.82rem',
+                    background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
+                    border: 'none',
+                    fontWeight: '700'
+                  }}
+                >
+                  {isUpdating ? 'Saving Schedule...' : 'Save & Update Period'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PASS SESSION (HOLIDAY / NOT CONDUCTED) MODAL */}
+      {showPassModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '520px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            border: '1px solid #e2e8f0',
+            overflow: 'hidden'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '16px 20px',
+              background: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)',
+              color: '#ffffff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <SkipForward size={20} />
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800' }}>
+                  Pass Mentoring Session (Holiday / Not Conducted)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPassModal(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleConfirmPassSession} style={{ padding: '20px' }}>
+              <div style={{
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}>
+                <Info size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ fontSize: '0.8rem', color: '#92400e', lineHeight: 1.45 }}>
+                  Passing this session marks it as officially not conducted for <strong>{sessionDate}</strong>. The automated next-morning 9:00 AM compliance notice will be waived for this date.
+                </div>
+              </div>
+
+              {/* Scheduled Date (Display Only) */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                  Session Date to Pass
+                </label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={`${sessionDate} (${mentoringSchedule.periodSlot || mentoringSchedule.time})`}
+                  disabled
+                  style={{ fontSize: '0.85rem', background: '#f8fafc', color: '#64748b' }}
+                />
+              </div>
+
+              {/* Pass Reason Selector */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                  Reason for Passing Session <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <select
+                  className="form-select"
+                  value={passReason}
+                  onChange={(e) => setPassReason(e.target.value)}
+                  style={{ fontSize: '0.85rem' }}
+                  required
+                >
+                  <option value="Public / Government Holiday">Public / Government Holiday</option>
+                  <option value="University / Internal Examination Day">University / Internal Examination Day</option>
+                  <option value="College Fest / Institutional Event">College Fest / Institutional Event</option>
+                  <option value="Faculty On-Duty Leave">Faculty On-Duty Leave</option>
+                  <option value="Academic Timetable Adjustment">Academic Timetable Adjustment</option>
+                  <option value="Other Institutional Reason">Other Institutional Reason</option>
+                </select>
+              </div>
+
+              {/* Optional Remarks */}
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                  Remarks / Justification (Optional)
+                </label>
+                <textarea
+                  className="form-control"
+                  rows="3"
+                  placeholder="e.g. Gandhi Jayanti public holiday observed; classes suspended."
+                  value={passRemarks}
+                  onChange={(e) => setPassRemarks(e.target.value)}
+                  style={{ fontSize: '0.85rem' }}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowPassModal(false)}
+                  style={{ padding: '8px 16px', fontSize: '0.82rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{
+                    padding: '8px 18px',
+                    fontSize: '0.82rem',
+                    background: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)',
+                    border: 'none',
+                    fontWeight: '700'
+                  }}
+                >
+                  Confirm Pass / Waive Session
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -3,11 +3,12 @@ import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/
 import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, PhoneOff, Volume2, VolumeX, MessageSquare } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
+import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, updateMeetingStatus, saveMeetingRecording } = useContext(DatabaseContext);
-  
+  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, saveMeetingRecording } = useContext(DatabaseContext);
+
   // Submission Self-Help Video Modal State
   const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
 
@@ -63,13 +64,53 @@ export const StudentDashboard = ({ studentId }) => {
   });
   const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
   const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
-  const selectedIssue = (db.issues || []).find(i => i.id === activeSelectedIssueId);
+  const selectedIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === activeSelectedIssueId?.toUpperCase());
 
   // Student Video Modal State
   const [showStudentVideoModal, setShowStudentVideoModal] = useState(false);
+  const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
+
+  // Pop-up states for meeting ended by RO
+  const [meetingEndedPopup, setMeetingEndedPopup] = useState(null);
+
+  // Any active or scheduled online meeting strictly belonging to this student's raised issues
+  const activeStudentOnlineMeeting = (() => {
+    const myIssueIds = new Set((myIssues || []).map(i => (i.id || i.issue_id || '').toUpperCase()));
+    if (myIssueIds.size === 0) return null;
+
+    // Filter meetings strictly belonging to this student's tickets
+    const myStudentMeetings = (db.meetings || []).filter(m => {
+      const isCompleted = m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded';
+      if (isCompleted) return false;
+
+      const mIssueId = (m.issueId || m.issue_id || '').toUpperCase();
+      if (!myIssueIds.has(mIssueId)) return false;
+
+      const modeLower = (m.mode || '').toLowerCase();
+      const locLower = (m.location || '').toLowerCase();
+      const isOnline = !m.mode ||
+        modeLower.includes('online') ||
+        modeLower.includes('video') ||
+        locLower.includes('meet') ||
+        locLower.includes('zoom') ||
+        locLower.includes('http');
+
+      return isOnline;
+    });
+
+    // 1. Highest priority: if an online meeting for this student's ticket is Live ('Started' or 'In-Progress')
+    const liveMeet = myStudentMeetings.find(m => m.status === 'Started' || m.status === 'In-Progress');
+    if (liveMeet) return liveMeet;
+
+    // 2. Next: any scheduled online meeting for this student's tickets
+    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
+
+    return null;
+  })();
   const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
   const [isStudentCamOff, setIsStudentCamOff] = useState(false);
   const [studentMediaPermissionState, setStudentMediaPermissionState] = useState('idle'); // 'idle' | 'requesting' | 'granted' | 'denied'
+  const isMediaRequestingRef = useRef(false);
   const [studentMediaPermissionError, setStudentMediaPermissionError] = useState('');
   const [playingRecording, setPlayingRecording] = useState(null);
 
@@ -77,20 +118,24 @@ export const StudentDashboard = ({ studentId }) => {
   const [roRemoteStream, setRoRemoteStream] = useState(null);
   const [studentStream, setStudentStream] = useState(null);
   const [peerConnected, setPeerConnected] = useState(false);
+  const [isRoCameraOff, setIsRoCameraOff] = useState(false);
+  const [isRoMicMuted, setIsRoMicMuted] = useState(false);
 
   const studentStreamRef = useRef(null);
   const webrtcSessionRef = useRef(null);
   const studentCompositeRecorderRef = useRef(null);
 
-  const requestStudentMedia = async () => {
+  const requestStudentMedia = async (targetIssueIdParam = null) => {
+    if (isMediaRequestingRef.current) return;
+    isMediaRequestingRef.current = true;
     setStudentMediaPermissionState('requesting');
     setStudentMediaPermissionError('');
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Your browser does not support camera/microphone access (WebRTC).');
-      }
-      let stream;
+      let stream = null;
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Your browser does not support camera/microphone access (WebRTC).');
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
@@ -105,31 +150,57 @@ export const StudentDashboard = ({ studentId }) => {
           }
         });
       } catch (audioErr) {
-        console.warn('Advanced audio constraints fallback, requesting standard media:', audioErr);
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: true
+        try {
+          console.warn('[Student] Advanced audio constraints fallback, requesting standard media:', audioErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: true
+          });
+        } catch (camErr) {
+          console.warn('[Student] Hardware webcam unavailable or locked by another tab, falling back to simulated stream:', camErr);
+          stream = createFallbackMediaStream({
+            label: student?.name || 'Student',
+            role: 'Student'
+          });
+          setStudentMediaPermissionError('Hardware camera unavailable or in use by another tab. Using active simulated video feed.');
+        }
+      }
+
+      if (!stream) {
+        stream = createFallbackMediaStream({
+          label: student?.name || 'Student',
+          role: 'Student'
         });
       }
+
       studentStreamRef.current = stream;
       setStudentStream(stream);
       setStudentMediaPermissionState('granted');
 
+      const targetIssueId = String(
+        targetIssueIdParam ||
+        activeMeetingIssueId ||
+        activeStudentOnlineMeeting?.issueId ||
+        activeStudentOnlineMeeting?.issue_id ||
+        (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) ||
+        'TICK-1002'
+      ).trim().toUpperCase();
+
       // Initialize CompositeMeetingRecorder on student side for dual-participant recording
       try {
         if (studentCompositeRecorderRef.current) {
-          try { studentCompositeRecorderRef.current.stop(); } catch (e) {}
+          try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
         }
         studentCompositeRecorderRef.current = new CompositeMeetingRecorder({
           localStream: stream,
           localLabel: student?.name || 'Student',
           remoteLabel: 'Relationship Officer',
-          ticketId: selectedIssue ? selectedIssue.id : 'TICKET',
+          ticketId: targetIssueId || 'TICKET',
           localRole: 'Student',
           remoteRole: 'RO',
-          width: 1280,
-          height: 720,
-          fps: 25
+          width: 960,
+          height: 540,
+          fps: 20
         });
         studentCompositeRecorderRef.current.start();
       } catch (compErr) {
@@ -137,15 +208,15 @@ export const StudentDashboard = ({ studentId }) => {
       }
 
       // Initialize WebRTC Meeting Session for live peer video with RO
-      if (selectedIssue) {
+      if (targetIssueId) {
         if (webrtcSessionRef.current && !webrtcSessionRef.current.isClosed) {
           webrtcSessionRef.current.updateLocalStream(stream);
         } else {
           if (webrtcSessionRef.current) {
-            try { webrtcSessionRef.current.close(); } catch (e) {}
+            try { webrtcSessionRef.current.close(); } catch (e) { }
           }
           webrtcSessionRef.current = new WebRtcMeetingSession({
-            issueId: selectedIssue.id,
+            issueId: targetIssueId,
             role: 'student',
             localStream: stream,
             onRemoteStream: (remStream) => {
@@ -164,25 +235,55 @@ export const StudentDashboard = ({ studentId }) => {
                 }
               }
             },
+            onRemoteMediaState: (state) => {
+              if (typeof state.video === 'boolean') {
+                setIsRoCameraOff(!state.video);
+              }
+              if (typeof state.audio === 'boolean') {
+                setIsRoMicMuted(!state.audio);
+              }
+            },
             onMeetingEnded: () => {
               console.log('[Student] Meeting ended signal received from RO.');
               handleCloseStudentVideo();
-              alert('📢 Meeting Ended by Relationship Officer:\n\nThe RO has concluded this online session. Your session video recording has been saved to your ticket records.');
+              setMeetingEndedPopup({
+                show: true,
+                issueId: targetIssueId,
+                roName: selectedIssue?.roName || activeFormRO?.name || 'Relationship Officer',
+                endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              });
             }
           });
         }
       }
     } catch (err) {
-      console.warn('Student camera/mic permission error:', err);
-      setStudentMediaPermissionState('denied');
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setStudentMediaPermissionError('Camera & Microphone permission was blocked by your browser. Please click the lock or camera icon in your address bar and allow Camera and Microphone, then click "Retry Permissions".');
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setStudentMediaPermissionError('No webcam or microphone hardware detected on this device. Running in simulated fallback mode.');
-      } else {
-        setStudentMediaPermissionError(err.message || 'Unable to access camera or microphone.');
-      }
+      console.warn('Student camera/mic permission error fallback:', err);
+      const fallbackStream = createFallbackMediaStream({
+        label: student?.name || 'Student',
+        role: 'Student'
+      });
+      studentStreamRef.current = fallbackStream;
+      setStudentStream(fallbackStream);
+      setStudentMediaPermissionState('granted');
+    } finally {
+      isMediaRequestingRef.current = false;
     }
+  };
+
+  const handleStudentJoinMeeting = (targetIssueId) => {
+    const cleanId = String(
+      targetIssueId ||
+      activeMeetingIssueId ||
+      activeStudentOnlineMeeting?.issueId ||
+      activeStudentOnlineMeeting?.issue_id ||
+      selectedIssueId ||
+      activeSelectedIssueId ||
+      'TICK-1002'
+    ).trim().toUpperCase();
+    setMeetingEndedPopup(null);
+    setSelectedIssueId(cleanId);
+    setActiveMeetingIssueId(cleanId);
+    setShowStudentVideoModal(true);
   };
 
   const toggleStudentMic = () => {
@@ -192,6 +293,9 @@ export const StudentDashboard = ({ studentId }) => {
       studentStreamRef.current.getAudioTracks().forEach(track => {
         track.enabled = !nextMuted;
       });
+    }
+    if (webrtcSessionRef.current) {
+      webrtcSessionRef.current.setAudioEnabled(!nextMuted);
     }
     if (studentCompositeRecorderRef.current) {
       studentCompositeRecorderRef.current.setLocalMicMuted(nextMuted);
@@ -206,17 +310,21 @@ export const StudentDashboard = ({ studentId }) => {
         track.enabled = !nextCamOff;
       });
     }
+    if (webrtcSessionRef.current) {
+      webrtcSessionRef.current.setVideoEnabled(!nextCamOff);
+    }
     if (studentCompositeRecorderRef.current) {
       studentCompositeRecorderRef.current.setLocalCamOff(nextCamOff);
     }
   };
 
   const handleCloseStudentVideo = async () => {
+    isMediaRequestingRef.current = false;
     // If student has active recorder, finalize composite recording
     if (studentCompositeRecorderRef.current) {
       try {
         const { videoUrl, durationSeconds } = await studentCompositeRecorderRef.current.stop();
-        const currentMeet = selectedIssue ? (db.meetings || []).find(m => 
+        const currentMeet = selectedIssue ? (db.meetings || []).find(m =>
           (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
         ) : null;
         if (currentMeet && currentMeet.status !== 'Completed' && videoUrl) {
@@ -235,9 +343,10 @@ export const StudentDashboard = ({ studentId }) => {
     }
 
     setShowStudentVideoModal(false);
+    setActiveMeetingIssueId(null);
     setStudentMediaPermissionState('idle');
     if (webrtcSessionRef.current) {
-      try { webrtcSessionRef.current.close(); } catch (e) {}
+      try { webrtcSessionRef.current.close(); } catch (e) { }
       webrtcSessionRef.current = null;
     }
     setRoRemoteStream(null);
@@ -251,28 +360,82 @@ export const StudentDashboard = ({ studentId }) => {
 
   // Auto-exit online meeting when RO ends or marks meeting completed in DB
   useEffect(() => {
-    if (showStudentVideoModal && selectedIssue) {
-      const currentMeet = (db.meetings || []).find(m => 
-        (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
+    if (showStudentVideoModal) {
+      const activeTargetId = String(activeMeetingIssueId || activeStudentOnlineMeeting?.issueId || selectedIssue?.id || '').trim().toUpperCase();
+      if (!activeTargetId) return;
+
+      const currentMeet = (db.meetings || []).find(m =>
+        (m.issueId || m.issue_id)?.toUpperCase() === activeTargetId ||
+        (m.id && String(m.id).toUpperCase() === activeTargetId)
       );
-      if (currentMeet && (currentMeet.status === 'Completed' || currentMeet.status === 'Finished' || currentMeet.status === 'Cancelled')) {
+
+      // ONLY auto-exit if the meeting was explicitly marked endedByRo === true AND is not currently Started / In-Progress
+      if (currentMeet && currentMeet.endedByRo === true && currentMeet.status !== 'Started' && currentMeet.status !== 'In-Progress') {
         handleCloseStudentVideo();
-        alert('📢 Meeting Ended by Relationship Officer:\n\nThe RO has concluded this online session. Your session video recording has been saved to your ticket records.');
+        setMeetingEndedPopup({
+          show: true,
+          issueId: activeTargetId,
+          roName: currentMeet.roName || selectedIssue?.roName || activeFormRO?.name || 'Relationship Officer',
+          endedAt: currentMeet.endedAt ? new Date(currentMeet.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
       }
     }
-  }, [db.meetings, showStudentVideoModal, selectedIssue]);
+  }, [db.meetings, showStudentVideoModal, activeMeetingIssueId, activeStudentOnlineMeeting, selectedIssue, activeFormRO]);
+
+  // Real-time broadcast listener for instant meeting status changes from RO tab
+  useEffect(() => {
+    let bc;
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        bc = new BroadcastChannel('nitte_meeting_sync');
+        bc.onmessage = (event) => {
+          if (event.data && event.data.type === 'meeting_status') {
+            if (event.data.status === 'Completed' || event.data.status === 'Finished') {
+              const endedId = event.data.meetId;
+              if (showStudentVideoModal) {
+                handleCloseStudentVideo();
+                setMeetingEndedPopup({
+                  show: true,
+                  issueId: endedId,
+                  roName: activeFormRO?.name || 'Relationship Officer',
+                  endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                });
+              }
+            } else if (event.data.status === 'Started') {
+              setMeetingEndedPopup(null);
+              if (event.data.meetId) {
+                setActiveMeetingIssueId(String(event.data.meetId).trim().toUpperCase());
+              }
+            }
+          }
+        };
+      }
+    } catch (e) { }
+    return () => {
+      if (bc) try { bc.close(); } catch (e) { }
+    };
+  }, [myIssues, showStudentVideoModal, activeFormRO]);
 
   useEffect(() => {
     if (showStudentVideoModal) {
-      requestStudentMedia();
+      const targetId = String(
+        activeMeetingIssueId ||
+        activeStudentOnlineMeeting?.issueId ||
+        activeStudentOnlineMeeting?.issue_id ||
+        selectedIssueId ||
+        activeSelectedIssueId ||
+        'TICK-1002'
+      ).trim().toUpperCase();
+      requestStudentMedia(targetId);
     } else {
+      isMediaRequestingRef.current = false;
       setStudentMediaPermissionState('idle');
       if (studentCompositeRecorderRef.current) {
-        try { studentCompositeRecorderRef.current.stop(); } catch (e) {}
+        try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
         studentCompositeRecorderRef.current = null;
       }
       if (webrtcSessionRef.current) {
-        try { webrtcSessionRef.current.close(); } catch (e) {}
+        try { webrtcSessionRef.current.close(); } catch (e) { }
         webrtcSessionRef.current = null;
       }
       setRoRemoteStream(null);
@@ -283,80 +446,145 @@ export const StudentDashboard = ({ studentId }) => {
         studentStreamRef.current = null;
       }
     }
-    return () => {
-      if (studentCompositeRecorderRef.current) {
-        try { studentCompositeRecorderRef.current.stop(); } catch (e) {}
-        studentCompositeRecorderRef.current = null;
-      }
-      if (webrtcSessionRef.current) {
-        try { webrtcSessionRef.current.close(); } catch (e) {}
-        webrtcSessionRef.current = null;
-      }
-      setRoRemoteStream(null);
-      setStudentStream(null);
-      setPeerConnected(false);
-      if (studentStreamRef.current) {
-        studentStreamRef.current.getTracks().forEach(t => t.stop());
-        studentStreamRef.current = null;
-      }
-    };
   }, [showStudentVideoModal]);
 
   // Resources and sessions from their mentor
   const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
   const mySessions = db.groupSessions.filter(s => s.mentorId === student.mentorId);
 
-  // 7-Day Weekly Issue Limit Calculation (Allows up to 2 Issues per 7 days)
+  // 7-Day Limit + Feedback & Rating Unlock Rule:
+  // 1. Students can only have 2 issues open / occupied at a time.
+  // 2. Each issue has a 7-day cooldown from creation.
+  // 3. When an issue is resolved, student MUST submit feedback & rating to unlock the slot.
+  //    Until feedback & rating is submitted, the issue/slot stays locked!
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  const recentIssues7Days = myIssues
-    .filter(i => {
-      const rawDate = i.createdAt || i.created_at;
-      if (!rawDate) return false;
-      const t = new Date(rawDate).getTime();
-      return !isNaN(t) && (Date.now() - t) < SEVEN_DAYS_MS;
-    })
+
+  const getIssueLockDetails = (issue) => {
+    if (!issue) return { isLocked: false };
+
+    const isResolvedOrClosed = issue.status === 'Resolved' || issue.status === 'Closed';
+    const hasFeedback = Boolean(issue.feedback && (issue.feedback.rating || issue.feedbackRating));
+
+    const rawDate = issue.createdAt || issue.created_at;
+    const t = rawDate ? new Date(rawDate).getTime() : 0;
+    const openDate = t > 0 ? new Date(t + SEVEN_DAYS_MS) : null;
+    const msLeft = t > 0 ? Math.max(0, (t + SEVEN_DAYS_MS) - Date.now()) : 0;
+
+    let cooldownDays = 0, cooldownHours = 0, cooldownMinutes = 0, unlockTimeStr = '';
+    let openAtStr = '';
+    if (openDate && !isNaN(openDate.getTime())) {
+      openAtStr = openDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) + ' at ' + openDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    }
+    if (msLeft > 0) {
+      cooldownDays = Math.floor(msLeft / (1000 * 60 * 60 * 24));
+      cooldownHours = Math.floor((msLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      cooldownMinutes = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+      unlockTimeStr = cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`;
+    }
+
+    // Condition A: If ticket is still Open / In-Progress / Escalated -> Locks slot
+    if (!isResolvedOrClosed) {
+      return {
+        isLocked: true,
+        reason: 'open',
+        badge: '🔴 Active Open Issue',
+        badgeColor: '#ef4444',
+        badgeBg: '#fef2f2',
+        title: `Ticket #${issue.id}`,
+        category: issue.category,
+        msg: `Currently active with ${issue.roName || 'Relationship Officer'}. Maximum 2 open issues allowed.`,
+        msLeft,
+        unlockTimeStr,
+        openAtStr,
+        needsFeedback: false
+      };
+    }
+
+    // Condition B: If ticket is Resolved/Closed BUT student has NOT submitted feedback & rating -> Stays locked!
+    if (!hasFeedback) {
+      return {
+        isLocked: true,
+        reason: 'pending_feedback',
+        badge: '⭐ Feedback & Rating Required',
+        badgeColor: '#d97706',
+        badgeBg: '#fffbeb',
+        title: `Ticket #${issue.id}`,
+        category: issue.category,
+        msg: `Ticket is resolved by RO! You must submit your rating & feedback to unlock this slot.`,
+        msLeft,
+        unlockTimeStr,
+        openAtStr,
+        needsFeedback: true
+      };
+    }
+
+    // Condition C: If feedback was submitted, but 7-day cooldown is still active -> Locks slot until 7 days elapse
+    if (msLeft > 0) {
+      return {
+        isLocked: true,
+        reason: 'cooldown',
+        badge: '⏳ 7-Day Limit Active',
+        badgeColor: '#f59e0b',
+        badgeBg: '#fef3c7',
+        title: `Ticket #${issue.id}`,
+        category: issue.category,
+        msg: `Feedback submitted (${issue.feedback?.rating || issue.feedbackRating}★). 7-Day cooldown in progress.`,
+        msLeft,
+        unlockTimeStr,
+        openAtStr,
+        needsFeedback: false
+      };
+    }
+
+    // Condition D: Resolved + Feedback submitted + 7 days completed -> Unlocked!
+    return {
+      isLocked: false,
+      reason: 'unlocked',
+      openAtStr,
+      needsFeedback: false
+    };
+  };
+
+  // Find all issues locking a slot
+  const lockingIssueItems = myIssues
+    .map(issue => ({ issue, lock: getIssueLockDetails(issue) }))
+    .filter(item => item.lock.isLocked)
     .sort((a, b) => {
-      const tA = new Date(a.createdAt || a.created_at).getTime();
-      const tB = new Date(b.createdAt || b.created_at).getTime();
-      return tA - tB; // oldest submitted first
+      // 1. Pending feedback first (actionable by student right now)
+      if (a.lock.reason === 'pending_feedback' && b.lock.reason !== 'pending_feedback') return -1;
+      if (b.lock.reason === 'pending_feedback' && a.lock.reason !== 'pending_feedback') return 1;
+      // 2. Open issues next
+      if (a.lock.reason === 'open' && b.lock.reason !== 'open') return -1;
+      if (b.lock.reason === 'open' && a.lock.reason !== 'open') return 1;
+      // 3. Shortest cooldown remaining
+      return (a.lock.msLeft || 0) - (b.lock.msLeft || 0);
     });
 
-  // Slot 1 & Slot 2 independent tracking
-  const slot1Issue = recentIssues7Days[0] || null;
-  const slot2Issue = recentIssues7Days[1] || null;
-
-  const usedCount = recentIssues7Days.length;
+  const slot1Item = lockingIssueItems[0] || null;
+  const slot2Item = lockingIssueItems[1] || null;
+  const slot1Issue = slot1Item?.issue || null;
+  const slot2Issue = slot2Item?.issue || null;
+  const usedCount = lockingIssueItems.length;
   const maxWeeklyLimit = 2;
   const availableCount = Math.max(0, maxWeeklyLimit - usedCount);
   const isLimitReached = usedCount >= maxWeeklyLimit;
-  
-  // Active lock state is true ONLY IF 2 issues used AND demo limit bypass is OFF
   const isFormLocked = isLimitReached && !isDemoLimitBypassed;
 
-  // Calculate Slot 1 Cooldown
-  let slot1UnlockTimeStr = '';
-  let cooldownDays = 0;
-  let cooldownHours = 0;
-  let cooldownMinutes = 0;
+  // Has any resolved ticket pending feedback
+  const pendingFeedbackIssues = myIssues.filter(i => {
+    const isResolvedOrClosed = i.status === 'Resolved' || i.status === 'Closed';
+    const hasFeedback = Boolean(i.feedback && (i.feedback.rating || i.feedbackRating));
+    return isResolvedOrClosed && !hasFeedback;
+  });
 
-  if (slot1Issue) {
-    const t1 = new Date(slot1Issue.createdAt || slot1Issue.created_at).getTime();
-    const msLeft1 = Math.max(0, (t1 + SEVEN_DAYS_MS) - Date.now());
-    cooldownDays = Math.floor(msLeft1 / (1000 * 60 * 60 * 24));
-    cooldownHours = Math.floor((msLeft1 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    cooldownMinutes = Math.floor((msLeft1 % (1000 * 60 * 60)) / (1000 * 60));
-    slot1UnlockTimeStr = cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`;
-  }
-
-  // Calculate Slot 2 Cooldown
-  let slot2UnlockTimeStr = '';
-  if (slot2Issue) {
-    const t2 = new Date(slot2Issue.createdAt || slot2Issue.created_at).getTime();
-    const msLeft2 = Math.max(0, (t2 + SEVEN_DAYS_MS) - Date.now());
-    const days2 = Math.floor(msLeft2 / (1000 * 60 * 60 * 24));
-    const hrs2 = Math.floor((msLeft2 % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const mins2 = Math.floor((msLeft2 % (1000 * 60 * 60)) / (1000 * 60));
-    slot2UnlockTimeStr = days2 > 0 ? `${days2}d ${hrs2}h` : `${hrs2}h ${mins2}m`;
+  let formButtonLockText = 'Limit Reached (2 / 2 Slots Occupied)';
+  if (pendingFeedbackIssues.length > 0) {
+    formButtonLockText = 'Feedback not submitted (Click to complete)';
+  } else if (slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr) {
+    const nextOpen = slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr;
+    formButtonLockText = `7-Day Limit Active (Opens: ${nextOpen})`;
+  } else if (lockingIssueItems.some(i => i.lock.reason === 'open')) {
+    formButtonLockText = '2 Open Issues Active';
   }
 
   const [errorMessage, setErrorMessage] = useState('');
@@ -380,7 +608,7 @@ export const StudentDashboard = ({ studentId }) => {
           list = Array.from(parsedMap.values());
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // Priority 1: Exact match on full category name (e.g. 'Academic - Course Enrollment issues')
     let match = list.find(v => v.category?.toLowerCase()?.trim() === cleanCat.toLowerCase());
@@ -441,15 +669,24 @@ export const StudentDashboard = ({ studentId }) => {
     if (!description.trim()) return;
     setErrorMessage('');
 
+    // Rule: Feedback must be submitted before registering any new issue
+    if (pendingFeedbackIssues.length > 0) {
+      setSelectedIssueId(pendingFeedbackIssues[0].id);
+      setActiveTab('my-issues');
+      setErrorMessage(`Action Required: Please submit your feedback and rating for resolved Ticket #${pendingFeedbackIssues[0].id} first. You can only register a new issue after feedback is submitted.`);
+      return;
+    }
+
     if (isFormLocked) {
-      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens in ${cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`}. (Turn on Demo Mode in header to bypass)`);
+      const nextTime = slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr || '7-day limit completion';
+      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens on ${nextTime}. (Turn on Demo Mode in header to bypass)`);
       return;
     }
 
     try {
       const submittedCategory = category;
       const newIssueId = await submitIssue(student.id, category, description, priority);
-      
+
       setDescription('');
       setCategory(ALL_CATEGORIES[0]);
       setPriority('Medium');
@@ -472,6 +709,8 @@ export const StudentDashboard = ({ studentId }) => {
     if (!targetId) return;
     submitFeedback(targetId, rating, feedbackComments);
     setFeedbackComments('');
+    setSuccessMessage('Thank you! Your rating & feedback has been submitted. You can now register a new support issue!');
+    setTimeout(() => setSuccessMessage(''), 6000);
   };
 
   const handleReopenSubmit = (e) => {
@@ -502,7 +741,7 @@ export const StudentDashboard = ({ studentId }) => {
   };
 
   // Get feedbacks submitted by this student
-  const myMentorFeedbacks = (db.mentorFeedbacks || []).filter(f => 
+  const myMentorFeedbacks = (db.mentorFeedbacks || []).filter(f =>
     (f.studentId || '').toLowerCase() === student.id.toLowerCase()
   );
 
@@ -523,7 +762,7 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         </div>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'raise-issue' ? 'active Student' : ''}`}
           onClick={() => setActiveTab('raise-issue')}
         >
@@ -531,7 +770,7 @@ export const StudentDashboard = ({ studentId }) => {
           <span>Report a Support Issue</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'my-issues' ? 'active Student' : ''}`}
           onClick={() => setActiveTab('my-issues')}
         >
@@ -539,7 +778,7 @@ export const StudentDashboard = ({ studentId }) => {
           <span>Track My Issues ({myIssues.length})</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'mentor-hub' ? 'active Student' : ''}`}
           onClick={() => setActiveTab('mentor-hub')}
         >
@@ -547,7 +786,7 @@ export const StudentDashboard = ({ studentId }) => {
           <span>Mentorship Hub</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'mentor-feedback' ? 'active Student' : ''}`}
           onClick={() => setActiveTab('mentor-feedback')}
         >
@@ -568,13 +807,108 @@ export const StudentDashboard = ({ studentId }) => {
 
       {/* Main Content Pane */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        
-        {/* ERROR / RATE LIMIT MESSAGE */}
-        {errorMessage && (
-          <div className="glass-card" style={{ borderLeft: '4px solid #ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#dc2626' }}>
-              <AlertCircle size={20} />
-              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{errorMessage}</span>
+
+
+
+        {/* ACTIVE ONLINE MEETING CALL-TO-ACTION BANNER */}
+        {activeStudentOnlineMeeting && (
+          <div className="glass-card" style={{
+            borderLeft: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '4px solid #10b981' : '4px solid #64748b',
+            background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'rgba(16, 185, 129, 0.12)' : 'rgba(100, 116, 139, 0.08)',
+            padding: '16px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '14px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+            borderRadius: '12px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '50%',
+                background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#10b981' : '#64748b',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '0 0 16px rgba(16,185,129,0.5)' : 'none'
+              }}>
+                <Video size={22} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 800, color: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#059669' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? (
+                    <>Live RO Video Meeting In-Progress</>
+                  ) : (
+                    <>Online Video Meeting Scheduled</>
+                  )}
+                  <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '12px', background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#10b981' : '#64748b', color: '#fff', fontWeight: 700 }}>
+                    {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'LIVE NOW' : 'WAITING FOR RO'}
+                  </span>
+                </h4>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  Ticket: <strong>{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id}</strong> &nbsp;|&nbsp;
+                  Date: <strong>{activeStudentOnlineMeeting.date}</strong> at <strong>{activeStudentOnlineMeeting.time}</strong>
+                  {(activeStudentOnlineMeeting.status !== 'Started' && activeStudentOnlineMeeting.status !== 'In-Progress') && (
+                    <span style={{ color: 'var(--text-secondary)', marginLeft: '6px' }}>• (Meeting portal unlocks automatically when RO starts session)</span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const meetId = activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id;
+                    handleStudentJoinMeeting(meetId);
+                  }}
+                  className="btn btn-primary"
+                  style={{
+                    fontSize: '0.86rem',
+                    padding: '9px 20px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: '#10b981',
+                    border: 'none',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 14px rgba(16,185,129,0.45)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <Video size={16} />
+                  Join Live Video Meeting Now
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  style={{
+                    fontSize: '0.84rem',
+                    padding: '8px 16px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'rgba(255,255,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    fontWeight: 600,
+                    cursor: 'not-allowed',
+                    borderRadius: '8px',
+                    opacity: 0.85
+                  }}
+                >
+                  <Clock size={15} />
+                  Waiting for RO to Start Meeting...
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -599,30 +933,7 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
-        {/* 7-DAY WEEKLY LIMIT BANNER */}
-        {!isDemoLimitBypassed && isLimitReached && (
-          <div className="glass-card" style={{ borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.12)', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ fontSize: '1.5rem' }}>⏳</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#b45309' }}>
-                    Weekly Limit Reached (2 / 2 Issues Used)
-                  </h4>
-                  <button
-                    onClick={toggleDemoLimitBypass}
-                    style={{ backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    ⚡ Enable Demo Mode (Bypass Limit)
-                  </button>
-                </div>
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#92400e' }}>
-                  You have used your 2 issue submissions for this 7-day period. Your next issue slot opens in <strong>{cooldownDays > 0 ? `${cooldownDays} days and ${cooldownHours} hours` : `${cooldownHours} hours and ${cooldownMinutes} minutes`}</strong>.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* SUCCESS MESSAGE */}
         {successMessage && (
@@ -653,65 +964,141 @@ export const StudentDashboard = ({ studentId }) => {
 
             {/* VISUAL 2-SLOT LIMIT TRACKER WIDGET */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-              
-              {/* SLOT #1 CARD */}
+
+              {/* SLOT #1 */}
               <div style={{
-                padding: '16px',
+                padding: '14px 16px',
                 borderRadius: '12px',
-                border: slot1Issue ? '1px solid #f59e0b' : '1px solid #10b981',
-                background: slot1Issue ? 'rgba(245, 158, 11, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                border: slot1Item ? '1px solid #fde68a' : '1px solid #a7f3d0',
+                background: slot1Item ? '#fffbeb' : '#f0fdf4',
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: 'space-between'
+                justifyContent: 'space-between',
+                minHeight: '85px'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot1Issue ? '#b45309' : '#047857' }}>
-                    1️⃣ Slot #1: {slot1Issue ? '🔴 USED' : '🟢 AVAILABLE'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot1Item ? '#92400e' : '#166534' }}>
+                    Slot 1
                   </h4>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: slot1Issue ? '#fef3c7' : '#d1fae5', color: slot1Issue ? '#b45309' : '#047857' }}>
-                    {slot1Issue ? 'Occupied' : 'Ready'}
+                  <span style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    background: slot1Item ? '#fef3c7' : '#dcfce7',
+                    color: slot1Item ? '#92400e' : '#15803d',
+                    border: '1px solid currentColor'
+                  }}>
+                    {slot1Item ? 'Occupied' : 'Available'}
                   </span>
                 </div>
-                {slot1Issue ? (
-                  <div style={{ fontSize: '0.8rem', color: '#92400e' }}>
-                    <div>Ticket: <strong>{slot1Issue.id}</strong> ({slot1Issue.category})</div>
-                    <div style={{ marginTop: '4px', fontWeight: 700 }}>⏳ Unlocks in: {slot1UnlockTimeStr} (7-Day Limit)</div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: '0.8rem', color: '#065f46' }}>
-                    Available for your 1st support request.
-                  </div>
-                )}
+
+                <div style={{ marginTop: '8px' }}>
+                  {slot1Item ? (
+                    <div>
+                      {slot1Item.lock.openAtStr && (
+                        <div style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
+                          Opens on: {slot1Item.lock.openAtStr}
+                        </div>
+                      )}
+                      {slot1Item.lock.needsFeedback && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedIssueId(slot1Item.issue.id);
+                            setActiveTab('my-issues');
+                          }}
+                          style={{
+                            marginTop: '8px',
+                            padding: '4px 10px',
+                            fontSize: '0.74rem',
+                            fontWeight: 700,
+                            background: '#d97706',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            display: 'inline-block'
+                          }}
+                        >
+                          Feedback not submitted
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 500 }}>
+                      Available for new issue
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* SLOT #2 CARD */}
+              {/* SLOT #2 */}
               <div style={{
-                padding: '16px',
+                padding: '14px 16px',
                 borderRadius: '12px',
-                border: slot2Issue ? '1px solid #f59e0b' : '1px solid #10b981',
-                background: slot2Issue ? 'rgba(245, 158, 11, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                border: slot2Item ? '1px solid #fde68a' : '1px solid #a7f3d0',
+                background: slot2Item ? '#fffbeb' : '#f0fdf4',
                 display: 'flex',
                 flexDirection: 'column',
-                justify: 'space-between'
+                justifyContent: 'space-between',
+                minHeight: '85px'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot2Issue ? '#b45309' : '#047857' }}>
-                    2️⃣ Slot #2: {slot2Issue ? '🔴 USED' : '🟢 AVAILABLE'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot2Item ? '#92400e' : '#166534' }}>
+                    Slot 2
                   </h4>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: slot2Issue ? '#fef3c7' : '#d1fae5', color: slot2Issue ? '#b45309' : '#047857' }}>
-                    {slot2Issue ? 'Occupied' : 'Ready'}
+                  <span style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    background: slot2Item ? '#fef3c7' : '#dcfce7',
+                    color: slot2Item ? '#92400e' : '#15803d',
+                    border: '1px solid currentColor'
+                  }}>
+                    {slot2Item ? 'Occupied' : 'Available'}
                   </span>
                 </div>
-                {slot2Issue ? (
-                  <div style={{ fontSize: '0.8rem', color: '#92400e' }}>
-                    <div>Ticket: <strong>{slot2Issue.id}</strong> ({slot2Issue.category})</div>
-                    <div style={{ marginTop: '4px', fontWeight: 700 }}>⏳ Unlocks in: {slot2UnlockTimeStr} (7-Day Limit)</div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: '0.8rem', color: '#065f46' }}>
-                    Available for your 2nd support request.
-                  </div>
-                )}
+
+                <div style={{ marginTop: '8px' }}>
+                  {slot2Item ? (
+                    <div>
+                      {slot2Item.lock.openAtStr && (
+                        <div style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
+                          Opens on: {slot2Item.lock.openAtStr}
+                        </div>
+                      )}
+                      {slot2Item.lock.needsFeedback && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedIssueId(slot2Item.issue.id);
+                            setActiveTab('my-issues');
+                          }}
+                          style={{
+                            marginTop: '8px',
+                            padding: '4px 10px',
+                            fontSize: '0.74rem',
+                            fontWeight: 700,
+                            background: '#d97706',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            display: 'inline-block'
+                          }}
+                        >
+                          Feedback not submitted
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 500 }}>
+                      Available for new issue
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -720,7 +1107,7 @@ export const StudentDashboard = ({ studentId }) => {
               <fieldset disabled={isFormLocked} style={{ border: 'none', padding: 0, margin: 0 }}>
                 <div className="form-group">
                   <label className="form-label">Issue Category (from 50 support domains)</label>
-                  <select 
+                  <select
                     className="form-select"
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
@@ -734,7 +1121,7 @@ export const StudentDashboard = ({ studentId }) => {
                 <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
                   <div className="form-group">
                     <label className="form-label">Priority Level</label>
-                    <select 
+                    <select
                       className="form-select"
                       value={priority}
                       onChange={(e) => setPriority(e.target.value)}
@@ -744,22 +1131,22 @@ export const StudentDashboard = ({ studentId }) => {
                       <option value="High">🔴 High (Urgent food, health, exam issues)</option>
                     </select>
                   </div>
-                  
+
                   <div className="form-group">
                     <label className="form-label">Assigned Relationship Officer (RO)</label>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      readOnly 
-                      disabled 
-                      value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'} 
+                    <input
+                      type="text"
+                      className="form-control"
+                      readOnly
+                      disabled
+                      value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'}
                     />
                   </div>
                 </div>
 
                 <div className="form-group">
                   <label className="form-label">Describe your issue in detail</label>
-                  <textarea 
+                  <textarea
                     className="form-textarea"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
@@ -768,19 +1155,28 @@ export const StudentDashboard = ({ studentId }) => {
                   />
                 </div>
 
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="btn btn-primary"
-                  disabled={isFormLocked}
+                  disabled={isFormLocked || pendingFeedbackIssues.length > 0}
+                  onClick={(e) => {
+                    if (pendingFeedbackIssues.length > 0) {
+                      e.preventDefault();
+                      setSelectedIssueId(pendingFeedbackIssues[0].id);
+                      setActiveTab('my-issues');
+                    }
+                  }}
                   style={{
                     width: '100%',
                     justifyContent: 'center',
-                    opacity: isFormLocked ? 0.6 : 1,
-                    cursor: isFormLocked ? 'not-allowed' : 'pointer'
+                    opacity: (isFormLocked || pendingFeedbackIssues.length > 0) ? 0.6 : 1,
+                    cursor: (isFormLocked || pendingFeedbackIssues.length > 0) ? 'not-allowed' : 'pointer'
                   }}
                 >
-                  {isFormLocked ? (
-                    <>🔒 Weekly Limit Reached (Unlocks in {cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`})</>
+                  {pendingFeedbackIssues.length > 0 ? (
+                    <>Feedback not submitted (Click to complete)</>
+                  ) : isFormLocked ? (
+                    <>{formButtonLockText}</>
                   ) : (
                     <><Send size={16} /> Submit Support Request ({availableCount} / 2 Available)</>
                   )}
@@ -793,11 +1189,11 @@ export const StudentDashboard = ({ studentId }) => {
         {/* TAB 2: MY ISSUES */}
         {activeTab === 'my-issues' && (
           <div style={{ display: 'grid', gridTemplateColumns: myIssues.length > 0 ? '1fr 1fr' : '1fr', gap: '20px' }}>
-            
+
             {/* List Section */}
             <div className="glass-card">
               <h2 className="section-title">Support History</h2>
-              
+
               {myIssues.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
                   <FileText size={48} style={{ marginBottom: '12px', opacity: 0.5 }} />
@@ -809,11 +1205,11 @@ export const StudentDashboard = ({ studentId }) => {
                   const isSelected = activeSelectedIssueId === issue.id;
 
                   return (
-                    <div 
+                    <div
                       key={issue.id}
                       onClick={() => setSelectedIssueId(issue.id)}
                       className={`glass-card issue-card ${issue.priority}`}
-                      style={{ 
+                      style={{
                         background: isSelected ? 'rgba(255,255,255,0.06)' : '',
                         borderColor: isSelected ? 'rgba(99,102,241,0.5)' : ''
                       }}
@@ -823,7 +1219,14 @@ export const StudentDashboard = ({ studentId }) => {
                           <strong style={{ fontSize: '0.95rem' }}>{issue.category}</strong>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Ticket: {issue.id}</div>
                         </div>
-                        <span className={badgeClass}>{issue.status}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                          <span className={badgeClass}>{issue.status}</span>
+                          {(issue.status === 'Resolved' || issue.status === 'Closed') && (!issue.feedback || !issue.feedback.rating) && (
+                            <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 6px', borderRadius: '8px', background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a' }}>
+                              ⭐ Rating Required
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {issue.description}
@@ -832,6 +1235,60 @@ export const StudentDashboard = ({ studentId }) => {
                         <span>Submitted: {new Date(issue.createdAt).toLocaleDateString()}</span>
                         <span>Priority: <strong>{issue.priority}</strong></span>
                       </div>
+
+                      {/* INLINE MEETING BUTTON FOR TICKET SLOT */}
+                      {(() => {
+                        if (issue.status === 'Resolved' || issue.status === 'Closed') return null;
+                        const m = (db.meetings || []).find(meet => (meet.issueId || meet.issue_id)?.toUpperCase() === issue.id?.toUpperCase());
+                        if (!m && issue.status !== 'Meeting Scheduled' && issue.status !== 'Meeting Started') return null;
+
+                        const isCompleted = m && (m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded');
+                        if (isCompleted) return null;
+
+                        const modeLower = (m?.mode || '').toLowerCase();
+                        const isOffline = modeLower.includes('offline') || modeLower.includes('in-person');
+                        if (isOffline) return null;
+
+                        const isLive = (m && (m.status === 'Started' || m.status === 'In-Progress')) || issue.status === 'Meeting Started';
+                        const isScheduled = (m && !isCompleted) || issue.status === 'Meeting Scheduled' || issue.status === 'Meeting Started';
+                        if (!isScheduled && !isLive) return null;
+                        return (
+                          <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.73rem', color: isLive ? '#10b981' : 'var(--text-secondary)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Video size={13} /> {isLive ? 'Session Live Now' : 'Meeting Scheduled'}
+                            </span>
+                            {isLive ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStudentJoinMeeting(issue.id);
+                                }}
+                                className="btn btn-primary"
+                                style={{
+                                  fontSize: '0.74rem',
+                                  padding: '4px 10px',
+                                  background: '#10b981',
+                                  border: 'none',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  borderRadius: '6px',
+                                  boxShadow: '0 2px 8px rgba(16,185,129,0.4)'
+                                }}
+                              >
+                                <Video size={12} /> Join Live Now
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                Awaiting RO Launch
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })
@@ -894,80 +1351,132 @@ export const StudentDashboard = ({ studentId }) => {
                       <Calendar size={16} /> Meeting Scheduled by Relationship Officer
                     </h4>
 
-                    {(db.meetings || []).some(m => (m.issueId || m.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()) ? (
-                      <div>
-                        {(db.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(meet => (
-                          <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                              <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                                📅 {meet.date} at ⏰ {meet.time}
-                              </span>
-                              <span className="badge badge-scheduled">{meet.status || 'Scheduled'}</span>
-                            </div>
-                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                              <strong>Location / Venue:</strong> 📍 {meet.location || 'RO Office Desk (Admin Block)'}
+                    {(() => {
+                      const rawMatches = (db.meetings || []).filter(m =>
+                        (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
+                      );
+                      const matchingMeetings = rawMatches.length > 0 ? rawMatches : (
+                        (selectedIssue.status === 'Meeting Scheduled' || selectedIssue.status === 'Meeting Started') ? [{
+                          id: `MEET-${selectedIssue.id}`,
+                          issueId: selectedIssue.id,
+                          issue_id: selectedIssue.id,
+                          date: new Date().toISOString().split('T')[0],
+                          time: '11:00',
+                          mode: 'Online',
+                          location: 'Google Meet / Zoom Online Video Link',
+                          notes: 'Scheduled meeting session with Relationship Officer.',
+                          status: selectedIssue.status === 'Meeting Started' ? 'Started' : 'Confirmed'
+                        }] : []
+                      );
+                      if (matchingMeetings.length === 0) {
+                        return (
+                          <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
+                            <p>No meeting has been scheduled by your Relationship Officer yet.</p>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                              Your assigned RO will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
                             </p>
-                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                              <strong>Mode:</strong> {meet.mode || 'Offline (In-Person)'}
-                            </p>
-                            {meet.notes && (
-                              <p style={{ fontSize: '0.82rem', color: 'var(--nitte-blue)', marginTop: '8px', background: 'var(--nitte-blue-light)', border: '1px solid var(--nitte-blue-soft)', padding: '8px 12px', borderRadius: '6px' }}>
-                                📌 <strong>RO Instructions for Student:</strong> {meet.notes}
-                              </p>
-                            )}
-
-                            {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
-                            {meet.discussionSummary && (
-                              <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
-                                <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                                  <FileText size={15} /> 📋 Official Meeting Deliberations & Discussion Record:
-                                </div>
-                                <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{meet.discussionSummary}</p>
-                                {meet.actionItems && (
-                                  <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                                    <strong>Agreed Action Items:</strong> {meet.actionItems}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-
-                            {/* ONLINE MEETING AUTO-RECORDING NOTICE & STUDENT JOIN BUTTON */}
-                            {meet.mode === 'Online' && (
-                              <div style={{ marginTop: '10px', padding: '10px 12px', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
-                                <div style={{ fontWeight: '700', color: 'var(--nitte-blue)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Video size={15} /> 🎥 Online Video Call Session (Cloud Auto-Recording Active)
-                                </div>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.76rem', marginTop: '4px' }}>
-                                  Your Relationship Officer conducts this session via encrypted online video call. As per university compliance, this session is <strong>automatically recorded and archived</strong> to your ticket record for official reference.
-                                </p>
-                                {(meet.status === 'Started' || meet.status === 'Scheduled' || meet.status === 'Meeting Scheduled') && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (meet.status !== 'Started') {
-                                        updateMeetingStatus(meet.id || meet.issueId, 'Started');
-                                      }
-                                      setShowStudentVideoModal(true);
-                                    }}
-                                    className="btn btn-primary"
-                                    style={{ marginTop: '8px', fontSize: '0.78rem', padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#2563eb' }}
-                                  >
-                                    <Video size={13} /> {meet.status === 'Started' ? '🔴 Join Live Session (Dual Recording Active)' : '🔴 Start / Join Scheduled Meeting'}
-                                  </button>
-                                )}
-                              </div>
-                            )}
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
-                        <p>No meeting has been scheduled by your Relationship Officer yet.</p>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          Your assigned RO will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
-                        </p>
-                      </div>
-                    )}
+                        );
+                      }
+
+                      // Render latest meeting record for this issue
+                      const meet = matchingMeetings[matchingMeetings.length - 1];
+                      const modeLower = (meet.mode || '').toLowerCase();
+                      const locLower = (meet.location || '').toLowerCase();
+                      const isOnline = !meet.mode || modeLower.includes('online') || locLower.includes('meet') || locLower.includes('zoom') || locLower.includes('video');
+                      const isLive = meet.status === 'Started' || meet.status === 'In-Progress';
+                      const isCompleted = (meet.status === 'Completed' || meet.status === 'Finished' || meet.status === 'Cancelled') && !isLive;
+
+                      return (
+                        <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                              {meet.date} at {meet.time}
+                            </span>
+                            <span
+                              className={`badge ${isLive ? 'badge-in-progress' : (isCompleted ? 'badge-resolved' : 'badge-scheduled')}`}
+                              style={isLive ? { background: '#10b981', color: '#ffffff' } : {}}
+                            >
+                              {isLive ? 'In Progress' : (meet.status || 'Scheduled')}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                            <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk (Admin Block)')}
+                          </p>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                            <strong>Mode:</strong> {meet.mode || 'Online Video Meeting'}
+                          </p>
+                          {meet.notes && (
+                            <p style={{ fontSize: '0.82rem', color: 'var(--nitte-blue)', marginTop: '8px', background: 'var(--nitte-blue-light)', border: '1px solid var(--nitte-blue-soft)', padding: '8px 12px', borderRadius: '6px' }}>
+                              <strong>RO Instructions for Student:</strong> {meet.notes}
+                            </p>
+                          )}
+
+                          {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
+                          {meet.discussionSummary && (
+                            <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
+                              <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <FileText size={15} /> Official Meeting Deliberations & Discussion Record:
+                              </div>
+                              <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{meet.discussionSummary}</p>
+                              {meet.actionItems && (
+                                <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                                  <strong>Agreed Action Items:</strong> {meet.actionItems}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* ONLINE MEETING AUTO-RECORDING NOTICE & STUDENT JOIN BUTTON */}
+                          {isOnline && (
+                            <div style={{ marginTop: '10px', padding: '10px 12px', background: isLive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.08)', border: isLive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
+                              <div style={{ fontWeight: '700', color: isLive ? '#10b981' : 'var(--nitte-blue)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Video size={15} /> {isLive ? 'Live Online Video Call Session (In-Progress)' : 'Online Video Call Session Scheduled'}
+                              </div>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.76rem', marginTop: '4px' }}>
+                                Your Relationship Officer conducts this session via encrypted online video call. As per university compliance, this session is <strong>automatically recorded and archived</strong> to your ticket record for official reference.
+                              </p>
+                              {!isCompleted && (
+                                <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                  {isLive ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const meetIssueId = meet.issueId || meet.issue_id || (selectedIssue ? selectedIssue.id : null);
+                                        handleStudentJoinMeeting(meetIssueId);
+                                      }}
+                                      className="btn btn-primary"
+                                      style={{
+                                        fontSize: '0.82rem',
+                                        padding: '8px 18px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        background: '#10b981',
+                                        border: 'none',
+                                        fontWeight: 700,
+                                        boxShadow: '0 2px 10px rgba(16,185,129,0.4)',
+                                        cursor: 'pointer',
+                                        borderRadius: '6px'
+                                      }}
+                                    >
+                                      <Video size={14} /> Join Live RO Session (Dual Recording Active)
+                                    </button>
+                                  ) : (
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                      <Clock size={14} style={{ color: 'var(--text-secondary)' }} />
+                                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                        Scheduled for {meet.date} at {meet.time}. Meeting link will unlock automatically when RO starts the session.
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -1014,18 +1523,39 @@ export const StudentDashboard = ({ studentId }) => {
                     <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Star size={15} style={{ color: 'var(--accent-amber)' }} /> Resolution Feedback & Rating
                     </h4>
-                    
+
                     {selectedIssue.feedback ? (
-                      <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px' }}>
-                        <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
-                          {[1, 2, 3, 4, 5].map(num => (
-                            <Star key={num} size={14} fill={num <= selectedIssue.feedback.rating ? 'var(--accent-amber)' : 'none'} stroke="var(--accent-amber)" />
-                          ))}
+                      <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '12px', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            {[1, 2, 3, 4, 5].map(num => (
+                              <Star key={num} size={14} fill={num <= selectedIssue.feedback.rating ? 'var(--accent-amber)' : 'none'} stroke="var(--accent-amber)" />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 700 }}>
+                            ✅ Feedback Submitted — Slot Unlocked!
+                          </span>
                         </div>
-                        <p style={{ fontSize: '0.8rem', fontStyle: 'italic', color: 'var(--text-secondary)' }}>"{selectedIssue.feedback.comments}"</p>
+                        <p style={{ fontSize: '0.8rem', fontStyle: 'italic', color: 'var(--text-secondary)', margin: 0 }}>"{selectedIssue.feedback.comments}"</p>
                       </div>
                     ) : (
                       <form onSubmit={handleFeedbackSubmit}>
+                        <div style={{
+                          background: 'rgba(245, 158, 11, 0.1)',
+                          border: '1px solid rgba(245, 158, 11, 0.3)',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          marginBottom: '12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px'
+                        }}>
+                          <span style={{ fontSize: '1.2rem' }}>⭐</span>
+                          <div style={{ fontSize: '0.8rem', color: '#b45309' }}>
+                            <strong>Unlock Your Issue Submission Slot:</strong> Please rate your resolution experience and submit feedback. Your issue slot stays locked until this feedback is submitted.
+                          </div>
+                        </div>
+
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Rate your experience:</span>
                           <div className="star-rating">
@@ -1042,18 +1572,18 @@ export const StudentDashboard = ({ studentId }) => {
                           </div>
                         </div>
                         <div className="form-group" style={{ marginBottom: '10px' }}>
-                          <input 
-                            type="text" 
-                            className="form-control" 
+                          <input
+                            type="text"
+                            className="form-control"
                             style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                            placeholder="Add comments on quality of resolution..." 
+                            placeholder="Add comments on quality of resolution..."
                             value={feedbackComments}
                             onChange={(e) => setFeedbackComments(e.target.value)}
                             required
                           />
                         </div>
-                        <button type="submit" className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', width: '100%' }}>
-                          Submit Rating
+                        <button type="submit" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.82rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: 700 }}>
+                          <Star size={15} /> Submit Rating & Unlock Issue Slot
                         </button>
                       </form>
                     )}
@@ -1061,9 +1591,9 @@ export const StudentDashboard = ({ studentId }) => {
                     {/* RE-OPEN TICKET OPTION IF DISSATISFIED */}
                     <div style={{ marginTop: '14px', borderTop: '1px dashed var(--border-color)', paddingTop: '12px' }}>
                       {!showReopenForm ? (
-                        <button 
+                        <button
                           onClick={() => setShowReopenForm(true)}
-                          className="btn btn-secondary" 
+                          className="btn btn-secondary"
                           style={{ width: '100%', fontSize: '0.8rem', color: 'var(--accent-amber)', borderColor: 'rgba(217, 119, 6, 0.3)' }}
                         >
                           <RotateCcw size={14} /> Not Satisfied? Re-open Ticket with RO
@@ -1077,7 +1607,7 @@ export const StudentDashboard = ({ studentId }) => {
                             Explain why you are dissatisfied or what advice/help you still need. Your RO will be notified to schedule a meeting again.
                           </p>
                           <div className="form-group" style={{ marginBottom: '8px' }}>
-                            <textarea 
+                            <textarea
                               className="form-textarea"
                               style={{ minHeight: '65px', fontSize: '0.8rem' }}
                               placeholder="e.g., The internal marks calculation issue is still pending on my portal. I need an in-person meeting to show my marksheet."
@@ -1118,7 +1648,69 @@ export const StudentDashboard = ({ studentId }) => {
         {/* TAB 3: MENTORSHIP HUB */}
         {activeTab === 'mentor-hub' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-            
+
+            {/* Scheduled Mentoring Period Card for Student */}
+            {myMentor && (
+              <div style={{
+                gridColumn: '1 / -1',
+                background: 'linear-gradient(135deg, #eff6ff 0%, #ffffff 50%, #f0fdf4 100%)',
+                border: '1px solid #bfdbfe',
+                borderRadius: '12px',
+                padding: '14px 18px',
+                boxShadow: '0 2px 8px rgba(37, 99, 235, 0.06)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '10px',
+                      background: '#dbeafe',
+                      color: '#1d4ed8',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <Clock size={18} />
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#1e3a8a' }}>
+                          Official Weekly Mentoring Hour & Period
+                        </h4>
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: '700',
+                          padding: '1px 7px',
+                          borderRadius: '999px',
+                          background: '#dcfce7',
+                          color: '#15803d',
+                          border: '1px solid #bbf7d0'
+                        }}>
+                          ● Timetable Period
+                        </span>
+                      </div>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#64748b' }}>
+                        Conducted by Mentor <strong>{myMentor.name}</strong> for {myMentor.class || 'your class'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#1e3a8a' }}>
+                      🕒 {db.mentoringSchedules?.[myMentor.id]?.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)'}
+                    </div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#059669' }}>
+                      📅 {db.mentoringSchedules?.[myMentor.id]?.day || 'Friday'}, {db.mentoringSchedules?.[myMentor.id]?.date || '2026-09-25'}
+                    </div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#d97706' }}>
+                      📍 {db.mentoringSchedules?.[myMentor.id]?.venue || 'Seminar Hall 1 (Admin Block)'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Group Mentoring Sessions */}
             <div className="glass-card">
               <h2 className="section-title">Group Sessions ({mySessions.length})</h2>
@@ -1140,11 +1732,11 @@ export const StudentDashboard = ({ studentId }) => {
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px', marginBottom: '12px' }}>
                       {session.description}
                     </p>
-                    <a 
-                      href={session.link} 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="btn btn-secondary" 
+                    <a
+                      href={session.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary"
                       style={{ padding: '6px 12px', fontSize: '0.75rem' }}
                     >
                       Join Meeting Link <ExternalLink size={12} />
@@ -1176,19 +1768,19 @@ export const StudentDashboard = ({ studentId }) => {
                       </div>
                     </div>
                     {res.type === 'Link' ? (
-                      <a 
-                        href={res.content} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="btn btn-icon-only" 
+                      <a
+                        href={res.content}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-icon-only"
                         style={{ padding: '6px' }}
                       >
                         <ExternalLink size={14} />
                       </a>
                     ) : (
-                      <button 
+                      <button
                         onClick={() => alert(`Content: ${res.content}`)}
-                        className="btn btn-secondary" 
+                        className="btn btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '0.7rem' }}
                       >
                         View Info
@@ -1224,12 +1816,12 @@ export const StudentDashboard = ({ studentId }) => {
               {/* Mentor Name (Read-only) */}
               <div className="form-group">
                 <label className="form-label">Mentor Name</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  readOnly 
-                  disabled 
-                  value={myMentor ? `${myMentor.name} (${myMentor.dept} — ${myMentor.class || 'All'})` : 'Not Assigned'} 
+                <input
+                  type="text"
+                  className="form-control"
+                  readOnly
+                  disabled
+                  value={myMentor ? `${myMentor.name} (${myMentor.dept} — ${myMentor.class || 'All'})` : 'Not Assigned'}
                 />
               </div>
 
@@ -1299,7 +1891,7 @@ export const StudentDashboard = ({ studentId }) => {
               {/* Difficulties Textarea */}
               <div className="form-group">
                 <label className="form-label">What difficulties or issues do you face with the mentoring classes or the way they are conducted?</label>
-                <textarea 
+                <textarea
                   className="form-textarea"
                   style={{ minHeight: '100px' }}
                   placeholder="Describe any challenges, suggestions, or concerns about the mentoring sessions..."
@@ -1308,12 +1900,12 @@ export const StudentDashboard = ({ studentId }) => {
                 />
               </div>
 
-              <button 
-                type="submit" 
-                className="btn btn-primary" 
+              <button
+                type="submit"
+                className="btn btn-primary"
                 disabled={mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0}
-                style={{ 
-                  width: '100%', 
+                style={{
+                  width: '100%',
                   justifyContent: 'center',
                   opacity: (mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0) ? 0.5 : 1
                 }}
@@ -1462,7 +2054,7 @@ export const StudentDashboard = ({ studentId }) => {
 
               {/* Large Cinematic Video Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px', marginBottom: '16px', flex: 1 }}>
-                
+
                 {/* RO OFFICER (HOST) LIVE VIDEO FEED */}
                 <div style={{
                   background: '#0a0f1d',
@@ -1477,11 +2069,11 @@ export const StudentDashboard = ({ studentId }) => {
                   position: 'relative',
                   boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
                 }}>
-                  {roRemoteStream ? (
+                  {roRemoteStream && !isRoCameraOff ? (
                     <VideoStreamPlayer
                       stream={roRemoteStream}
                       muted={false}
-                      badge={{ text: '🟢 RO Host Live WebCam', color: '#3b82f6' }}
+                      badge={{ text: isRoMicMuted ? '🔇 RO Host (Mic Muted)' : '🟢 RO Host Live WebCam', color: isRoMicMuted ? '#f59e0b' : '#3b82f6' }}
                       participantName={selectedIssue?.roName || 'Relationship Officer'}
                     />
                   ) : (
@@ -1515,8 +2107,8 @@ export const StudentDashboard = ({ studentId }) => {
                         {selectedIssue?.roName || 'Relationship Officer'} (Host)
                       </p>
                       <span style={{ fontSize: '0.75rem', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#60a5fa', display: 'inline-block' }} />
-                        {peerConnected ? 'Live Connection Active' : 'Waiting for RO Host to join...'}
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isRoCameraOff ? '#f59e0b' : (peerConnected ? '#10b981' : '#60a5fa'), display: 'inline-block' }} />
+                        {isRoCameraOff ? 'Officer has paused video camera' : (peerConnected ? 'Live Connection Active' : 'Waiting for RO Host to join...')}
                       </span>
                     </div>
                   )}
@@ -1906,6 +2498,72 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         );
       })()}
+
+
+
+      {/* ONLINE MEETING ENDED BY RO POP-UP MODAL */}
+      {meetingEndedPopup && (
+        <div className="modal-overlay" style={{ zIndex: 1300, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(6px)' }}>
+          <div className="modal-content" style={{
+            maxWidth: '520px',
+            width: '92%',
+            background: '#ffffff',
+            color: '#1e293b',
+            border: '1px solid #e2e8f0',
+            borderRadius: '16px',
+            padding: '24px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <CheckCircle2 size={28} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
+                  Online Meeting Ended by RO
+                </h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                  Concluded at {meetingEndedPopup.endedAt || 'Just now'} {meetingEndedPopup.issueId ? `• Ticket #${meetingEndedPopup.issueId}` : ''}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px', marginBottom: '18px', fontSize: '0.84rem', color: '#334155', lineHeight: 1.5 }}>
+              <p style={{ margin: 0 }}>
+                Your <strong>Relationship Officer ({meetingEndedPopup.roName})</strong> has officially concluded this online meeting session.
+              </p>
+              <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                The full dual-participant audio/video recording, discussion summary, and agreed action items have been securely saved to your ticket records.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (meetingEndedPopup.issueId) {
+                    setSelectedIssueId(meetingEndedPopup.issueId);
+                    setActiveTab('my-issues');
+                  }
+                  setMeetingEndedPopup(null);
+                }}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.82rem', padding: '8px 16px' }}
+              >
+                View Ticket & Recordings
+              </button>
+              <button
+                type="button"
+                onClick={() => setMeetingEndedPopup(null)}
+                className="btn btn-primary"
+                style={{ fontSize: '0.82rem', padding: '8px 18px', background: '#2563eb', border: 'none', fontWeight: 700 }}
+              >
+                Okay, Got It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

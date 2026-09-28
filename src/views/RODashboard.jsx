@@ -3,6 +3,7 @@ import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/
 import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw, Video, Mic, MicOff, VideoOff, Square, Shield, Play, Camera, AlertCircle, X, Download, PhoneOff, Volume2, VolumeX, FileText, MessageSquare } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
+import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const RODashboard = ({ roId }) => {
@@ -40,6 +41,7 @@ export const RODashboard = ({ roId }) => {
 
   // Online Meeting Video & Auto-Recorder Modal State
   const [showOnlineMeetingModal, setShowOnlineMeetingModal] = useState(false);
+  const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
@@ -97,11 +99,11 @@ export const RODashboard = ({ roId }) => {
     setMediaPermissionState('requesting');
     setMediaPermissionError('');
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Your browser does not support camera/microphone access (WebRTC).');
-      }
-      let stream;
+      let stream = null;
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Your browser does not support camera/microphone access (WebRTC).');
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
@@ -116,18 +118,43 @@ export const RODashboard = ({ roId }) => {
           }
         });
       } catch (audioErr) {
-        console.warn('Advanced audio constraints fallback, requesting standard media:', audioErr);
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: true
+        try {
+          console.warn('[RO] Advanced audio constraints fallback, requesting standard media:', audioErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: true
+          });
+        } catch (camErr) {
+          console.warn('[RO] Hardware webcam unavailable or locked by another tab, falling back to simulated stream:', camErr);
+          stream = createFallbackMediaStream({
+            label: ro?.name || 'Relationship Officer',
+            role: 'RO'
+          });
+          setMediaPermissionError('Hardware camera unavailable or in use by another tab. Using active simulated video feed.');
+        }
+      }
+
+      if (!stream) {
+        stream = createFallbackMediaStream({
+          label: ro?.name || 'Relationship Officer',
+          role: 'RO'
         });
       }
+
       localStreamRef.current = stream;
       setLocalStream(stream);
       setMediaPermissionState('granted');
 
+      const targetIssueId = String(
+        activeMeetingIssueId || 
+        activeMeeting?.issueId || 
+        activeMeeting?.issue_id || 
+        (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : selectedIssueId) ||
+        'TICK-1002'
+      ).trim().toUpperCase();
+
       // Initialize WebRTC Meeting Session for live peer-to-peer video with student
-      if (selectedIssue) {
+      if (targetIssueId) {
         if (webrtcSessionRef.current && !webrtcSessionRef.current.isClosed) {
           webrtcSessionRef.current.updateLocalStream(stream);
         } else {
@@ -135,7 +162,7 @@ export const RODashboard = ({ roId }) => {
             try { webrtcSessionRef.current.close(); } catch (e) {}
           }
           webrtcSessionRef.current = new WebRtcMeetingSession({
-            issueId: selectedIssue.id,
+            issueId: targetIssueId,
             role: 'ro',
             localStream: stream,
             onRemoteStream: (remStream) => {
@@ -168,29 +195,28 @@ export const RODashboard = ({ roId }) => {
         }
         compositeRecorderRef.current = new CompositeMeetingRecorder({
           localStream: stream,
-          localLabel: ro.name || 'Relationship Officer',
+          localLabel: ro?.name || 'Relationship Officer',
           remoteLabel: selectedIssue ? (selectedIssue.studentName || 'Student') : 'Student',
-          ticketId: selectedIssue ? selectedIssue.id : 'TICKET',
+          ticketId: targetIssueId || 'TICKET',
           localRole: 'RO',
           remoteRole: 'Student',
-          width: 1280,
-          height: 720,
-          fps: 25
+          width: 960,
+          height: 540,
+          fps: 20
         });
         compositeRecorderRef.current.start();
       } catch (recErr) {
         console.warn('CompositeMeetingRecorder error:', recErr);
       }
     } catch (err) {
-      console.warn('Camera/Mic permission error:', err);
-      setMediaPermissionState('denied');
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMediaPermissionError('Camera & Microphone permission was blocked by your browser. Please click the lock or camera icon in your address bar and allow Camera and Microphone, then click "Retry Permissions".');
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setMediaPermissionError('No webcam or microphone hardware detected on this machine. Running in simulated fallback mode.');
-      } else {
-        setMediaPermissionError(err.message || 'Unable to access camera or microphone.');
-      }
+      console.warn('RO camera/mic permission error fallback:', err);
+      const fallbackStream = createFallbackMediaStream({
+        label: ro?.name || 'Relationship Officer',
+        role: 'RO'
+      });
+      localStreamRef.current = fallbackStream;
+      setLocalStream(fallbackStream);
+      setMediaPermissionState('granted');
     }
   };
 
@@ -290,6 +316,7 @@ export const RODashboard = ({ roId }) => {
 
   // Issues assigned to this RO
   const roIssues = db.issues.filter(i => i.roId === ro.id);
+  const activeRoIssues = roIssues.filter(i => i.status !== 'Resolved');
 
   // Categories belonging strictly to this RO's assigned issues & assigned region
   const myAssignedIssueCategories = Array.from(new Set([
@@ -301,14 +328,44 @@ export const RODashboard = ({ roId }) => {
     })()
   ].filter(Boolean)));
 
-  // Filtered issues list
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+
+  // Helper to check if search query matches ticket ID
+  const isTicketIdMatch = (issue) => {
+    if (!trimmedQuery) return false;
+    const tId = (issue.id || issue.issue_id || '').toLowerCase();
+    return tId.includes(trimmedQuery);
+  };
+
+  // Filtered issues list:
+  // Rule: When an issue is resolved, do NOT show it in the RO assigned issues list by default.
+  // Show the resolved issue ONLY when searched by its Ticket ID.
   const filteredIssues = roIssues.filter(issue => {
+    const isResolved = issue.status === 'Resolved';
+
+    if (isResolved) {
+      // Resolved issues are completely hidden from the assigned queue by default
+      // They ONLY show up when specifically searched by Ticket ID
+      if (!trimmedQuery || !isTicketIdMatch(issue)) {
+        return false;
+      }
+      if (statusFilter !== 'All' && statusFilter !== 'Resolved') {
+        return false;
+      }
+      return true;
+    }
+
+    // Active non-resolved issues
     const matchesStatus = statusFilter === 'All' || issue.status === statusFilter;
+    if (!matchesStatus) return false;
+
+    if (!trimmedQuery) return true;
+
     const matchesSearch =
-      issue.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      issue.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      issue.category.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
+      issue.studentName?.toLowerCase().includes(trimmedQuery) ||
+      isTicketIdMatch(issue) ||
+      issue.category?.toLowerCase().includes(trimmedQuery);
+    return matchesSearch;
   });
 
   const selectedIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
@@ -334,7 +391,25 @@ export const RODashboard = ({ roId }) => {
   };
 
   // Find if selected issue has a meeting scheduled & count reassignments
-  const activeMeeting = selectedIssue ? (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()) : null;
+  const rawActiveMeeting = selectedIssue ? (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()) : null;
+  const activeMeeting = rawActiveMeeting || (selectedIssue && (selectedIssue.status === 'Meeting Scheduled' || selectedIssue.status === 'Meeting Started') ? {
+    id: `MEET-${selectedIssue.id}`,
+    issueId: selectedIssue.id,
+    issue_id: selectedIssue.id,
+    studentId: selectedIssue.studentId,
+    student_id: selectedIssue.studentId,
+    studentName: selectedIssue.studentName,
+    student_name: selectedIssue.studentName,
+    roId: selectedIssue.roId || ro?.id,
+    ro_id: selectedIssue.roId || ro?.id,
+    date: todayStr,
+    time: '11:00',
+    mode: 'Online',
+    location: 'Google Meet / Zoom Online Video Link',
+    notes: 'Scheduled meeting session with Relationship Officer.',
+    status: 'Confirmed',
+    endedByRo: false
+  } : null);
   const meetingReassignLogs = selectedIssue ? (selectedIssue.logs || []).filter(l => {
     const txt = getLogText(l).toLowerCase();
     return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
@@ -342,26 +417,19 @@ export const RODashboard = ({ roId }) => {
   const meetingReassignCount = meetingReassignLogs.length;
   const isReassignLimitReached = Boolean(activeMeeting && meetingReassignCount >= 2);
 
-  // Check if meeting date/time has passed + 15 mins buffer timer (Missed / Expired Meeting)
+  // Check if meeting date has passed without being conducted (Missed / Expired Meeting)
   const isMeetingExpired = (() => {
     if (!selectedIssue || selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated') return false;
-    if (!activeMeeting || !activeMeeting.date || !activeMeeting.time) return false;
+    if (!activeMeeting || !activeMeeting.date) return false;
 
-    // If RO has already marked the meeting as Started or In-Progress, it is not expired
-    if (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress') return false;
+    // If RO has already marked the meeting as Started, In-Progress, or Completed, it is not expired
+    if (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' || activeMeeting.status === 'Completed') return false;
 
-    const timeParts = String(activeMeeting.time).split(':');
-    const h = parseInt(timeParts[0], 10) || 0;
-    const m = parseInt(timeParts[1], 10) || 0;
+    // Any meeting on today's date or in the future is active and can be started - not expired!
+    if (activeMeeting.date >= todayStr) return false;
 
-    const dateParts = String(activeMeeting.date).split('-').map(Number);
-    if (dateParts.length < 3) return false;
-
-    const meetingDateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], h, m);
-    // Add 15-minute buffer window timer after scheduled meeting time
-    const expiryCutoff = new Date(meetingDateObj.getTime() + 15 * 60 * 1000);
-
-    return now > expiryCutoff;
+    // Only past dates (yesterday or older) that were never started count as expired
+    return true;
   })();
 
   // Institutional Compliance: Check if issue is being handled via an active online meeting
@@ -419,12 +487,33 @@ export const RODashboard = ({ roId }) => {
 
   const handleLaunchOnlineMeeting = () => {
     if (!activeMeeting || !selectedIssue) return;
+    const targetId = String(activeMeeting.issueId || activeMeeting.issue_id || selectedIssue.id).trim().toUpperCase();
+    setActiveMeetingIssueId(targetId);
     isEndingMeetingRef.current = false;
-    updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started');
+    updateMeetingStatus(activeMeeting.id || activeMeeting.issueId || targetId, 'Started');
     setRecordingSeconds(0);
     setIsCameraOff(false);
     setIsMicMuted(false);
     setShowOnlineMeetingModal(true);
+  };
+
+  const handleConcludeOfflineMeeting = () => {
+    if (!activeMeeting || !selectedIssue) return;
+    const currentMeetId = activeMeeting.id || activeMeeting.issueId;
+    updateMeetingStatus(currentMeetId, 'Completed');
+    setPostMeetingData({
+      meetingId: currentMeetId,
+      issueId: selectedIssue.id,
+      studentName: selectedIssue.studentName || 'Student',
+      studentId: selectedIssue.studentId || '',
+      category: selectedIssue.category || 'General',
+      durationText: 'In-Person Session'
+    });
+    setDiscussionSummary(activeMeeting.discussionSummary || '');
+    setActionItems(activeMeeting.actionItems || '');
+    setMeetingOutcome('In-Progress');
+    setFollowUpNeeded(false);
+    setShowMeetingFeedbackModal(true);
   };
 
   const handleStopAndSaveRecording = async () => {
@@ -459,6 +548,7 @@ export const RODashboard = ({ roId }) => {
 
     // 3. Immediately close meeting stage & open feedback modal (Zero UI delay)
     setShowOnlineMeetingModal(false);
+    setActiveMeetingIssueId(null);
     setShowMeetingFeedbackModal(true);
     setMediaPermissionState('idle');
 
@@ -515,14 +605,6 @@ export const RODashboard = ({ roId }) => {
     );
     updateMeetingStatus(currentMeet.id || currentMeet.issueId, 'Completed');
   };
-
-  // Auto-detect remote meeting termination or external Completed status and pop up feedback modal
-  useEffect(() => {
-    if (showOnlineMeetingModal && activeMeeting && (activeMeeting.status === 'Completed' || activeMeeting.status === 'Finished') && !isEndingMeetingRef.current) {
-      console.log('[RO] Active meeting marked Completed externally, triggering feedback popup automatically.');
-      handleStopAndSaveRecording();
-    }
-  }, [showOnlineMeetingModal, activeMeeting?.status]);
 
   const handlePostMeetingFeedbackSubmit = async (e) => {
     e.preventDefault();
@@ -606,7 +688,7 @@ export const RODashboard = ({ roId }) => {
     setShowEscalateModal(false);
   };
 
-  const handleScheduleSubmit = (e) => {
+  const handleScheduleSubmit = async (e) => {
     e.preventDefault();
     if (!meetDate || !meetTime || !selectedIssueId) return;
 
@@ -624,20 +706,24 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
-    scheduleRoMeeting(
-      selectedIssueId,
-      selectedIssue.studentId,
-      ro.id,
-      meetDate,
-      meetTime,
-      meetMode,
-      meetLocation,
-      meetNotes,
-      '', // No log minutes required when reassigning; log minutes strictly for online meetings
-      '', // actionItems
-      meetMode === 'Offline' ? meetReassignFeedback.trim() : ''
-    );
-    setShowScheduleModal(false);
+    try {
+      await scheduleRoMeeting(
+        selectedIssueId,
+        selectedIssue?.studentId || selectedIssue?.student_id,
+        ro.id,
+        meetDate,
+        meetTime,
+        meetMode,
+        meetLocation,
+        meetNotes,
+        '', // No log minutes required when reassigning; log minutes strictly for online meetings
+        '', // actionItems
+        meetMode === 'Offline' ? meetReassignFeedback.trim() : ''
+      );
+      setShowScheduleModal(false);
+    } catch (err) {
+      console.error('Schedule error:', err);
+    }
   };
 
   const handleOpenOnlineNotDoneModal = () => {
@@ -682,7 +768,7 @@ export const RODashboard = ({ roId }) => {
     try {
       await scheduleRoMeeting(
         selectedIssueId,
-        selectedIssue.studentId,
+        selectedIssue?.studentId || selectedIssue?.student_id,
         ro.id,
         offlineRescheduleDate,
         offlineRescheduleTime,
@@ -829,7 +915,7 @@ export const RODashboard = ({ roId }) => {
           </span>
           <button className={`panel-btn ${statusFilter === 'All' ? 'active RO' : ''}`} onClick={() => setStatusFilter('All')}>
             <Inbox size={16} />
-            <span>All Assigned Issues ({roIssues.length})</span>
+            <span>All Assigned Issues ({activeRoIssues.length})</span>
           </button>
 
           <button className={`panel-btn ${statusFilter === 'Assigned to RO' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Assigned to RO')}>
@@ -849,7 +935,7 @@ export const RODashboard = ({ roId }) => {
 
           <button className={`panel-btn ${statusFilter === 'Resolved' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Resolved')}>
             <CheckCircle2 size={16} />
-            <span>Resolved Tickets ({roIssues.filter(i => i.status === 'Resolved').length})</span>
+            <span>Resolved in Storage ({roIssues.filter(i => i.status === 'Resolved').length})</span>
           </button>
 
           <button className={`panel-btn ${statusFilter === 'Escalated' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Escalated')}>
@@ -893,7 +979,7 @@ export const RODashboard = ({ roId }) => {
       {/* Main Content Pane */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-        <div style={{ display: 'grid', gridTemplateColumns: filteredIssues.length > 0 ? '1fr 1fr' : '1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: selectedIssue ? '1fr 1fr' : '1fr', gap: '20px' }}>
 
           {/* QUEUE LIST */}
           <div className="glass-card">
@@ -905,7 +991,7 @@ export const RODashboard = ({ roId }) => {
                   type="text"
                   className="form-control"
                   style={{ paddingLeft: '32px' }}
-                  placeholder="Search by student name, ID or category..."
+                  placeholder="Search by student name, category, or Ticket ID (e.g. TICK-1003)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -914,12 +1000,24 @@ export const RODashboard = ({ roId }) => {
             </div>
 
             {filteredIssues.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
-                <Inbox size={48} style={{ marginBottom: '12px', opacity: 0.5 }} />
-                <p>No issues found matching your filters.</p>
+              <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
+                <Inbox size={48} style={{ marginBottom: '12px', opacity: 0.4 }} />
+                {statusFilter === 'Resolved' && !trimmedQuery ? (
+                  <div>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      Resolved Tickets in Local Storage
+                    </h4>
+                    <p style={{ fontSize: '0.8rem', maxWidth: '340px', margin: '0 auto', lineHeight: 1.5 }}>
+                      Resolved issues are archived in Local Storage. Enter the <strong>Ticket ID</strong> in the search bar above to look up resolved issues and review documentation.
+                    </p>
+                  </div>
+                ) : (
+                  <p>No issues found matching your filters.</p>
+                )}
               </div>
             ) : (
               filteredIssues.map(issue => {
+                const isResolved = issue.status === 'Resolved';
                 const badgeClass = `badge badge-${issue.status.toLowerCase().replace(' ', '-')}`;
                 const isSelected = selectedIssueId === issue.id;
 
@@ -929,23 +1027,42 @@ export const RODashboard = ({ roId }) => {
                     onClick={() => setSelectedIssueId(issue.id)}
                     className={`glass-card issue-card ${issue.priority}`}
                     style={{
-                      background: isSelected ? 'rgba(255,255,255,0.06)' : '',
-                      borderColor: isSelected ? 'rgba(245,158,11,0.5)' : ''
+                      background: isResolved
+                        ? (isSelected ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.015)')
+                        : (isSelected ? 'rgba(255, 255, 255, 0.06)' : ''),
+                      borderColor: isResolved
+                        ? (isSelected ? 'rgba(148, 163, 184, 0.35)' : 'rgba(148, 163, 184, 0.12)')
+                        : (isSelected ? 'rgba(245, 158, 11, 0.5)' : ''),
+                      opacity: isResolved ? (isSelected ? 0.75 : 0.5) : 1,
+                      boxShadow: isResolved ? 'none' : undefined,
+                      filter: isResolved ? 'grayscale(25%)' : undefined,
+                      transition: 'all 0.2s ease'
                     }}
                   >
                     <div className="issue-card-header">
                       <div>
-                        <strong style={{ fontSize: '0.95rem' }}>{issue.category}</strong>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          From: <strong>{issue.studentName}</strong> ({issue.studentId})
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <strong style={{ fontSize: '0.92rem', color: isResolved ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
+                            {issue.category}
+                          </strong>
+                          {isResolved && (
+                            <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.18)' }}>
+                              📁 In Local Storage
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          From: <strong>{issue.studentName}</strong> ({issue.studentId}) • Ticket: <span style={{ fontFamily: 'monospace' }}>{issue.id}</span>
                         </div>
                       </div>
-                      <span className={badgeClass}>{issue.status}</span>
+                      <span className={badgeClass} style={{ opacity: isResolved ? 0.7 : 1 }}>{issue.status}</span>
                     </div>
+
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                       {issue.description}
                     </p>
-                    <div className="issue-meta">
+
+                    <div className="issue-meta" style={{ opacity: isResolved ? 0.75 : 1 }}>
                       <span>Submitted: {new Date(issue.createdAt).toLocaleDateString()}</span>
                       <span>Priority: <strong>{issue.priority}</strong></span>
                     </div>
@@ -955,7 +1072,7 @@ export const RODashboard = ({ roId }) => {
             )}
           </div>
 
-          {/* QUEUE DETAILS PANE */}
+          {/* QUEUE DETAILS PANE - TICKET DOCUMENTS & RESOLUTION DETAILS */}
           {selectedIssue && (
             <div className="glass-card" style={{ position: 'sticky', top: '90px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -1068,11 +1185,14 @@ export const RODashboard = ({ roId }) => {
                           <div style={{ color: '#10b981', fontWeight: '700', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
                             <CheckCircle2 size={16} /> 🟢 Meeting Currently In-Progress
                           </div>
-                          {activeMeeting.mode === 'Online' && (
+                          {activeMeeting.mode === 'Online' ? (
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                               <button
                                 type="button"
-                                onClick={() => setShowOnlineMeetingModal(true)}
+                                onClick={() => {
+                                  setActiveMeetingIssueId(activeMeeting.issueId || activeMeeting.issue_id || (selectedIssue ? selectedIssue.id : null));
+                                  setShowOnlineMeetingModal(true);
+                                }}
                                 className="btn btn-primary"
                                 style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#2563eb' }}
                               >
@@ -1097,6 +1217,25 @@ export const RODashboard = ({ roId }) => {
                                 title="Declare that the online meeting could not be held, provide feedback, and reassign to offline"
                               >
                                 🚫 Online Meeting Not Done
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                onClick={handleConcludeOfflineMeeting}
+                                className="btn btn-success"
+                                style={{ fontSize: '0.75rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px' }}
+                              >
+                                <CheckCircle2 size={13} /> Conclude In-Person Meeting & Log Notes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleOpenScheduleModal}
+                                className="btn btn-secondary"
+                                style={{ fontSize: '0.75rem', padding: '5px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                <RotateCcw size={13} /> Reschedule Meeting
                               </button>
                             </div>
                           )}
@@ -1190,15 +1329,27 @@ export const RODashboard = ({ roId }) => {
 
               {/* RESOLUTION DETAILS IF ALREADY RESOLVED */}
               {selectedIssue.status === 'Resolved' && (
-                <div style={{ borderLeft: '3px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.05)', padding: '12px', borderRadius: '4px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                  <h4 style={{ fontWeight: '700', color: 'rgb(110,231,183)', marginBottom: '4px' }}>Logged Resolution Action:</h4>
-                  <p>{selectedIssue.resolutionNotes}</p>
-                  {selectedIssue.feedback && (
-                    <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
-                      <p><strong>Student Rating:</strong> {selectedIssue.feedback.rating} / 5</p>
-                      <p style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>"{selectedIssue.feedback.comments}"</p>
-                    </div>
-                  )}
+                <div style={{
+                  borderLeft: '4px solid var(--accent-emerald)',
+                  background: 'rgba(16, 185, 129, 0.04)',
+                  padding: '14px 16px',
+                  borderRadius: '6px',
+                  marginBottom: '16px',
+                  fontSize: '0.85rem'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <h4 style={{ fontWeight: '700', color: 'rgb(110,231,183)', margin: 0, fontSize: '0.9rem' }}>
+                      Logged Resolution Action:
+                    </h4>
+                    {selectedIssue.shiftedToLocalStorage && (
+                      <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '4px', background: 'rgba(148, 163, 184, 0.12)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}>
+                        📁 Shifted to Local Storage
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>
+                    {selectedIssue.resolutionNotes || 'Marked as resolved by Relationship Officer.'}
+                  </p>
                 </div>
               )}
 

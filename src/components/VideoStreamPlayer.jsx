@@ -2,14 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Volume2, VolumeX, Mic, MicOff } from 'lucide-react';
 
 /**
- * VideoStreamPlayer - Professional WebRTC Video & Audio Player Component
+ * VideoStreamPlayer - Ultra-Smooth WebRTC Video & Audio Player Component
  * 
- * Features:
- * 1. Dedicated dual-pipeline audio playback: Employs both HTMLVideoElement and a dedicated HTMLAudioElement to ensure unmuted remote audio is crystal clear and never dropped when tracks arrive asynchronously.
- * 2. Dynamic track detection: Automatically attaches audio tracks if they arrive after video playback has started (resolves Chromium track attachment delays).
- * 3. Live Voice Activity Detection (VAD): Web Audio API AnalyserNode powers a real-time glowing border and animated equalizer soundwave when the participant is speaking.
- * 4. Autoplay Policy Resolution: Provides a sleek floating "Click to Unmute" pill if the browser's autoplay policy temporarily restricts unmuted sound.
- * 5. React.memo isolation: Zero re-renders from parent recording timers or background database polling.
+ * Performance & Low-Jitter Architecture:
+ * 1. Zero Re-Render Audio Activity Meter: Updates the live voice equalizer and activity bar directly via DOM references (zero React re-renders during speech), eliminating UI micro-stutters and main-thread CPU spikes.
+ * 2. Dedicated Single-Stream Audio Output: Keeps HTMLVideoElement strictly muted to prevent duplicate audio pipelines, while HTMLAudioElement delivers unmuted, crystal-clear, jitter-free remote sound.
+ * 3. Hysteresis Debounced VAD: Speaking indicator uses debounced thresholding to prevent rapid UI glow flickering.
+ * 4. Hardware-Accelerated Rendering: Container and video elements enforce GPU compositing with translateZ(0) to maximize framerate smoothness.
  */
 const VideoStreamPlayer = React.memo(({
   stream,
@@ -21,11 +20,13 @@ const VideoStreamPlayer = React.memo(({
 }) => {
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const audioBarRef = useRef(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
-  const [audioLevel, setAudioLevel] = useState(0); // 0 to 100
   const audioContextRef = useRef(null);
   const animFrameRef = useRef(null);
+  const isSpeakingRef = useRef(false);
+  const quietCounterRef = useRef(0);
 
   // Playback & Audio Pipeline Attachment
   useEffect(() => {
@@ -34,7 +35,7 @@ const VideoStreamPlayer = React.memo(({
     if (!videoEl) return;
 
     if (stream) {
-      // 1. Attach to Video Element
+      // 1. Attach to Video Element (ALWAYS muted to prevent dual-audio cancellation)
       if (videoEl.srcObject !== stream) {
         videoEl.srcObject = stream;
       }
@@ -48,18 +49,10 @@ const VideoStreamPlayer = React.memo(({
 
       const attemptPlay = () => {
         // Video element playback
+        videoEl.muted = true;
         const videoPromise = videoEl.play();
         if (videoPromise !== undefined) {
-          videoPromise.catch((err) => {
-            if (err.name === 'NotAllowedError') {
-              if (!muted) {
-                // Video continues muted, while audio element or unmute banner allows audio
-                videoEl.muted = true;
-                videoEl.play().catch(() => {});
-                setAudioBlocked(true);
-              }
-            }
-          });
+          videoPromise.catch(() => {});
         }
 
         // Dedicated audio element playback for remote stream
@@ -80,8 +73,7 @@ const VideoStreamPlayer = React.memo(({
       attemptPlay();
 
       // Listen for dynamically added tracks (e.g., audio arriving after video)
-      const handleTrackAdded = (e) => {
-        console.log('[VideoStreamPlayer] New track added to stream:', e.track ? e.track.kind : 'unknown');
+      const handleTrackAdded = () => {
         if (videoEl && videoEl.srcObject) {
           videoEl.play().catch(() => {});
         }
@@ -107,16 +99,20 @@ const VideoStreamPlayer = React.memo(({
     } else {
       videoEl.srcObject = null;
       if (audioEl) audioEl.srcObject = null;
-      setAudioLevel(0);
+      if (audioBarRef.current) {
+        audioBarRef.current.style.width = '5%';
+      }
       setIsSpeaking(false);
+      isSpeakingRef.current = false;
     }
   }, [stream, muted]);
 
-  // Live Audio Activity Analyzer (Voice Meter & Equalizer)
+  // High-Performance Audio Activity Analyzer (Zero-State DOM Updating)
   useEffect(() => {
     if (!stream || stream.getAudioTracks().length === 0) {
-      setAudioLevel(0);
+      if (audioBarRef.current) audioBarRef.current.style.width = '5%';
       setIsSpeaking(false);
+      isSpeakingRef.current = false;
       return;
     }
 
@@ -130,8 +126,8 @@ const VideoStreamPlayer = React.memo(({
       audioContextRef.current = audioCtx;
 
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = 0.4;
+      analyser.fftSize = 64; // Smaller FFT size = faster computation & less CPU
+      analyser.smoothingTimeConstant = 0.5;
 
       const source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyser);
@@ -150,10 +146,30 @@ const VideoStreamPlayer = React.memo(({
         const avg = sum / bufferLength;
         const normalized = Math.min(Math.round((avg / 128) * 100), 100);
 
-        setAudioLevel(normalized);
-        setIsSpeaking(normalized > 12);
+        // Update DOM audio bar directly WITHOUT triggering React re-renders
+        if (audioBarRef.current) {
+          const barWidth = Math.max(normalized, normalized > 14 ? 32 : 6);
+          audioBarRef.current.style.width = `${barWidth}%`;
+          audioBarRef.current.style.background = normalized > 14 ? '#10b981' : '#64748b';
+        }
 
-        animFrameRef.current = setTimeout(checkAudioLevel, 90);
+        // Hysteresis Debounced Speaking state change
+        if (normalized > 14) {
+          quietCounterRef.current = 0;
+          if (!isSpeakingRef.current) {
+            isSpeakingRef.current = true;
+            setIsSpeaking(true);
+          }
+        } else {
+          quietCounterRef.current += 1;
+          // Hold speaking indicator for 3 ticks (360ms) before fading out
+          if (quietCounterRef.current >= 3 && isSpeakingRef.current) {
+            isSpeakingRef.current = false;
+            setIsSpeaking(false);
+          }
+        }
+
+        animFrameRef.current = setTimeout(checkAudioLevel, 120);
       };
 
       checkAudioLevel();
@@ -178,12 +194,6 @@ const VideoStreamPlayer = React.memo(({
         setAudioBlocked(false);
       }).catch(() => {});
     }
-    if (videoRef.current) {
-      videoRef.current.muted = false;
-      videoRef.current.play().then(() => {
-        setAudioBlocked(false);
-      }).catch(() => {});
-    }
   };
 
   return (
@@ -195,25 +205,28 @@ const VideoStreamPlayer = React.memo(({
         background: '#090d16',
         borderRadius: '12px',
         overflow: 'hidden',
-        transition: 'all 0.25s ease',
+        transform: 'translateZ(0)',
+        willChange: 'transform',
         boxShadow: isSpeaking
-          ? '0 0 0 2px #10b981, 0 0 24px rgba(16, 185, 129, 0.45)'
+          ? '0 0 0 2px #10b981, 0 0 20px rgba(16, 185, 129, 0.4)'
           : '0 4px 20px rgba(0, 0, 0, 0.5)',
         ...style
       }}
       className={className}
     >
-      {/* Video Element */}
+      {/* Video Element (ALWAYS muted in player; dedicated audio handles sound) */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={muted}
+        muted={true}
         style={{
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          display: 'block'
+          display: 'block',
+          transform: 'translateZ(0)',
+          willChange: 'transform'
         }}
       />
 
@@ -292,7 +305,7 @@ const VideoStreamPlayer = React.memo(({
           </div>
         )}
 
-        {/* Animated Speaking Equalizer */}
+        {/* Animated Speaking Indicator */}
         {isSpeaking && (
           <div style={{
             background: 'rgba(16, 185, 129, 0.2)',
@@ -306,9 +319,9 @@ const VideoStreamPlayer = React.memo(({
           }}>
             <span style={{ fontSize: '0.68rem', color: '#10b981', fontWeight: 700 }}>Speaking</span>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '12px' }}>
-              <span style={{ width: '2px', height: '60%', background: '#10b981', borderRadius: '1px', animation: 'eqPulse 0.6s infinite ease-in-out' }} />
-              <span style={{ width: '2px', height: '100%', background: '#10b981', borderRadius: '1px', animation: 'eqPulse 0.4s infinite ease-in-out 0.1s' }} />
-              <span style={{ width: '2px', height: '75%', background: '#10b981', borderRadius: '1px', animation: 'eqPulse 0.5s infinite ease-in-out 0.2s' }} />
+              <span style={{ width: '2px', height: '60%', background: '#10b981', borderRadius: '1px' }} />
+              <span style={{ width: '2px', height: '100%', background: '#10b981', borderRadius: '1px' }} />
+              <span style={{ width: '2px', height: '75%', background: '#10b981', borderRadius: '1px' }} />
             </div>
           </div>
         )}
@@ -346,12 +359,15 @@ const VideoStreamPlayer = React.memo(({
               borderRadius: '2px',
               overflow: 'hidden'
             }}>
-              <div style={{
-                width: `${Math.max(audioLevel, isSpeaking ? 30 : 5)}%`,
-                height: '100%',
-                background: isSpeaking ? '#10b981' : '#64748b',
-                transition: 'width 0.1s ease'
-              }} />
+              <div
+                ref={audioBarRef}
+                style={{
+                  width: '6%',
+                  height: '100%',
+                  background: '#64748b',
+                  transition: 'width 0.1s ease-out'
+                }}
+              />
             </div>
             <span style={{ color: isSpeaking ? '#10b981' : '#cbd5e1' }}>
               {isSpeaking ? 'Live Voice' : 'Mic Active'}

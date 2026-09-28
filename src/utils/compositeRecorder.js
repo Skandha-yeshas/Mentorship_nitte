@@ -22,9 +22,9 @@ export class CompositeMeetingRecorder {
     ticketId = 'TICKET',
     localRole = 'RO',
     remoteRole = 'Student',
-    width = 1280,
-    height = 720,
-    fps = 25
+    width = 960,
+    height = 540,
+    fps = 20
   }) {
     this.width = width;
     this.height = height;
@@ -53,6 +53,7 @@ export class CompositeMeetingRecorder {
     this.mediaRecorder = null;
     this.recordedChunks = [];
     this.animInterval = null;
+    this.rafId = null;
     this.isRecording = false;
     this.startTime = Date.now();
 
@@ -166,11 +167,20 @@ export class CompositeMeetingRecorder {
     this.startTime = Date.now();
     this.recordedChunks = [];
 
-    // Start 25fps draw loop
-    const frameIntervalMs = Math.round(1000 / this.fps);
-    this.animInterval = setInterval(() => {
-      this.drawFrame();
-    }, frameIntervalMs);
+    // Start requestAnimationFrame draw loop throttled to target fps
+    const frameIntervalMs = 1000 / this.fps;
+    let lastFrameTime = performance.now();
+
+    const loop = (currentTime) => {
+      if (!this.isRecording) return;
+      const elapsed = currentTime - lastFrameTime;
+      if (elapsed >= frameIntervalMs) {
+        lastFrameTime = currentTime - (elapsed % frameIntervalMs);
+        this.drawFrame();
+      }
+      this.rafId = requestAnimationFrame(loop);
+    };
+    this.rafId = requestAnimationFrame(loop);
 
     // Capture mixed canvas video stream
     let combinedStream;
@@ -206,7 +216,7 @@ export class CompositeMeetingRecorder {
 
     try {
       this.mediaRecorder = mimeType
-        ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 1200000 })
+        ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 900000 })
         : new MediaRecorder(combinedStream);
 
       this.mediaRecorder.ondataavailable = (event) => {
@@ -238,32 +248,33 @@ export class CompositeMeetingRecorder {
     ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, W, H);
 
-    // 2. Header Bar (Y: 0 - 58px)
+    // 2. Header Bar
+    const headerH = Math.round(H * 0.08); // e.g. 43px on 540p
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, W, 58);
+    ctx.fillRect(0, 0, W, headerH);
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, 58);
-    ctx.lineTo(W, 58);
+    ctx.moveTo(0, headerH);
+    ctx.lineTo(W, headerH);
     ctx.stroke();
 
     // NITTE Title
-    ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#38bdf8';
-    ctx.fillText('🎓 NITTE SMART MENTORSHIP & GRIEVANCE SYSTEM', 24, 35);
+    ctx.fillText('🎓 NITTE MENTORSHIP & GRIEVANCE', 20, Math.round(headerH * 0.65));
 
     // Ticket Badge (Center)
-    const badgeText = `[TICKET #${this.ticketId}] DUAL PARTICIPANT ARCHIVE`;
-    ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    const badgeWidth = ctx.measureText(badgeText).width + 24;
+    const badgeText = `[#${this.ticketId}] DUAL ARCHIVE`;
+    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    const badgeWidth = ctx.measureText(badgeText).width + 20;
     const badgeX = (W - badgeWidth) / 2;
     ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-    this.roundRect(ctx, badgeX, 14, badgeWidth, 30, 6, true, false);
+    this.roundRect(ctx, badgeX, Math.round((headerH - 26) / 2), badgeWidth, 26, 6, true, false);
     ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-    this.roundRect(ctx, badgeX, 14, badgeWidth, 30, 6, false, true);
+    this.roundRect(ctx, badgeX, Math.round((headerH - 26) / 2), badgeWidth, 26, 6, false, true);
     ctx.fillStyle = '#34d399';
-    ctx.fillText(badgeText, badgeX + 12, 34);
+    ctx.fillText(badgeText, badgeX + 10, Math.round(headerH * 0.62));
 
     // Live Date & Blinking REC Indicator (Right)
     const now = new Date();
@@ -271,21 +282,21 @@ export class CompositeMeetingRecorder {
     const dateString = now.toISOString().split('T')[0];
     const isBlinkOn = Math.floor(Date.now() / 600) % 2 === 0;
 
-    ctx.font = 'bold 13px monospace';
+    ctx.font = 'bold 12px monospace';
     ctx.fillStyle = isBlinkOn ? '#ef4444' : '#7f1d1d';
-    ctx.fillText('● REC', W - 230, 35);
+    ctx.fillText('● REC', W - 210, Math.round(headerH * 0.65));
 
-    ctx.font = '12px monospace';
+    ctx.font = '11px monospace';
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText(`${dateString} ${timeString}`, W - 170, 35);
+    ctx.fillText(`${dateString} ${timeString}`, W - 155, Math.round(headerH * 0.65));
 
     // 3. Side-by-Side Dual Video Tile Dimensions
-    // Usable Height = H - 58 (header) - 38 (footer) - 24 (margins) = 600px
-    const tileY = 70;
-    const tileH = 600;
-    const margin = 20;
-    const gap = 16;
-    const tileW = (W - (margin * 2) - gap) / 2; // ~606px
+    const footerH = Math.round(H * 0.055); // ~30px on 540p
+    const margin = Math.round(W * 0.016);
+    const gap = Math.round(W * 0.012);
+    const tileY = headerH + 8;
+    const tileH = H - tileY - footerH - 10;
+    const tileW = (W - (margin * 2) - gap) / 2;
 
     const leftX = margin;
     const rightX = margin + tileW + gap;
@@ -326,19 +337,19 @@ export class CompositeMeetingRecorder {
       waitingText: 'Awaiting Student Live Stream...'
     });
 
-    // 6. Footer Compliance Bar (Y: 682 - 720px)
+    // 6. Footer Compliance Bar
     ctx.fillStyle = '#090d16';
-    ctx.fillRect(0, H - 38, W, 38);
+    ctx.fillRect(0, H - footerH, W, footerH);
     ctx.strokeStyle = '#1e293b';
     ctx.beginPath();
-    ctx.moveTo(0, H - 38);
-    ctx.lineTo(W, H - 38);
+    ctx.moveTo(0, H - footerH);
+    ctx.lineTo(W, H - footerH);
     ctx.stroke();
 
-    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#64748b';
-    ctx.fillText('🔒 Tamper-Proof Automated Cloud Meeting Archive • End-to-End Encrypted DTLS-SRTP Dual Recording', 24, H - 15);
-    ctx.fillText('Nitte Mahalinga Adyanthaya Memorial Institute of Technology', W - 410, H - 15);
+    ctx.fillText('🔒 Tamper-Proof Automated Cloud Meeting Archive • End-to-End Encrypted DTLS-SRTP Dual Recording', 16, H - 10);
+    ctx.fillText('NMAMIT', W - 60, H - 10);
   }
 
   /**
@@ -492,6 +503,10 @@ export class CompositeMeetingRecorder {
    */
   async stop() {
     this.isRecording = false;
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
     if (this.animInterval) {
       clearInterval(this.animInterval);
       this.animInterval = null;

@@ -17,7 +17,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 app.use(cors());
 app.use(express.json());
@@ -839,7 +839,21 @@ app.post('/api/issues', async (req, res) => {
 // 3. SCHEDULE / RESCHEDULE A MEETING (RO ASSIGNED)
 app.post('/api/meetings', async (req, res) => {
   const { issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
-  if (!issueId || !studentId || !roId || !date || !time) {
+  
+  // Resolve valid studentId from parameter or fallback to issues table
+  let validStudentId = studentId;
+  if (!validStudentId && issueId) {
+    try {
+      const issueCheck = await query(`SELECT student_id FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
+      if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
+        validStudentId = issueCheck.rows[0].student_id;
+      }
+    } catch (e) {
+      console.warn('Could not query issue for student_id:', e.message);
+    }
+  }
+
+  if (!issueId || !validStudentId || !roId || !date || !time) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
@@ -856,8 +870,7 @@ app.post('/api/meetings', async (req, res) => {
 
   try {
     // Ensure student_id exists in database or fallback to issue's student_id
-    let validStudentId = studentId;
-    const studentCheck = await query(`SELECT id FROM students WHERE UPPER(id) = UPPER($1)`, [studentId]);
+    const studentCheck = await query(`SELECT id FROM students WHERE UPPER(id) = UPPER($1)`, [validStudentId]);
     if (studentCheck.rowCount === 0) {
       const issueCheck = await query(`SELECT student_id FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
       if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
@@ -1015,7 +1028,7 @@ app.get('/api/meetings/signals/:issueId', (req, res) => {
   const key = req.params.issueId.toUpperCase();
   const since = parseInt(req.query.since) || 0;
   const list = webrtcSignals.get(key) || [];
-  const signals = list.filter(s => s.timestamp > since);
+  const signals = list.filter(s => s.timestamp >= since);
   res.json({ signals, now: Date.now() });
 });
 

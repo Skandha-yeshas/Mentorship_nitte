@@ -130,13 +130,36 @@ const MOCK_DB = {
       resolutionNotes: 'Access point router replaced on 3rd floor corridor.',
       rating: 5,
       feedbackComments: 'Resolved quickly! Thanks.',
+      shiftedToLocalStorage: true,
+      feedback: { rating: 5, comments: 'Resolved quickly! Thanks.', submittedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
       logs: [
         { time: new Date(Date.now() - 86400000 * 6).toLocaleString(), text: 'Ticket created.' },
-        { time: new Date(Date.now() - 86400000 * 3).toLocaleString(), text: 'Issue resolved by network team.' }
+        { time: new Date(Date.now() - 86400000 * 3).toLocaleString(), text: 'Issue resolved by network team.' },
+        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Student submitted feedback rating: 5 Stars ("Resolved quickly! Thanks."). Shifted to local storage archive.' }
       ]
     }
   ],
-  meetings: [],
+  meetings: [
+    {
+      id: 'MEET-1002',
+      issueId: 'TICK-1002',
+      issue_id: 'TICK-1002',
+      studentId: 'u18cm24s0056',
+      student_id: 'u18cm24s0056',
+      studentName: 'Ananya Rao',
+      student_name: 'Ananya Rao',
+      roId: 'RO-18',
+      ro_id: 'RO-18',
+      roName: 'RO - Scholarship application delay',
+      date: new Date().toISOString().split('T')[0],
+      time: '11:00',
+      mode: 'Online',
+      location: 'Google Meet / Zoom Online Video Link',
+      notes: 'SSP Scholarship portal document verification pending at college office. Bring acknowledgement copy.',
+      status: 'Confirmed',
+      endedByRo: false
+    }
+  ],
   groupSessions: [
     {
       id: 'GS-01',
@@ -157,6 +180,56 @@ const MOCK_DB = {
     }
   ],
   mentorSessionRecords: [],
+  mentoringSchedules: {
+    'M-101': {
+      mentorId: 'M-101',
+      date: '2026-09-25',
+      day: 'Friday',
+      time: '09:00 AM',
+      endTime: '10:00 AM',
+      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+      whichClass: '6th Sem CSE-A',
+      autoEmailAt9: true,
+      lastEmailSentAt: null,
+      passedSessions: []
+    },
+    'M-102': {
+      mentorId: 'M-102',
+      date: '2026-09-25',
+      day: 'Friday',
+      time: '09:00 AM',
+      endTime: '10:00 AM',
+      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+      whichClass: '6th Sem ECE-B',
+      autoEmailAt9: true,
+      lastEmailSentAt: null,
+      passedSessions: []
+    },
+    'M-103': {
+      mentorId: 'M-103',
+      date: '2026-09-25',
+      day: 'Friday',
+      time: '09:00 AM',
+      endTime: '10:00 AM',
+      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+      whichClass: '4th Sem ISE-A',
+      autoEmailAt9: true,
+      lastEmailSentAt: null,
+      passedSessions: []
+    },
+    'M-104': {
+      mentorId: 'M-104',
+      date: '2026-09-25',
+      day: 'Friday',
+      time: '09:00 AM',
+      endTime: '10:00 AM',
+      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+      whichClass: '4th Sem ME-B',
+      autoEmailAt9: true,
+      lastEmailSentAt: null,
+      passedSessions: []
+    }
+  },
   mentorFeedbacks: [
     {
       id: 1,
@@ -347,10 +420,40 @@ export const DatabaseProvider = ({ children }) => {
           } catch (e) {}
         }
 
-        // Save server issues into local storage cache
+        // Save server issues into local storage cache, preserving local feedback & shiftedToLocalStorage status
         if (data.issues && data.issues.length) {
           try {
-            localStorage.setItem('nitte_saved_issues', JSON.stringify(data.issues));
+            const savedIssuesStr = localStorage.getItem('nitte_saved_issues');
+            let mergedIssues = data.issues;
+            if (savedIssuesStr) {
+              const savedIssues = JSON.parse(savedIssuesStr);
+              if (Array.isArray(savedIssues)) {
+                mergedIssues = data.issues.map(di => {
+                  const savedMatch = savedIssues.find(si => (si.id || si.issue_id)?.toUpperCase() === (di.id || di.issue_id)?.toUpperCase());
+                  if (savedMatch) {
+                    return {
+                      ...di,
+                      feedback: savedMatch.feedback || di.feedback,
+                      feedbackRating: savedMatch.feedbackRating || di.feedbackRating,
+                      feedbackComments: savedMatch.feedbackComments || di.feedbackComments,
+                      rating: savedMatch.rating || di.rating,
+                      shiftedToLocalStorage: savedMatch.shiftedToLocalStorage || di.shiftedToLocalStorage,
+                      shiftedAt: savedMatch.shiftedAt || di.shiftedAt
+                    };
+                  }
+                  return di;
+                });
+              }
+            }
+            localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
+            data.issues = mergedIssues;
+          } catch (e) {}
+        }
+
+        // Save server meetings into local storage cache
+        if (data.meetings && data.meetings.length) {
+          try {
+            localStorage.setItem('nitte_saved_meetings', JSON.stringify(data.meetings));
           } catch (e) {}
         }
 
@@ -430,10 +533,89 @@ export const DatabaseProvider = ({ children }) => {
           currentFeedbacks = MOCK_DB.mentorFeedbacks;
         }
 
+        let currentMeetings = (prev.meetings && prev.meetings.length) ? prev.meetings : [];
+        try {
+          const savedMeetings = localStorage.getItem('nitte_saved_meetings');
+          if (savedMeetings) {
+            const parsed = JSON.parse(savedMeetings);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const savedMap = new Map(parsed.map(m => [String(m.id || m.issueId || m.issue_id).toUpperCase(), m]));
+              if (currentMeetings.length > 0) {
+                currentMeetings = currentMeetings.map(m => {
+                  const key = String(m.id || m.issueId || m.issue_id).toUpperCase();
+                  return savedMap.has(key) ? { ...m, ...savedMap.get(key) } : m;
+                });
+                parsed.forEach(sm => {
+                  const key = String(sm.id || sm.issueId || sm.issue_id).toUpperCase();
+                  if (!currentMeetings.some(cm => String(cm.id || cm.issueId || cm.issue_id).toUpperCase() === key)) {
+                    currentMeetings.push(sm);
+                  }
+                });
+              } else {
+                currentMeetings = parsed;
+              }
+            }
+          }
+        } catch (e) {}
+        if (!currentMeetings.length) {
+          currentMeetings = MOCK_DB.meetings;
+        }
+
+        // Auto-ensure: if any active issue has status 'Meeting Scheduled', ensure a meeting exists
+        (currentIssues || []).forEach(iss => {
+          if (iss.status === 'Meeting Scheduled') {
+            const hasMeet = currentMeetings.some(m => (m.issueId || m.issue_id)?.toUpperCase() === (iss.id || iss.issue_id)?.toUpperCase());
+            if (!hasMeet) {
+              currentMeetings.push({
+                id: `MEET-${iss.id}`,
+                issueId: iss.id,
+                issue_id: iss.id,
+                studentId: iss.studentId,
+                student_id: iss.studentId,
+                studentName: iss.studentName,
+                student_name: iss.studentName,
+                roId: iss.roId || 'RO-01',
+                ro_id: iss.roId || 'RO-01',
+                date: new Date().toISOString().split('T')[0],
+                time: '11:00',
+                mode: 'Online',
+                location: 'Google Meet / Zoom Online Video Link',
+                notes: 'Scheduled meeting session with Relationship Officer.',
+                status: 'Confirmed',
+                endedByRo: false
+              });
+            }
+          }
+        });
+
+        // Auto-cleanup: if meeting's ticket is Resolved or already ended, mark as Completed so it doesn't linger
+        currentMeetings = currentMeetings.map(m => {
+          const parentIss = (currentIssues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (m.issueId || m.issue_id)?.toUpperCase());
+          if (parentIss && (parentIss.status === 'Resolved' || parentIss.status === 'Closed')) {
+            return { ...m, status: 'Completed', endedByRo: true };
+          }
+          return m;
+        });
+
+        let currentSchedules = prev.mentoringSchedules || null;
+        if (!currentSchedules) {
+          try {
+            const savedSched = localStorage.getItem('nitte_saved_mentor_schedules');
+            if (savedSched) {
+              currentSchedules = JSON.parse(savedSched);
+            }
+          } catch (e) {}
+        }
+        if (!currentSchedules) {
+          currentSchedules = MOCK_DB.mentoringSchedules;
+        }
+
         return {
           ...(prev.users?.students?.length ? prev : MOCK_DB),
           issues: currentIssues,
+          meetings: currentMeetings,
           mentorFeedbacks: currentFeedbacks,
+          mentoringSchedules: currentSchedules,
           recordings: recs,
           categoryVideos: catVideos
         };
@@ -452,21 +634,114 @@ export const DatabaseProvider = ({ children }) => {
 
     let bc;
     let videoBc;
+    let feedbackBc;
+    const handleStorageChange = (e) => {
+      if (e.key === 'nitte_saved_meetings' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            setDb(prev => ({ ...prev, meetings: parsed }));
+          }
+        } catch (err) {}
+      }
+      if (e.key === 'nitte_saved_issues' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            setDb(prev => ({ ...prev, issues: parsed }));
+          }
+        } catch (err) {}
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', handleStorageChange);
+    }
+
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bc = new BroadcastChannel('nitte_meeting_sync');
         bc.onmessage = (event) => {
           if (event.data && event.data.type === 'meeting_status') {
-            const { meetId, status } = event.data;
-            setDb(prev => ({
-              ...prev,
-              meetings: (prev.meetings || []).map(m => 
-                (m.id === meetId || m.issueId === meetId || m.issue_id === meetId || (m.issueId && meetId && m.issueId.toUpperCase() === meetId.toUpperCase()))
-                  ? { ...m, status }
-                  : m
-              )
-            }));
-            fetchDbState();
+            const { meetId, status, updatedMeetings } = event.data;
+            const targetId = String(meetId || '').trim().toUpperCase();
+            setDb(prev => {
+              let updated;
+              if (Array.isArray(updatedMeetings) && updatedMeetings.length > 0) {
+                updated = updatedMeetings;
+              } else {
+                let found = false;
+                updated = (prev.meetings || []).map(m => {
+                  const matches = (
+                    (m.id && String(m.id).toUpperCase() === targetId) ||
+                    (m.issueId && String(m.issueId).toUpperCase() === targetId) ||
+                    (m.issue_id && String(m.issue_id).toUpperCase() === targetId)
+                  );
+                  if (matches) {
+                    found = true;
+                    return { 
+                      ...m, 
+                      status, 
+                      ...(status === 'Started' ? { endedByRo: false, endedAt: null, startedAt: new Date().toISOString() } : {}),
+                      ...(status === 'Completed' || status === 'Finished' ? { endedByRo: true, endedAt: new Date().toISOString() } : {}) 
+                    };
+                  }
+                  return m;
+                });
+                if (!found && status === 'Started') {
+                  const parentIss = (prev.issues || []).find(i => 
+                    (i.id && String(i.id).toUpperCase() === targetId) ||
+                    (i.issue_id && String(i.issue_id).toUpperCase() === targetId)
+                  );
+                  if (parentIss) {
+                    updated.push({
+                      id: `MEET-${parentIss.id || Date.now()}`,
+                      issueId: parentIss.id,
+                      issue_id: parentIss.id,
+                      studentId: parentIss.studentId,
+                      student_id: parentIss.studentId,
+                      studentName: parentIss.studentName,
+                      student_name: parentIss.studentName,
+                      roId: parentIss.roId || 'RO-01',
+                      ro_id: parentIss.roId || 'RO-01',
+                      date: new Date().toISOString().split('T')[0],
+                      time: '11:00',
+                      mode: 'Online',
+                      location: 'Google Meet / Zoom Online Video Link',
+                      status,
+                      endedByRo: false,
+                      startedAt: new Date().toISOString(),
+                      endedAt: null
+                    });
+                  }
+                }
+              }
+              try {
+                localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
+              } catch (e) {}
+              return {
+                ...prev,
+                meetings: updated
+              };
+            });
+          } else if (event.data && event.data.type === 'meeting_scheduled') {
+            const { meeting, issueId, log } = event.data;
+            setDb(prev => {
+              const updatedMeetings = [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), meeting];
+              const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase() ? {
+                ...i,
+                status: 'Meeting Scheduled',
+                logs: log ? [...(i.logs || []), log] : (i.logs || [])
+              } : i);
+              try {
+                localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+                localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+              } catch (e) {}
+              return {
+                ...prev,
+                meetings: updatedMeetings,
+                issues: updatedIssues
+              };
+            });
           }
         };
 
@@ -490,6 +765,36 @@ export const DatabaseProvider = ({ children }) => {
             });
           }
         };
+
+        // Real-time zero-latency sync for student feedback across tabs
+        feedbackBc = new BroadcastChannel('nitte_feedback_sync');
+        feedbackBc.onmessage = (event) => {
+          if (event.data && event.data.type === 'feedback_submitted') {
+            const { issueId, feedback, shiftedToLocalStorage } = event.data;
+            setDb(prev => {
+              const updated = (prev.issues || []).map(i => 
+                (i.id === issueId || i.issue_id === issueId || (i.id && issueId && i.id.toUpperCase() === issueId.toUpperCase()))
+                  ? {
+                      ...i,
+                      feedback,
+                      feedbackRating: feedback.rating,
+                      rating: feedback.rating,
+                      feedbackComments: feedback.comments,
+                      shiftedToLocalStorage: true,
+                      shiftedAt: new Date().toISOString()
+                    }
+                  : i
+              );
+              try {
+                localStorage.setItem('nitte_saved_issues', JSON.stringify(updated));
+              } catch (e) {}
+              return {
+                ...prev,
+                issues: updated
+              };
+            });
+          }
+        };
       }
     } catch (e) {}
 
@@ -497,6 +802,10 @@ export const DatabaseProvider = ({ children }) => {
       clearInterval(pollInterval);
       if (bc) bc.close();
       if (videoBc) videoBc.close();
+      if (feedbackBc) feedbackBc.close();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('storage', handleStorageChange);
+      }
     };
   }, []);
 
@@ -611,9 +920,10 @@ export const DatabaseProvider = ({ children }) => {
   };
 
   const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes, discussionMinutes, actionItems, reassignFeedback) => {
-    const issue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase()) || {};
-    const student = db.users.students.find(s => (s.id || s.student_id)?.toUpperCase() === (studentId || issue.studentId)?.toUpperCase());
-    const studentName = issue.studentName || (student ? student.name : 'Student');
+    const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase()) || {};
+    const validStudentId = studentId || issue.studentId || issue.student_id;
+    const student = (db.users?.students || []).find(s => (s.id || s.student_id)?.toUpperCase() === validStudentId?.toUpperCase());
+    const studentName = issue.studentName || issue.student_name || (student ? student.name : 'Student');
     const existingMeet = (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === issueId?.toUpperCase());
 
     const isReschedule = Boolean(
@@ -664,8 +974,8 @@ export const DatabaseProvider = ({ children }) => {
       id: existingMeet ? existingMeet.id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       issueId,
       issue_id: issueId,
-      studentId: issue.studentId || studentId,
-      student_id: issue.studentId || studentId,
+      studentId: validStudentId,
+      student_id: validStudentId,
       studentName,
       student_name: studentName,
       roId,
@@ -677,7 +987,9 @@ export const DatabaseProvider = ({ children }) => {
       notes: finalNotes,
       discussionSummary: mode === 'Online' ? (cleanMinutes || (existingMeet?.mode === 'Online' ? existingMeet.discussionSummary : '')) : '',
       actionItems: cleanActions || (existingMeet ? existingMeet.actionItems : ''),
-      status: 'Confirmed'
+      status: 'Confirmed',
+      endedByRo: false,
+      endedAt: null
     };
     const timestamp = new Date().toLocaleString();
     let logMsg = isReschedule
@@ -690,16 +1002,40 @@ export const DatabaseProvider = ({ children }) => {
       logMsg += ` | [LOGGED DISCUSSION MINUTES]: "${cleanMinutes}"`;
     }
 
-    // 1. Instantly update local React state so Student & RO Dashboards update immediately
-    setDb(prev => ({
-      ...prev,
-      meetings: [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), newMeeting],
-      issues: (prev.issues || []).map(i => i.id?.toUpperCase() === issueId?.toUpperCase() ? {
+    // 1. Instantly update local React state and localStorage so Student & RO Dashboards update immediately
+    setDb(prev => {
+      const updatedMeetings = [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), newMeeting];
+      const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase() ? {
         ...i,
         status: 'Meeting Scheduled',
         logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
-      } : i)
-    }));
+      } : i);
+
+      try {
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) {}
+
+      return {
+        ...prev,
+        meetings: updatedMeetings,
+        issues: updatedIssues
+      };
+    });
+
+    // Broadcast across open tabs for zero-latency sync between RO & Student tabs
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const bc = new BroadcastChannel('nitte_meeting_sync');
+        bc.postMessage({
+          type: 'meeting_scheduled',
+          meeting: newMeeting,
+          issueId,
+          log: { time: timestamp, text: logMsg }
+        });
+        bc.close();
+      }
+    } catch (e) {}
 
     // 2. Also send request to backend API if active
     try {
@@ -708,7 +1044,7 @@ export const DatabaseProvider = ({ children }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           issueId,
-          studentId: issue.studentId || studentId,
+          studentId: validStudentId,
           studentName,
           roId,
           date,
@@ -731,22 +1067,54 @@ export const DatabaseProvider = ({ children }) => {
 
   const submitFeedback = async (issueId, rating, comments) => {
     const numericRating = Number(rating);
-    const feedbackObj = { rating: numericRating, comments: comments || '' };
+    const feedbackObj = { 
+      rating: numericRating, 
+      comments: comments || '',
+      submittedAt: new Date().toISOString()
+    };
 
     // 1. Instantly update local state so rating shows immediately in Student & Admin Dashboards
-    setDb(prev => ({
-      ...prev,
-      issues: (prev.issues || []).map(i => i.id === issueId ? {
+    // and shift resolved issue to local storage archive
+    let updatedIssuesList = [];
+    setDb(prev => {
+      const updatedIssues = (prev.issues || []).map(i => (i.id === issueId || i.issue_id === issueId || (i.id && issueId && i.id.toUpperCase() === issueId.toUpperCase())) ? {
         ...i,
         feedback: feedbackObj,
         feedbackRating: numericRating,
         feedbackComments: comments || '',
+        rating: numericRating,
+        shiftedToLocalStorage: true,
+        shiftedAt: new Date().toISOString(),
         logs: [...(i.logs || []), {
           time: new Date().toLocaleString(),
-          text: `Student submitted feedback rating: ${numericRating} Stars ("${comments || ''}")`
+          text: `Student submitted feedback rating: ${numericRating} Stars ("${comments || ''}"). Shifted to local storage archive.`
         }]
-      } : i)
-    }));
+      } : i);
+
+      updatedIssuesList = updatedIssues;
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) {}
+
+      return {
+        ...prev,
+        issues: updatedIssues
+      };
+    });
+
+    // Broadcast across tabs so RO dashboard receives student feedback instantly
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const feedbackBc = new BroadcastChannel('nitte_feedback_sync');
+        feedbackBc.postMessage({
+          type: 'feedback_submitted',
+          issueId,
+          feedback: feedbackObj,
+          shiftedToLocalStorage: true
+        });
+        feedbackBc.close();
+      }
+    } catch (e) {}
 
     // 2. Also sync to backend API if server is online
     try {
@@ -829,6 +1197,224 @@ export const DatabaseProvider = ({ children }) => {
     }
   };
 
+  // MENTOR MENTORING HOUR & 9:00 AM GMAIL ALERT
+  const shootMentorGmailAlert = async (mentorId, customSchedule = null) => {
+    const mentor = (db.users?.mentors || []).find(m => m.id === mentorId) || (db.users?.mentors || [])[0];
+    if (!mentor) return false;
+
+    const sched = customSchedule || (db.mentoringSchedules && db.mentoringSchedules[mentorId]) || {
+      date: new Date().toISOString().split('T')[0],
+      day: 'Friday',
+      time: '09:00 AM',
+      endTime: '10:00 AM',
+      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
+      whichClass: mentor.class || '6th Sem CSE-A'
+    };
+
+    const mentorEmail = mentor.email || 'skandhayashu2906@gmail.com';
+    const emailSubject = `[NITTE Mentorship Alert] Mentoring Hour Period Scheduled at 9:00 AM (${sched.date})`;
+    const emailContent = `
+OFFICIAL NITTE MENTORSHIP HOUR SCHEDULE NOTIFICATION
+
+Dear ${mentor.name},
+
+This is an automated institutional alert for your scheduled Mentoring Hour Period.
+
+• Faculty Mentor: ${mentor.name} (${mentor.dept} Department)
+• Assigned Class / Cohort: ${sched.whichClass || mentor.class}
+• Scheduled Date: ${sched.date} (${sched.day || 'Scheduled Day'})
+• Period / Time Slot: ${sched.periodSlot || sched.time}
+
+Please ensure attendance of all assigned mentees is tracked. This mentoring record must be filed in compliance with NAAC & Academic Audit guidelines.
+
+NITTE Mahalinga Adyanthaya Memorial Institute of Technology
+Department of Student Welfare & Mentorship
+    `.trim();
+
+    // Directly dispatch email in background without opening any external Gmail window
+    await sendCustomEmail({
+      to: mentorEmail,
+      subject: emailSubject,
+      content: emailContent,
+      issueId: `MENTOR-${mentor.id}`
+    });
+
+    // Update last email sent timestamp
+    setDb(prev => {
+      const updatedSchedules = {
+        ...(prev.mentoringSchedules || {}),
+        [mentorId]: {
+          ...(prev.mentoringSchedules?.[mentorId] || sched),
+          lastEmailSentAt: new Date().toISOString()
+        }
+      };
+      try {
+        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentoringSchedules: updatedSchedules
+      };
+    });
+
+    return true;
+  };
+
+  const updateMentorSchedule = async (mentorId, newScheduleData, shootEmailNow = true) => {
+    setDb(prev => {
+      const updatedSchedules = {
+        ...(prev.mentoringSchedules || {}),
+        [mentorId]: {
+          ...(prev.mentoringSchedules?.[mentorId] || {}),
+          ...newScheduleData,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      try {
+        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentoringSchedules: updatedSchedules
+      };
+    });
+
+    if (shootEmailNow) {
+      await shootMentorGmailAlert(mentorId, newScheduleData);
+    }
+    return true;
+  };
+
+  // PASS / WAIVE MENTORING SESSION (e.g. Holiday, College Event, Exam Day)
+  const passMentorSession = async (mentorId, sessionDate, reason, remarks = '') => {
+    setDb(prev => {
+      const sched = prev.mentoringSchedules?.[mentorId] || {};
+      const existingPassed = sched.passedSessions || [];
+      const filtered = existingPassed.filter(p => p.sessionDate !== sessionDate);
+      const updatedPassed = [
+        { sessionDate, reason: reason || 'Public Holiday / Not Conducted', remarks: remarks || '', passedAt: new Date().toISOString() },
+        ...filtered
+      ];
+      const updatedSchedules = {
+        ...(prev.mentoringSchedules || {}),
+        [mentorId]: {
+          ...sched,
+          passedSessions: updatedPassed,
+          isPassed: true,
+          passReason: reason || 'Public Holiday / Not Conducted'
+        }
+      };
+      try {
+        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentoringSchedules: updatedSchedules
+      };
+    });
+    return true;
+  };
+
+  const unpassMentorSession = async (mentorId, sessionDate) => {
+    setDb(prev => {
+      const sched = prev.mentoringSchedules?.[mentorId] || {};
+      const existingPassed = (sched.passedSessions || []).filter(p => p.sessionDate !== sessionDate);
+      const updatedSchedules = {
+        ...(prev.mentoringSchedules || {}),
+        [mentorId]: {
+          ...sched,
+          passedSessions: existingPassed,
+          isPassed: false,
+          passReason: null
+        }
+      };
+      try {
+        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentoringSchedules: updatedSchedules
+      };
+    });
+    return true;
+  };
+
+  // SHOOT 9:00 AM NEXT-MORNING DEADLINE NOTICE IF SESSION REPORT NOT FILED
+  const shootMentorDeadlineAlert = async (mentorId, sessionDate) => {
+    const mentor = (db.users?.mentors || []).find(m => m.id === mentorId) || (db.users?.mentors || [])[0];
+    if (!mentor) return false;
+
+    const sched = (db.mentoringSchedules && db.mentoringSchedules[mentorId]) || {};
+    const dateText = sessionDate || sched.date || new Date().toISOString().split('T')[0];
+
+    // Check if session was marked as passed / holiday
+    const isPassed = (sched.passedSessions || []).some(p => p.sessionDate === dateText) || sched.isPassed;
+    if (isPassed) {
+      console.log(`[Deadline Alert] Session on ${dateText} was marked as passed/holiday. Skipping deadline email.`);
+      return false;
+    }
+
+    // Check if report was already filed
+    const isSubmitted = (db.mentorSessionRecords || []).some(
+      r => r.mentorId === mentorId && r.sessionDate === dateText
+    );
+    if (isSubmitted) {
+      console.log(`[Deadline Alert] Session report for ${dateText} already filed. Skipping deadline email.`);
+      return false;
+    }
+
+    const mentorEmail = mentor.email || 'skandhayashu2906@gmail.com';
+    const emailSubject = `[URGENT: DEADLINE TODAY] Submit Pending Mentoring Session Feedback Report (${dateText})`;
+    const emailContent = `
+URGENT INSTITUTIONAL NOTICE: PENDING MENTORING SESSION REPORT
+
+Dear ${mentor.name},
+
+This is an automated 9:00 AM compliance notice from the NITTE Mentorship & Academic Audit Cell.
+
+Our records indicate that the mentoring session report for your scheduled class session on ${dateText} (${sched.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)'}) has not yet been submitted.
+
+• Faculty Mentor: ${mentor.name} (${mentor.dept} Department)
+• Assigned Class / Cohort: ${sched.whichClass || mentor.class}
+• Scheduled Session Date: ${dateText}
+• Report Status: PENDING SUBMISSION
+• DEADLINE: TODAY BEFORE 5:00 PM
+
+Institutional compliance requires all faculty mentors to document the weekly mentoring session and mentee attendance for NAAC and internal academic audit.
+
+NOTE: If the session was NOT conducted due to a public holiday, institutional event, examination, or leave, please log in to your Mentor Portal and select "Pass Session (Holiday / Not Conducted)" to record the official waiver.
+
+NITTE Mahalinga Adyanthaya Memorial Institute of Technology
+Office of Student Welfare & Academic Mentorship
+    `.trim();
+
+    await sendCustomEmail({
+      to: mentorEmail,
+      subject: emailSubject,
+      content: emailContent,
+      issueId: `MENTOR-DEADLINE-${mentor.id}`
+    });
+
+    setDb(prev => {
+      const updatedSchedules = {
+        ...(prev.mentoringSchedules || {}),
+        [mentorId]: {
+          ...(prev.mentoringSchedules?.[mentorId] || {}),
+          lastDeadlineEmailSentAt: new Date().toISOString()
+        }
+      };
+      try {
+        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+      } catch (e) {}
+      return {
+        ...prev,
+        mentoringSchedules: updatedSchedules
+      };
+    });
+
+    return true;
+  };
+
   // STUDENT MENTOR FEEDBACK
   const submitMentorFeedback = async (studentId, studentName, mentorId, mentorName, regularityRating, clarityRating, participationRating, difficulties) => {
     const newFeedback = {
@@ -873,24 +1459,77 @@ export const DatabaseProvider = ({ children }) => {
 
   // RO ACTIONS
   const updateMeetingStatus = async (meetId, status) => {
-    // 1. Update local state immediately for instant UI feedback
-    setDb(prev => ({
-      ...prev,
-      meetings: (prev.meetings || []).map(m => 
-        (m.id === meetId || m.issueId === meetId || m.issue_id === meetId || (m.issueId && meetId && m.issueId.toUpperCase() === meetId.toUpperCase()))
-          ? { ...m, status }
-          : m
-      )
-    }));
+    // 1. Update local state immediately for instant UI feedback and save to localStorage
+    let updatedMeetingsList = [];
+    setDb(prev => {
+      let found = false;
+      const targetId = String(meetId || '').trim().toUpperCase();
+      const updated = (prev.meetings || []).map(m => {
+        const matches = (
+          (m.id && String(m.id).toUpperCase() === targetId) ||
+          (m.issueId && String(m.issueId).toUpperCase() === targetId) ||
+          (m.issue_id && String(m.issue_id).toUpperCase() === targetId)
+        );
+        if (matches) {
+          found = true;
+          return {
+            ...m,
+            status,
+            ...(status === 'Started' ? { endedByRo: false, endedAt: null, startedAt: new Date().toISOString() } : {}),
+            ...(status === 'Completed' || status === 'Finished' ? { endedByRo: true, endedAt: new Date().toISOString() } : {})
+          };
+        }
+        return m;
+      });
 
-    // Broadcast across open tabs
-    try {
-      if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        const bc = new BroadcastChannel('nitte_meeting_sync');
-        bc.postMessage({ type: 'meeting_status', meetId, status });
-        bc.close();
+      if (!found) {
+        // If not found in existing meetings, find matching issue and register
+        const parentIss = (prev.issues || []).find(i => 
+          (i.id && String(i.id).toUpperCase() === targetId) ||
+          (i.issue_id && String(i.issue_id).toUpperCase() === targetId)
+        );
+        if (parentIss) {
+          const newMeet = {
+            id: `MEET-${parentIss.id || Date.now()}`,
+            issueId: parentIss.id,
+            issue_id: parentIss.id,
+            studentId: parentIss.studentId,
+            student_id: parentIss.studentId,
+            studentName: parentIss.studentName,
+            student_name: parentIss.studentName,
+            roId: parentIss.roId || 'RO-01',
+            ro_id: parentIss.roId || 'RO-01',
+            date: new Date().toISOString().split('T')[0],
+            time: '11:00',
+            mode: 'Online',
+            location: 'Google Meet / Zoom Online Video Link',
+            status,
+            endedByRo: status === 'Completed' || status === 'Finished',
+            startedAt: status === 'Started' ? new Date().toISOString() : undefined,
+            endedAt: (status === 'Completed' || status === 'Finished') ? new Date().toISOString() : null
+          };
+          updated.push(newMeet);
+        }
       }
-    } catch (e) {}
+
+      try {
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
+      } catch (e) {}
+
+      // Broadcast across open tabs for zero-latency synchronization
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('nitte_meeting_sync');
+          bc.postMessage({ type: 'meeting_status', meetId, status, updatedMeetings: updated });
+          bc.close();
+        }
+      } catch (e) {}
+
+      return {
+        ...prev,
+        meetings: updated
+      };
+    });
 
     // 2. Also send request to backend API
     try {
@@ -975,6 +1614,19 @@ export const DatabaseProvider = ({ children }) => {
           logs: [...(i.logs || []), { time: timestamp, text: logText }]
         };
       });
+
+      try {
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) {}
+
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('nitte_meeting_sync');
+          bc.postMessage({ type: 'meeting_status', meetId, status: 'Completed', updatedMeetings });
+          bc.close();
+        }
+      } catch (e) {}
 
       return {
         ...prev,
@@ -1070,16 +1722,41 @@ export const DatabaseProvider = ({ children }) => {
     const logMsg = `Marked as Resolved by RO (${roId}): ${resolutionNotes}`;
 
     // 1. Instantly update local React state so Student, RO, & Admin Dashboards update immediately
-    setDb(prev => ({
-      ...prev,
-      issues: (prev.issues || []).map(i => i.id === issueId ? {
+    setDb(prev => {
+      const updatedIssues = (prev.issues || []).map(i => i.id === issueId ? {
         ...i,
         status: 'Resolved',
         resolvedAt: timestamp,
         resolutionNotes,
         logs: [...(i.logs || []), { time: timeFormatted, text: logMsg }]
-      } : i)
-    }));
+      } : i);
+
+      // Conclude any online meeting associated with this resolved issue so it never lingers
+      const updatedMeetings = (prev.meetings || []).map(m => 
+        (m.issueId || m.issue_id)?.toUpperCase() === issueId?.toUpperCase()
+          ? { ...m, status: 'Completed', endedByRo: true, endedAt: timestamp }
+          : m
+      );
+
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+      } catch (e) {}
+
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('nitte_meeting_sync');
+          bc.postMessage({ type: 'meeting_status', meetId: issueId, status: 'Completed', updatedMeetings });
+          bc.close();
+        }
+      } catch (e) {}
+
+      return {
+        ...prev,
+        issues: updatedIssues,
+        meetings: updatedMeetings
+      };
+    });
 
     // 2. Also sync to backend API if active
     try {
@@ -1486,7 +2163,12 @@ export const DatabaseProvider = ({ children }) => {
       updateCategoryVideo,
       submitRoMeetingFeedback,
       getYoutubeEmbedUrl,
-      submitMentorFeedback
+      submitMentorFeedback,
+      updateMentorSchedule,
+      shootMentorGmailAlert,
+      passMentorSession,
+      unpassMentorSession,
+      shootMentorDeadlineAlert
     }}>
       {children}
     </DatabaseContext.Provider>
