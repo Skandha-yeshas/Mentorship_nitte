@@ -701,11 +701,11 @@ export const MentorDashboard = ({ mentorId }) => {
                 </div>
                 
                 <div className="form-group">
-                  <label className="form-label">Meeting URL (Google Meet, Teams, etc.)</label>
+                  <label className="form-label">Meeting URL / Location</label>
                   <input 
                     type="url" 
                     className="form-control" 
-                    placeholder="https://meet.google.com/..."
+                    placeholder="https://nitte-meet.edu/..."
                     value={sessionLink}
                     onChange={(e) => setSessionLink(e.target.value)}
                     required
@@ -844,7 +844,7 @@ export const MentorDashboard = ({ mentorId }) => {
                   <input 
                     type="text" 
                     className="form-control" 
-                    placeholder="e.g. Seminar Hall 1, Classroom 304, or Online (Google Meet)"
+                    placeholder="e.g. Seminar Hall 1, Classroom 304, or In-App Online Video Portal"
                     value={recordLocation}
                     onChange={(e) => setRecordLocation(e.target.value)}
                     required

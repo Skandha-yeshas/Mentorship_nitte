@@ -248,13 +248,13 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
 
   for (let i = 0; i < students.length; i++) {
     const s = students[i];
-    const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'];
-    const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || s['Name'];
-    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'];
+    const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'] || s['Roll No'] || s['Roll Number'] || s['ID'];
+    const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || s['Student'];
+    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'] || s['Mail'];
     const branch = s.branch || s.Branch || s.department || s.Dept || 'CSE';
     const sem = parseInt(s.sem || s.Sem || s.semester || s.Semester) || 5;
     const phone = s.phone || s.Phone || s.mobile || '9876543210';
-    const mentorId = s.mentorId || s.mentor_id || 'M01';
+    const mentorId = s.mentorId || s.mentor_id || 'M101';
 
     if (!rawId || !rawName || !rawEmail) {
       results.push({

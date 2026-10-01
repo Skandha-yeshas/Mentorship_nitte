@@ -1363,7 +1363,7 @@ export const StudentDashboard = ({ studentId }) => {
                           date: new Date().toISOString().split('T')[0],
                           time: '11:00',
                           mode: 'Online',
-                          location: 'Google Meet / Zoom Online Video Link',
+                          location: 'In-App Online Video Call Portal',
                           notes: 'Scheduled meeting session with Relationship Officer.',
                           status: selectedIssue.status === 'Meeting Started' ? 'Started' : 'Confirmed'
                         }] : []
@@ -1383,7 +1383,7 @@ export const StudentDashboard = ({ studentId }) => {
                       const meet = matchingMeetings[matchingMeetings.length - 1];
                       const modeLower = (meet.mode || '').toLowerCase();
                       const locLower = (meet.location || '').toLowerCase();
-                      const isOnline = !meet.mode || modeLower.includes('online') || locLower.includes('meet') || locLower.includes('zoom') || locLower.includes('video');
+                      const isOnline = !meet.mode || modeLower.includes('online') || locLower.includes('meet') || locLower.includes('zoom') || locLower.includes('video') || locLower.includes('portal');
                       const isLive = meet.status === 'Started' || meet.status === 'In-Progress';
                       const isCompleted = (meet.status === 'Completed' || meet.status === 'Finished' || meet.status === 'Cancelled') && !isLive;
 
@@ -1401,7 +1401,7 @@ export const StudentDashboard = ({ studentId }) => {
                             </span>
                           </div>
                           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                            <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'Google Meet / Zoom Online Video Link' : 'RO Office Desk (Admin Block)')}
+                            <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'In-App Online Video Call Portal' : 'RO Office Desk (Admin Block)')}
                           </p>
                           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
                             <strong>Mode:</strong> {meet.mode || 'Online Video Meeting'}

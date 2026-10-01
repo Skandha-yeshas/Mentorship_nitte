@@ -405,7 +405,7 @@ export const RODashboard = ({ roId }) => {
     date: todayStr,
     time: '11:00',
     mode: 'Online',
-    location: 'Google Meet / Zoom Online Video Link',
+    location: 'In-App Online Video Call Portal',
     notes: 'Scheduled meeting session with Relationship Officer.',
     status: 'Confirmed',
     endedByRo: false
@@ -450,15 +450,15 @@ export const RODashboard = ({ roId }) => {
   const handleModeChange = (newMode) => {
     setMeetMode(newMode);
     if (newMode === 'Online') {
-      setMeetLocation('Google Meet / Zoom Online Video Link');
-    } else if (newMode === 'Offline' && (meetLocation.includes('Google Meet') || meetLocation.includes('Online Video') || meetLocation.includes('Video Link'))) {
+      setMeetLocation('In-App Online Video Call Portal');
+    } else if (newMode === 'Offline' && (meetLocation.includes('In-App') || meetLocation.includes('Online Video') || meetLocation.includes('Video Link') || meetLocation.includes('Portal'))) {
       setMeetLocation('RO Office Desk 1 (Admin Block)');
     }
   };
 
   const handleOpenScheduleModal = () => {
     if (isReassignLimitReached) {
-      alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
+      alert('RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
       return;
     }
     if (activeMeeting) {
@@ -472,7 +472,7 @@ export const RODashboard = ({ roId }) => {
       setMeetTime(validTime);
       const initialMode = activeMeeting.mode || 'Offline';
       setMeetMode(initialMode);
-      setMeetLocation(initialMode === 'Online' ? 'Google Meet / Zoom Online Video Link' : (activeMeeting.location || 'RO Office Desk 1 (Admin Block)'));
+      setMeetLocation(initialMode === 'Online' ? 'In-App Online Video Call Portal' : (activeMeeting.location || 'RO Office Desk 1 (Admin Block)'));
       setMeetNotes(activeMeeting.notes || 'Bring student ID card and relevant documents.');
     } else {
       setMeetDate(todayStr);
@@ -1449,9 +1449,21 @@ export const RODashboard = ({ roId }) => {
 
               {/* Escalated state visual */}
               {selectedIssue.status === 'Escalated' && (
-                <div style={{ borderLeft: '3px solid var(--accent-rose)', background: 'rgba(244,63,94,0.05)', padding: '12px', borderRadius: '4px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                  <h4 style={{ fontWeight: '700', color: 'rgb(253,164,175)', marginBottom: '4px' }}>Escalated Ticket Status:</h4>
-                  <p>This issue has been routed to the Senior Admin / Principal dashboard for administrative override.</p>
+                <div style={{ borderLeft: '3px solid var(--accent-rose)', background: 'rgba(244,63,94,0.08)', padding: '14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
+                    <h4 style={{ fontWeight: '700', color: 'rgb(253,164,175)', margin: 0 }}>Escalated Ticket Status</h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowEscalateModal(true)}
+                      className="btn btn-danger"
+                      style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                    >
+                      Re-escalate / Update Remarks to Admin
+                    </button>
+                  </div>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
+                    This issue has been routed to the Senior Admin / Principal dashboard for administrative override. You can submit additional notes or re-escalate if urgent action is required.
+                  </p>
                 </div>
               )}
 
@@ -1736,21 +1748,25 @@ export const RODashboard = ({ roId }) => {
         </div>
       )}
 
-      {/* ESCALATE MODAL */}
+      {/* ESCALATE / RE-ESCALATE MODAL */}
       {showEscalateModal && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3 style={{ fontWeight: '700', color: 'var(--accent-rose)' }}>Escalate to Admin/Principal</h3>
+              <h3 style={{ fontWeight: '700', color: 'var(--accent-rose)' }}>
+                {selectedIssue?.status === 'Escalated' ? 'Re-escalate / Update Escalation to Admin' : 'Escalate to Admin/Principal'}
+              </h3>
               <button onClick={() => setShowEscalateModal(false)} className="btn-icon-only">✕</button>
             </div>
             <form onSubmit={handleEscalateSubmit}>
               <div className="modal-body">
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Escalate this issue to the Management Dashboard. Use this if the issue requires academic committee overrides, financial policies exemptions, or is delayed past standard SLA.
+                  {selectedIssue?.status === 'Escalated'
+                    ? 'Submit updated escalation details, new developments, or increased urgency for this issue to the Management Dashboard.'
+                    : 'Escalate this issue to the Management Dashboard. Use this if the issue requires academic committee overrides, financial policies exemptions, or is delayed past standard SLA.'}
                 </p>
                 <div className="form-group">
-                  <label className="form-label">Reason for Escalation</label>
+                  <label className="form-label">Reason for Escalation / Urgent Remarks</label>
                   <textarea
                     className="form-textarea"
                     required
@@ -1762,7 +1778,9 @@ export const RODashboard = ({ roId }) => {
               </div>
               <div className="modal-footer">
                 <button type="button" onClick={() => setShowEscalateModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-danger">Escalate Ticket</button>
+                <button type="submit" className="btn btn-danger">
+                  {selectedIssue?.status === 'Escalated' ? 'Confirm Re-escalation to Admin' : 'Escalate Ticket'}
+                </button>
               </div>
             </form>
           </div>
@@ -1820,14 +1838,14 @@ export const RODashboard = ({ roId }) => {
                     onChange={(e) => handleModeChange(e.target.value)}
                   >
                     <option value="Offline">In-Person (Offline on Campus)</option>
-                    <option value="Online">Online Video Meeting (Google Meet / Zoom)</option>
+                    <option value="Online">Online Video Meeting (In-App Video Portal)</option>
                   </select>
                 </div>
 
                 {meetMode === 'Offline' && activeMeeting?.mode === 'Online' && (
                   <div className="form-group" style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '12px 14px', borderRadius: '8px' }}>
                     <label className="form-label" style={{ fontWeight: '700', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>💬 Feedback / Reason for Switching to Offline</span>
+                      <span>Feedback / Reason for Switching to Offline</span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Optional</span>
                     </label>
                     <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '3px 0 8px 0' }}>
