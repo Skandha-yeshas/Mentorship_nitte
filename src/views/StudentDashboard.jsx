@@ -1,13 +1,13 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
-import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, PhoneOff, Volume2, VolumeX, MessageSquare } from 'lucide-react';
+import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, MessageSquare, PhoneOff, Volume2, VolumeX } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, saveMeetingRecording } = useContext(DatabaseContext);
+  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, updateMeetingStatus, saveMeetingRecording } = useContext(DatabaseContext);
 
   // Submission Self-Help Video Modal State
   const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
@@ -446,6 +446,23 @@ export const StudentDashboard = ({ studentId }) => {
         studentStreamRef.current = null;
       }
     }
+    return () => {
+      if (studentCompositeRecorderRef.current) {
+        try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
+        studentCompositeRecorderRef.current = null;
+      }
+      if (webrtcSessionRef.current) {
+        try { webrtcSessionRef.current.close(); } catch (e) { }
+        webrtcSessionRef.current = null;
+      }
+      setRoRemoteStream(null);
+      setStudentStream(null);
+      setPeerConnected(false);
+      if (studentStreamRef.current) {
+        studentStreamRef.current.getTracks().forEach(t => t.stop());
+        studentStreamRef.current = null;
+      }
+    };
   }, [showStudentVideoModal]);
 
   // Resources and sessions from their mentor
@@ -568,6 +585,8 @@ export const StudentDashboard = ({ studentId }) => {
   const maxWeeklyLimit = 2;
   const availableCount = Math.max(0, maxWeeklyLimit - usedCount);
   const isLimitReached = usedCount >= maxWeeklyLimit;
+
+  // Active lock state is true ONLY IF 2 issues used AND demo limit bypass is OFF
   const isFormLocked = isLimitReached && !isDemoLimitBypassed;
 
   // Has any resolved ticket pending feedback
@@ -913,6 +932,16 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
+        {/* ERROR / RATE LIMIT MESSAGE */}
+        {errorMessage && (
+          <div className="glass-card" style={{ borderLeft: '4px solid #ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#dc2626' }}>
+              <AlertCircle size={20} />
+              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{errorMessage}</span>
+            </div>
+          </div>
+        )}
+
         {/* DEMO MODE ACTIVE BANNER */}
         {isDemoLimitBypassed && (
           <div className="glass-card" style={{ borderLeft: '4px solid #10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '14px 16px' }}>
@@ -965,7 +994,7 @@ export const StudentDashboard = ({ studentId }) => {
             {/* VISUAL 2-SLOT LIMIT TRACKER WIDGET */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
 
-              {/* SLOT #1 */}
+              {/* SLOT #1 CARD */}
               <div style={{
                 padding: '14px 16px',
                 borderRadius: '12px',

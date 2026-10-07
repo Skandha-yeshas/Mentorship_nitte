@@ -170,7 +170,7 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
             </button>
           )}
 
-          {activeSubProfiles.length > 0 && (
+          {!authenticatedUser && activeSubProfiles.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Profile:</span>
               <select
@@ -202,23 +202,25 @@ export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpen
           )}
 
           {/* Role Tabs */}
-          <div className="role-switcher-group">
-            {roles.map(role => {
-              const Icon = role.icon;
-              const isActive = currentUser === role.name;
-              return (
-                <button
-                  key={role.name}
-                  onClick={() => handleRoleChange(role.name)}
-                  className={`role-tab ${isActive ? `active-${role.name}` : ''}`}
-                  title={role.label}
-                >
-                  <Icon size={16} />
-                  <span>{role.name}</span>
-                </button>
-              );
-            })}
-          </div>
+          {!authenticatedUser && (
+            <div className="role-switcher-group">
+              {roles.map(role => {
+                const Icon = role.icon;
+                const isActive = currentUser === role.name;
+                return (
+                  <button
+                    key={role.name}
+                    onClick={() => handleRoleChange(role.name)}
+                    className={`role-tab ${isActive ? `active-${role.name}` : ''}`}
+                    title={role.label}
+                  >
+                    <Icon size={16} />
+                    <span>{role.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Reset System Database */}
           <button 

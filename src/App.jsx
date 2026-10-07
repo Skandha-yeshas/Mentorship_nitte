@@ -12,7 +12,7 @@ function AppContent() {
   const { currentUser, setCurrentUser, db, loading, error, authenticatedUser, logoutUser } = useContext(DatabaseContext);
   const [selectedSubProfile, setSelectedSubProfile] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [isLoginPageVisible, setIsLoginPageVisible] = useState(false);
+  const [isLoginPageVisible, setIsLoginPageVisible] = useState(true);
 
   // Automatically initialize default sub-profile when switching roles or if selectedSubProfile is invalid
   useEffect(() => {
