@@ -63,6 +63,8 @@ export const RODashboard = ({ roId }) => {
   // Form states
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [escalationReason, setEscalationReason] = useState('');
+  const [escalateSuccessMsg, setEscalateSuccessMsg] = useState('');
+  const [isSubmittingEscalate, setIsSubmittingEscalate] = useState(false);
 
   // Schedule meeting form states
   const [meetDate, setMeetDate] = useState('');
@@ -356,7 +358,9 @@ export const RODashboard = ({ roId }) => {
     }
 
     // Active non-resolved issues
-    const matchesStatus = statusFilter === 'All' || issue.status === statusFilter;
+    const matchesStatus = statusFilter === 'All'
+      || issue.status === statusFilter
+      || (statusFilter === 'Escalated' && (issue.status === 'Re-escalated' || Boolean(issue.isReEscalated)));
     if (!matchesStatus) return false;
 
     if (!trimmedQuery) return true;
@@ -679,13 +683,23 @@ export const RODashboard = ({ roId }) => {
     setShowResolveModal(false);
   };
 
-  const handleEscalateSubmit = (e) => {
+  const handleEscalateSubmit = async (e) => {
     e.preventDefault();
     if (!escalationReason.trim() || !selectedIssueId) return;
 
-    escalateIssue(selectedIssueId, ro.id, escalationReason);
-    setEscalationReason('');
-    setShowEscalateModal(false);
+    const isReEscalate = selectedIssue?.status === 'Escalated' || selectedIssue?.status === 'Re-escalated' || Boolean(selectedIssue?.isReEscalated);
+    setIsSubmittingEscalate(true);
+    try {
+      await escalateIssue(selectedIssueId, ro.id, escalationReason, isReEscalate);
+      setEscalateSuccessMsg(`✅ Ticket #${selectedIssueId} ${isReEscalate ? 're-escalation directive & urgency remarks' : 'escalation'} successfully dispatched to Admin Office!`);
+      setEscalationReason('');
+      setShowEscalateModal(false);
+      setTimeout(() => setEscalateSuccessMsg(''), 6000);
+    } catch (err) {
+      alert('Error updating escalation: ' + (err.message || err));
+    } finally {
+      setIsSubmittingEscalate(false);
+    }
   };
 
   const handleScheduleSubmit = async (e) => {
@@ -1075,6 +1089,24 @@ export const RODashboard = ({ roId }) => {
           {/* QUEUE DETAILS PANE - TICKET DOCUMENTS & RESOLUTION DETAILS */}
           {selectedIssue && (
             <div className="glass-card" style={{ position: 'sticky', top: '90px' }}>
+              {escalateSuccessMsg && (
+                <div style={{
+                  padding: '12px 16px',
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  border: '1px solid rgba(16, 185, 129, 0.4)',
+                  borderRadius: '8px',
+                  color: '#34d399',
+                  fontSize: '0.88rem',
+                  fontWeight: '600',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.1)'
+                }}>
+                  {escalateSuccessMsg}
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Manage Ticket</h3>
                 <span className={`badge badge-${selectedIssue.status.toLowerCase().replace(' ', '-')}`}>{selectedIssue.status}</span>
@@ -1366,7 +1398,7 @@ export const RODashboard = ({ roId }) => {
               )}
 
               {/* ACTION BUTTONS FOR RO */}
-              {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && (
+              {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && selectedIssue.status !== 'Re-escalated' && !selectedIssue.isReEscalated && (
                 <div style={{ marginTop: '20px' }}>
                   {activeMeeting && (
                     <div style={{ fontSize: '0.78rem', color: isReassignLimitReached ? '#ef4444' : 'var(--text-secondary)', marginBottom: '10px', background: isReassignLimitReached ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.08)', padding: '8px 12px', borderRadius: '6px', borderLeft: isReassignLimitReached ? '3px solid #ef4444' : '3px solid #3b82f6' }}>
@@ -1448,10 +1480,25 @@ export const RODashboard = ({ roId }) => {
               )}
 
               {/* Escalated state visual */}
-              {selectedIssue.status === 'Escalated' && (
+              {(selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || Boolean(selectedIssue.isReEscalated)) && (
                 <div style={{ borderLeft: '3px solid var(--accent-rose)', background: 'rgba(244,63,94,0.08)', padding: '14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
-                    <h4 style={{ fontWeight: '700', color: 'rgb(253,164,175)', margin: 0 }}>Escalated Ticket Status</h4>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h4 style={{ fontWeight: '700', color: 'rgb(253,164,175)', margin: 0 }}>Escalated Ticket Status</h4>
+                      {Boolean(selectedIssue.isReEscalated || (selectedIssue.reEscalatedCount && selectedIssue.reEscalatedCount > 0)) && (
+                        <span style={{
+                          fontSize: '0.72rem',
+                          background: 'rgba(239, 68, 68, 0.25)',
+                          color: '#f87171',
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          border: '1px solid rgba(239, 68, 68, 0.5)',
+                          fontWeight: '700'
+                        }}>
+                          ⚡ Re-escalated {selectedIssue.reEscalatedCount ? `(${selectedIssue.reEscalatedCount}x)` : ''}
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => setShowEscalateModal(true)}
@@ -1461,6 +1508,14 @@ export const RODashboard = ({ roId }) => {
                       Re-escalate / Update Remarks to Admin
                     </button>
                   </div>
+                  {selectedIssue.escalationReason && (
+                    <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px dashed rgba(244,63,94,0.35)', padding: '8px 12px', borderRadius: '6px', margin: '8px 0', fontSize: '0.82rem', color: '#fecdd3' }}>
+                      <strong>Latest Escalation Directive / Urgent Remarks:</strong>
+                      <div style={{ marginTop: '3px', whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
+                        "{selectedIssue.escalationReason}"
+                      </div>
+                    </div>
+                  )}
                   <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
                     This issue has been routed to the Senior Admin / Principal dashboard for administrative override. You can submit additional notes or re-escalate if urgent action is required.
                   </p>
@@ -1777,9 +1832,9 @@ export const RODashboard = ({ roId }) => {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" onClick={() => setShowEscalateModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-danger">
-                  {selectedIssue?.status === 'Escalated' ? 'Confirm Re-escalation to Admin' : 'Escalate Ticket'}
+                <button type="button" onClick={() => setShowEscalateModal(false)} className="btn btn-secondary" disabled={isSubmittingEscalate}>Cancel</button>
+                <button type="submit" className="btn btn-danger" disabled={isSubmittingEscalate}>
+                  {isSubmittingEscalate ? 'Transmitting to Admin...' : (selectedIssue?.status === 'Escalated' ? 'Confirm Re-escalation to Admin' : 'Escalate Ticket')}
                 </button>
               </div>
             </form>

@@ -3,18 +3,19 @@ import { DatabaseContext } from '../context/DatabaseContext';
 import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck, FileText, Clock, MapPin, Mail, Edit3, Sparkles, X, AlertCircle, AlertTriangle, SkipForward, RotateCcw, Info } from 'lucide-react';
 
 export const MentorDashboard = ({ mentorId }) => {
-  const { 
-    db, 
-    addResource, 
-    addGroupSession, 
-    submitMentorSessionRecord, 
-    updateMentorSchedule, 
-    passMentorSession, 
-    unpassMentorSession, 
-    shootMentorDeadlineAlert 
+  const {
+    db,
+    addResource,
+    addGroupSession,
+    submitMentorSessionRecord,
+    updateMentorSchedule,
+    passMentorSession,
+    unpassMentorSession,
+    shootMentorDeadlineAlert,
+    isMatchingMentorId
   } = useContext(DatabaseContext);
   const [activeTab, setActiveTab] = useState('roster'); // 'roster', 'schedule-session', 'add-resource', 'session-records'
-  
+
   // Mentor form states
   const [sessionTitle, setSessionTitle] = useState('');
   const [sessionDateTime, setSessionDateTime] = useState('');
@@ -53,7 +54,7 @@ export const MentorDashboard = ({ mentorId }) => {
 
   const sessionDate = mentoringSchedule.date || '2026-09-25';
   const isSessionPassed = Boolean(
-    mentoringSchedule.isPassed || 
+    mentoringSchedule.isPassed ||
     (mentoringSchedule.passedSessions || []).some(p => p.sessionDate === sessionDate)
   );
   const currentPassedRecord = (mentoringSchedule.passedSessions || []).find(p => p.sessionDate === sessionDate);
@@ -77,13 +78,13 @@ export const MentorDashboard = ({ mentorId }) => {
   const [passReason, setPassReason] = useState('Public / Government Holiday');
   const [passRemarks, setPassRemarks] = useState('');
 
-  // Assigned students (mentees)
-  const mentees = db.users.students.filter(s => s.mentorId === mentor.id);
+  // Assigned students (mentees) - robust mentor ID matcher
+  const mentees = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
 
   // Mentor's shared sessions & resources
-  const mySessions = db.groupSessions.filter(s => s.mentorId === mentor.id);
-  const myResources = db.resources.filter(r => r.mentorId === mentor.id);
-  const myRecords = (db.mentorSessionRecords || []).filter(r => r.mentorId === mentor.id);
+  const mySessions = (db.groupSessions || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
+  const myResources = (db.resources || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
+  const myRecords = (db.mentorSessionRecords || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
 
   // Auto-initialize recordCount and whichClass when mentor/mentees load
   React.useEffect(() => {
@@ -98,12 +99,12 @@ export const MentorDashboard = ({ mentorId }) => {
   // Save rescheduled mentoring period (Date and Time only, mandatory 9:00 AM email)
   const handleSaveSchedule = async (e) => {
     e.preventDefault();
-    const periodSlotText = editPeriodSlot === 'Custom' 
+    const periodSlotText = editPeriodSlot === 'Custom'
       ? `Custom (${editCustomStart} - ${editCustomEnd})`
       : editPeriodSlot;
 
-    const timeText = editPeriodSlot === 'Custom' 
-      ? editCustomStart 
+    const timeText = editPeriodSlot === 'Custom'
+      ? editCustomStart
       : (editPeriodSlot.match(/\((.*?)\s*-/)?.[1] || '09:00 AM');
 
     const dayName = new Date(editDate).toLocaleDateString('en-US', { weekday: 'long' });
@@ -165,10 +166,10 @@ export const MentorDashboard = ({ mentorId }) => {
     if (!recordTopic || !recordDate || !recordCount) return;
 
     submitMentorSessionRecord(
-      mentor.id, 
-      recordTopic, 
-      recordDate, 
-      parseInt(recordCount), 
+      mentor.id,
+      recordTopic,
+      recordDate,
+      parseInt(recordCount),
       recordNotes,
       whichClass || mentor.class,
       recordLocation
@@ -237,7 +238,7 @@ export const MentorDashboard = ({ mentorId }) => {
           </div>
         </div>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'roster' ? 'active Mentor' : ''}`}
           onClick={() => setActiveTab('roster')}
         >
@@ -245,7 +246,7 @@ export const MentorDashboard = ({ mentorId }) => {
           <span>My Mentee Roster ({mentees.length})</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'schedule-session' ? 'active Mentor' : ''}`}
           onClick={() => setActiveTab('schedule-session')}
         >
@@ -253,7 +254,7 @@ export const MentorDashboard = ({ mentorId }) => {
           <span>Schedule Group Session ({mySessions.length})</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'add-resource' ? 'active Mentor' : ''}`}
           onClick={() => setActiveTab('add-resource')}
         >
@@ -261,7 +262,7 @@ export const MentorDashboard = ({ mentorId }) => {
           <span>Share Resource ({myResources.length})</span>
         </button>
 
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'session-records' ? 'active Mentor' : ''}`}
           onClick={() => setActiveTab('session-records')}
         >
@@ -280,7 +281,7 @@ export const MentorDashboard = ({ mentorId }) => {
 
       {/* Main Content Pane */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        
+
         {/* SUCCESS MESSAGE */}
         {successMessage && (
           <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '16px' }}>
@@ -530,7 +531,7 @@ export const MentorDashboard = ({ mentorId }) => {
                       </p>
                     </div>
                   </div>
-                  
+
                   {/* Actions for Pending Session */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <button
@@ -608,7 +609,7 @@ export const MentorDashboard = ({ mentorId }) => {
         {activeTab === 'roster' && (
           <div className="glass-card">
             <h2 className="section-title">Assigned Mentees</h2>
-            
+
             <div className="custom-table-container">
               <table className="custom-table">
                 <thead>
@@ -626,9 +627,9 @@ export const MentorDashboard = ({ mentorId }) => {
                       <td><code>{student.id}</code></td>
                       <td>{student.email}</td>
                       <td>
-                        <span style={{ 
-                          padding: '4px 10px', 
-                          borderRadius: '6px', 
+                        <span style={{
+                          padding: '4px 10px',
+                          borderRadius: '6px',
                           background: 'rgba(255, 255, 255, 0.03)',
                           fontSize: '0.8rem',
                           color: 'var(--text-secondary)'
@@ -654,11 +655,11 @@ export const MentorDashboard = ({ mentorId }) => {
                     </div>
                     <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>📆 {new Date(session.dateTime).toLocaleString()}</p>
                     <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', minHeight: '36px' }}>{session.description}</p>
-                    <a 
-                      href={session.link} 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="btn btn-secondary" 
+                    <a
+                      href={session.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary"
                       style={{ padding: '4px 8px', fontSize: '0.7rem', width: '100%', marginTop: '10px' }}
                     >
                       Launch Session <ExternalLink size={10} />
@@ -678,9 +679,9 @@ export const MentorDashboard = ({ mentorId }) => {
             <form onSubmit={handleAddSession}>
               <div className="form-group">
                 <label className="form-label">Session Topic / Title</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
+                <input
+                  type="text"
+                  className="form-control"
                   placeholder="e.g. Final Year Project Guidelines & Industry Alignment"
                   value={sessionTitle}
                   onChange={(e) => setSessionTitle(e.target.value)}
@@ -691,20 +692,20 @@ export const MentorDashboard = ({ mentorId }) => {
               <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
                 <div className="form-group">
                   <label className="form-label">Date & Time</label>
-                  <input 
-                    type="datetime-local" 
-                    className="form-control" 
+                  <input
+                    type="datetime-local"
+                    className="form-control"
                     value={sessionDateTime}
                     onChange={(e) => setSessionDateTime(e.target.value)}
                     required
                   />
                 </div>
-                
+
                 <div className="form-group">
                   <label className="form-label">Meeting URL / Location</label>
-                  <input 
-                    type="url" 
-                    className="form-control" 
+                  <input
+                    type="url"
+                    className="form-control"
                     placeholder="https://nitte-meet.edu/..."
                     value={sessionLink}
                     onChange={(e) => setSessionLink(e.target.value)}
@@ -715,7 +716,7 @@ export const MentorDashboard = ({ mentorId }) => {
 
               <div className="form-group">
                 <label className="form-label">Session Agenda / Focus Details</label>
-                <textarea 
+                <textarea
                   className="form-textarea"
                   value={sessionDesc}
                   onChange={(e) => setSessionDesc(e.target.value)}
@@ -739,19 +740,19 @@ export const MentorDashboard = ({ mentorId }) => {
               <div className="grid-cols-4" style={{ gridTemplateColumns: '3fr 1fr', gap: '16px', marginBottom: '0' }}>
                 <div className="form-group">
                   <label className="form-label">Resource Title</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
+                  <input
+                    type="text"
+                    className="form-control"
                     placeholder="e.g., Software Engineering Course Guidelines & Notes"
                     value={resTitle}
                     onChange={(e) => setResTitle(e.target.value)}
                     required
                   />
                 </div>
-                
+
                 <div className="form-group">
                   <label className="form-label">Type</label>
-                  <select 
+                  <select
                     className="form-select"
                     value={resType}
                     onChange={(e) => setResType(e.target.value)}
@@ -766,17 +767,17 @@ export const MentorDashboard = ({ mentorId }) => {
               <div className="form-group">
                 <label className="form-label">Resource Content (URL or Notes text)</label>
                 {resType === 'Note' ? (
-                  <textarea 
-                    className="form-textarea" 
+                  <textarea
+                    className="form-textarea"
                     value={resContent}
                     onChange={(e) => setResContent(e.target.value)}
                     placeholder="Enter the textual note or tips here..."
                     required
                   />
                 ) : (
-                  <input 
-                    type="text" 
-                    className="form-control" 
+                  <input
+                    type="text"
+                    className="form-control"
                     placeholder={resType === 'Link' ? "https://..." : "Document description or download url..."}
                     value={resContent}
                     onChange={(e) => setResContent(e.target.value)}
@@ -809,27 +810,27 @@ export const MentorDashboard = ({ mentorId }) => {
                 Faculty Mentors are required to file this Session Report by <strong>Every Friday before 5:00 PM</strong> to comply with institutional NAAC & Academic Audit standards. Submitted reports are synchronized live and instantly accessible on the <strong>Management / Admin Dashboard</strong>.
               </p>
             </div>
-            
+
             <form onSubmit={handleAddSessionRecord} style={{ marginBottom: '36px' }}>
               {/* FLOWCHART FIELD 1 & FIELD 2 */}
               <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
                 <div className="form-group">
                   <label className="form-label">1) Which Class / Cohort</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
+                  <input
+                    type="text"
+                    className="form-control"
                     placeholder="e.g. 6th Sem CSE-A"
                     value={whichClass}
                     onChange={(e) => setWhichClass(e.target.value)}
                     required
                   />
                 </div>
-                
+
                 <div className="form-group">
                   <label className="form-label">2) Date Conducted</label>
-                  <input 
-                    type="date" 
-                    className="form-control" 
+                  <input
+                    type="date"
+                    className="form-control"
                     value={recordDate}
                     onChange={(e) => setRecordDate(e.target.value)}
                     required
@@ -841,21 +842,21 @@ export const MentorDashboard = ({ mentorId }) => {
               <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
                 <div className="form-group">
                   <label className="form-label">3) Where / Venue Location</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
+                  <input
+                    type="text"
+                    className="form-control"
                     placeholder="e.g. Seminar Hall 1, Classroom 304, or In-App Online Video Portal"
                     value={recordLocation}
                     onChange={(e) => setRecordLocation(e.target.value)}
                     required
                   />
                 </div>
-                
+
                 <div className="form-group">
                   <label className="form-label">4) Attendance Count (Mentees Attended)</label>
-                  <input 
-                    type="number" 
-                    className="form-control" 
+                  <input
+                    type="number"
+                    className="form-control"
                     min="1"
                     max="100"
                     value={recordCount}
@@ -868,9 +869,9 @@ export const MentorDashboard = ({ mentorId }) => {
               {/* FLOWCHART FIELD 5 */}
               <div className="form-group">
                 <label className="form-label">5) Topic Covered</label>
-                <input 
-                  type="text" 
-                  className="form-control" 
+                <input
+                  type="text"
+                  className="form-control"
                   placeholder="e.g. Supplementary exam prep, attendance recovery, and career guidance"
                   value={recordTopic}
                   onChange={(e) => setRecordTopic(e.target.value)}
@@ -881,7 +882,7 @@ export const MentorDashboard = ({ mentorId }) => {
               {/* FLOWCHART FIELD 6 */}
               <div className="form-group">
                 <label className="form-label">6) Summary Notes & Action Plan</label>
-                <textarea 
+                <textarea
                   className="form-textarea"
                   style={{ minHeight: '85px' }}
                   value={recordNotes}
@@ -897,7 +898,7 @@ export const MentorDashboard = ({ mentorId }) => {
             </form>
 
             <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '14px' }}>Historical Session Report Logs ({myRecords.length})</h3>
-            
+
             {myRecords.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                 <p>No session reports filed yet.</p>
@@ -923,9 +924,9 @@ export const MentorDashboard = ({ mentorId }) => {
                         <td><span className="badge badge-scheduled" style={{ fontSize: '0.72rem' }}>{rec.whichClass || mentor.class || '6th Sem CSE'}</span></td>
                         <td style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>📍 {rec.location || 'Seminar Hall 1'}</td>
                         <td>
-                          <span style={{ 
-                            padding: '2px 8px', 
-                            borderRadius: '10px', 
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: '10px',
                             background: 'rgba(99, 102, 241, 0.15)',
                             color: 'rgb(129, 140, 248)',
                             fontSize: '0.8rem',

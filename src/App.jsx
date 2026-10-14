@@ -17,24 +17,45 @@ function AppContent() {
   // Automatically initialize default sub-profile when switching roles or if selectedSubProfile is invalid
   useEffect(() => {
     if (currentUser === 'Student' && db.users?.students?.length > 0) {
-      const isValid = db.users.students.some(s => s.id === selectedSubProfile);
-      if (!isValid) {
+      const activeId = authenticatedUser?.id || selectedSubProfile;
+      const matched = db.users.students.find(
+        s => String(s.id).toLowerCase() === String(activeId || '').toLowerCase()
+      );
+      if (matched) {
+        if (selectedSubProfile !== matched.id) {
+          setSelectedSubProfile(matched.id);
+        }
+      } else if (!selectedSubProfile) {
         setSelectedSubProfile(db.users.students[0].id);
       }
     } else if (currentUser === 'Mentor' && db.users?.mentors?.length > 0) {
-      const isValid = db.users.mentors.some(m => m.id === selectedSubProfile);
-      if (!isValid) {
+      const activeId = authenticatedUser?.id || selectedSubProfile;
+      const matched = db.users.mentors.find(
+        m => String(m.id).toLowerCase() === String(activeId || '').toLowerCase()
+      );
+      if (matched) {
+        if (selectedSubProfile !== matched.id) {
+          setSelectedSubProfile(matched.id);
+        }
+      } else if (!selectedSubProfile) {
         setSelectedSubProfile(db.users.mentors[0].id);
       }
     } else if (currentUser === 'RO' && db.users?.ros?.length > 0) {
-      const isValid = db.users.ros.some(r => r.id === selectedSubProfile);
-      if (!isValid) {
+      const activeId = authenticatedUser?.id || selectedSubProfile;
+      const matched = db.users.ros.find(
+        r => String(r.id).toLowerCase() === String(activeId || '').toLowerCase()
+      );
+      if (matched) {
+        if (selectedSubProfile !== matched.id) {
+          setSelectedSubProfile(matched.id);
+        }
+      } else if (!selectedSubProfile) {
         setSelectedSubProfile(db.users.ros[0].id);
       }
     } else {
       setSelectedSubProfile('ADMIN');
     }
-  }, [currentUser, db.users]);
+  }, [currentUser, db.users, authenticatedUser]);
 
   // Handle successful authentication from LoginPage
   const handleLoginSuccess = (user, role, profileId) => {
@@ -97,7 +118,7 @@ function AppContent() {
   // If user requested Login Page view
   if (isLoginPageVisible) {
     return (
-      <LoginPage 
+      <LoginPage
         onLoginSuccess={handleLoginSuccess}
         onBypassToDashboard={handleBypassToDashboard}
       />
@@ -106,9 +127,9 @@ function AppContent() {
 
   return (
     <div className="app-container">
-      <RoleSwitcher 
-        selectedSubProfile={selectedSubProfile} 
-        setSelectedSubProfile={setSelectedSubProfile} 
+      <RoleSwitcher
+        selectedSubProfile={selectedSubProfile}
+        setSelectedSubProfile={setSelectedSubProfile}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onOpenLoginPage={() => setIsLoginPageVisible(true)}
       />
@@ -127,9 +148,9 @@ function AppContent() {
         )}
       </main>
 
-      <LoginModal 
-        isOpen={isLoginModalOpen} 
-        onClose={() => setIsLoginModalOpen(false)} 
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
       />
     </div>
   );

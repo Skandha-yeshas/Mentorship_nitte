@@ -3,15 +3,16 @@ import { query } from './db.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-export const GMAIL_ADDRESS = process.env.GMAIL_USER || 'skandhayashu2906@gmail.com';
+export const GMAIL_ADDRESS = (process.env.GMAIL_USER || 'skandhayashu2906@gmail.com').trim();
+export const GMAIL_APP_PASS = (process.env.GMAIL_APP_PASS || 'yffd wkvs ngqh mwse').replace(/[\s"']/g, '').trim();
 
 // In-memory fallback cache if DB is resetting/unavailable
 let fallbackEmailLogs = [];
 
 // Initialize Nodemailer transporter for Gmail
 const createTransporter = () => {
-  const user = GMAIL_ADDRESS.trim();
-  const pass = (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
+  const user = GMAIL_ADDRESS;
+  const pass = GMAIL_APP_PASS;
 
   if (user && pass) {
     return nodemailer.createTransport({

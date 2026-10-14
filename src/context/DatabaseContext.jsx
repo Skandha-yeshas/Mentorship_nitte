@@ -1,4 +1,10 @@
 import React, { createContext, useState, useEffect } from 'react';
+import {
+  generateStudentOnboardingEmailHtml,
+  generateStudentOnboardingEmailText,
+  generateRoMeetingScheduledEmailHtml,
+  generateRoMeetingScheduledEmailText
+} from '../utils/studentEmailTemplate';
 
 export const DatabaseContext = createContext();
 
@@ -61,21 +67,40 @@ export const getYoutubeEmbedUrl = (url) => {
   return trimmed;
 };
 
-// Mock Fallback Database State when PostgreSQL server is offline
+// Clean one-time purge of any old demo caches
+if (typeof window !== 'undefined') {
+  try {
+    const isCleaned = localStorage.getItem('nitte_clean_state_v3');
+    if (!isCleaned) {
+      localStorage.removeItem('nitte_saved_issues');
+      localStorage.removeItem('nitte_saved_meetings');
+      localStorage.removeItem('nitte_saved_mentor_feedbacks');
+      localStorage.removeItem('nitte_saved_recordings');
+      localStorage.removeItem('demo_limit_bypassed');
+      localStorage.removeItem('auth_user_session');
+      localStorage.setItem('nitte_clean_state_v3', 'true');
+    }
+  } catch (e) { }
+}
+
+export const DEFAULT_FACULTY_MENTORS = [
+  { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M103', name: 'Prof. Ramesh Rao', email: 'ramesh.rao@nitte.edu', dept: 'BCA', class: '3rd Sem BCA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M104', name: 'Dr. Deepa Shenoy', email: 'deepa.shenoy@nitte.edu', dept: 'BBA', class: '1st Sem BBA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M105', name: 'Prof. Raghavendra Pai', email: 'raghavendra.pai@nitte.edu', dept: 'BCOM', class: '5th Sem BCOM - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M106', name: 'Prof. Suresh Kumar', email: 'suresh.kumar@nitte.edu', dept: 'ECE', class: '3rd Sem ECE - Sec B', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M107', name: 'Dr. Kavitha Bhat', email: 'kavitha.bhat@nitte.edu', dept: 'AIML', class: '7th Sem AIML - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M108', name: 'Prof. Santosh Prabhu', email: 'santosh.prabhu@nitte.edu', dept: 'ISE', class: '5th Sem ISE - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M109', name: 'Prof. Anitha Rao', email: 'anitha.rao@nitte.edu', dept: 'MCA', class: '1st Sem MCA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
+  { id: 'M110', name: 'Dr. Prakash Shetty', email: 'prakash.shetty@nitte.edu', dept: 'MBA', class: '3rd Sem MBA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' }
+];
+
+// Clean Database State
 const MOCK_DB = {
   users: {
-    students: [
-      { id: 'u18cm24s0058', name: 'Aarav Sharma', email: 'skandhayashas2906@gmail.com', sem: 6, branch: 'CSE', mentorId: 'M-101', password: 'Nit#Stu2026' },
-      { id: 'u18cm24s0056', name: 'Ananya Rao', email: 'skandhayashas2906@gmail.com', sem: 6, branch: 'ECE', mentorId: 'M-102', password: 'Nit#Stu2026' },
-      { id: 'u18cm24s0053', name: 'Rohan Mehta', email: 'skandhayashas2906@gmail.com', sem: 4, branch: 'ISE', mentorId: 'M-103', password: 'Nit#Stu2026' },
-      { id: 'u18cm24s0040', name: 'Priya Nair', email: 'skandhayashas2906@gmail.com', sem: 4, branch: 'ME', mentorId: 'M-104', password: 'Nit#Stu2026' }
-    ],
-    mentors: [
-      { id: 'M-101', name: 'Dr. Suresh Kumar', email: 'skandhayashu2906@gmail.com', dept: 'CSE', class: '6th Sem CSE-A', password: 'Nit#Mnt2026' },
-      { id: 'M-102', name: 'Prof. Lakshmi Devi', email: 'skandhayashu2906@gmail.com', dept: 'ECE', class: '6th Sem ECE-B', password: 'Nit#Mnt2026' },
-      { id: 'M-103', name: 'Dr. Rajesh Hegde', email: 'skandhayashu2906@gmail.com', dept: 'ISE', class: '4th Sem ISE-A', password: 'Nit#Mnt2026' },
-      { id: 'M-104', name: 'Prof. Vikram Shetty', email: 'skandhayashu2906@gmail.com', dept: 'ME', class: '4th Sem ME-B', password: 'Nit#Mnt2026' }
-    ],
+    students: [],
+    mentors: DEFAULT_FACULTY_MENTORS,
     ros: ALL_CATEGORIES.map((cat, idx) => ({
       id: `RO-${String(idx + 1).padStart(2, '0')}`,
       name: `RO - ${cat.split(' - ')[1]}`,
@@ -84,218 +109,16 @@ const MOCK_DB = {
       password: 'Nit#Ro2026'
     }))
   },
-  issues: [
-    {
-      id: 'TICK-1001',
-      studentId: 'u18cm24s0058',
-      studentName: 'Aarav Sharma',
-      category: 'Academic - Internal marks discrepancy',
-      description: 'Discrepancy in Mid-Sem 2 Data Structures internal marks calculation.',
-      priority: 'High',
-      status: 'Assigned to RO',
-      roId: 'RO-03',
-      roName: 'RO - Internal marks discrepancy',
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      logs: [
-        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Ticket created and assigned to RO-03.' }
-      ]
-    },
-    {
-      id: 'TICK-1002',
-      studentId: 'u18cm24s0056',
-      studentName: 'Ananya Rao',
-      category: 'Financial - Scholarship application delay',
-      description: 'SSP Scholarship portal document verification pending at college office.',
-      priority: 'Medium',
-      status: 'Meeting Scheduled',
-      roId: 'RO-18',
-      roName: 'RO - Scholarship application delay',
-      createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-      logs: [
-        { time: new Date(Date.now() - 86400000 * 4).toLocaleString(), text: 'Ticket created.' },
-        { time: new Date(Date.now() - 86400000 * 1).toLocaleString(), text: 'Meeting scheduled for tomorrow at 11:00 AM.' }
-      ]
-    },
-    {
-      id: 'TICK-1003',
-      studentId: 'u18cm24s0053',
-      studentName: 'Rohan Mehta',
-      category: 'Hostels - Wi-Fi connectivity issues',
-      description: 'Intermittent internet connection in Block B, 3rd Floor rooms.',
-      priority: 'Low',
-      status: 'Resolved',
-      roId: 'RO-27',
-      roName: 'RO - Wi-Fi connectivity issues',
-      createdAt: new Date(Date.now() - 86400000 * 6).toISOString(),
-      resolutionNotes: 'Access point router replaced on 3rd floor corridor.',
-      rating: 5,
-      feedbackComments: 'Resolved quickly! Thanks.',
-      shiftedToLocalStorage: true,
-      feedback: { rating: 5, comments: 'Resolved quickly! Thanks.', submittedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-      logs: [
-        { time: new Date(Date.now() - 86400000 * 6).toLocaleString(), text: 'Ticket created.' },
-        { time: new Date(Date.now() - 86400000 * 3).toLocaleString(), text: 'Issue resolved by network team.' },
-        { time: new Date(Date.now() - 86400000 * 2).toLocaleString(), text: 'Student submitted feedback rating: 5 Stars ("Resolved quickly! Thanks."). Shifted to local storage archive.' }
-      ]
-    }
-  ],
-  meetings: [
-    {
-      id: 'MEET-1002',
-      issueId: 'TICK-1002',
-      issue_id: 'TICK-1002',
-      studentId: 'u18cm24s0056',
-      student_id: 'u18cm24s0056',
-      studentName: 'Ananya Rao',
-      student_name: 'Ananya Rao',
-      roId: 'RO-18',
-      ro_id: 'RO-18',
-      roName: 'RO - Scholarship application delay',
-      date: new Date().toISOString().split('T')[0],
-      time: '11:00',
-      mode: 'Online',
-      location: 'In-App Online Video Call Portal',
-      notes: 'SSP Scholarship portal document verification pending at college office. Bring acknowledgement copy.',
-      status: 'Confirmed',
-      endedByRo: false
-    }
-  ],
-  groupSessions: [
-    {
-      id: 'GS-01',
-      mentorId: 'M-101',
-      title: 'Career & Higher Studies Counseling',
-      dateTime: '2026-08-05T15:00',
-      description: 'Interactive session discussing GATE, GRE, and campus placement strategies.',
-      meetLink: 'https://meet.google.com/abc-defg-hij'
-    }
-  ],
-  resources: [
-    {
-      id: 'RES-01',
-      mentorId: 'M-101',
-      title: 'Algorithms & Data Structures Study Notes',
-      type: 'PDF Notes',
-      content: 'Complete handbook covering Trees, Graphs, and Dynamic Programming.'
-    }
-  ],
+  issues: [],
+  meetings: [],
+  groupSessions: [],
+  resources: [],
   mentorSessionRecords: [],
-  mentoringSchedules: {
-    'M-101': {
-      mentorId: 'M-101',
-      date: '2026-09-25',
-      day: 'Friday',
-      time: '09:00 AM',
-      endTime: '10:00 AM',
-      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
-      whichClass: '6th Sem CSE-A',
-      autoEmailAt9: true,
-      lastEmailSentAt: null,
-      passedSessions: []
-    },
-    'M-102': {
-      mentorId: 'M-102',
-      date: '2026-09-25',
-      day: 'Friday',
-      time: '09:00 AM',
-      endTime: '10:00 AM',
-      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
-      whichClass: '6th Sem ECE-B',
-      autoEmailAt9: true,
-      lastEmailSentAt: null,
-      passedSessions: []
-    },
-    'M-103': {
-      mentorId: 'M-103',
-      date: '2026-09-25',
-      day: 'Friday',
-      time: '09:00 AM',
-      endTime: '10:00 AM',
-      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
-      whichClass: '4th Sem ISE-A',
-      autoEmailAt9: true,
-      lastEmailSentAt: null,
-      passedSessions: []
-    },
-    'M-104': {
-      mentorId: 'M-104',
-      date: '2026-09-25',
-      day: 'Friday',
-      time: '09:00 AM',
-      endTime: '10:00 AM',
-      periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
-      whichClass: '4th Sem ME-B',
-      autoEmailAt9: true,
-      lastEmailSentAt: null,
-      passedSessions: []
-    }
-  },
-  mentorFeedbacks: [
-    {
-      id: 1,
-      studentId: 'u18cm24s0058',
-      studentName: 'Aarav Sharma',
-      mentorId: 'M-101',
-      mentorName: 'Dr. Suresh Kumar',
-      regularityRating: 5,
-      clarityRating: 4,
-      participationRating: 5,
-      difficulties: 'Mentoring sessions are well conducted and regular. It would be great to have more interactive problem-solving discussions on competitive programming and campus placements.',
-      createdAt: new Date(Date.now() - 86400000 * 3).toISOString()
-    },
-    {
-      id: 2,
-      studentId: 'u18cm24s0056',
-      studentName: 'Ananya Rao',
-      mentorId: 'M-102',
-      mentorName: 'Prof. Lakshmi Devi',
-      regularityRating: 4,
-      clarityRating: 5,
-      participationRating: 4,
-      difficulties: 'The sessions are very clear. Sometimes the schedule overlaps with departmental lab submissions, so prior notice of 2 days would be very helpful.',
-      createdAt: new Date(Date.now() - 86400000 * 5).toISOString()
-    },
-    {
-      id: 3,
-      studentId: 'u18cm24s0053',
-      studentName: 'Rohan Mehta',
-      mentorId: 'M-103',
-      mentorName: 'Dr. Rajesh Hegde',
-      regularityRating: 4,
-      clarityRating: 4,
-      participationRating: 5,
-      difficulties: 'Great guidance on technical project topics. We would appreciate more one-on-one time to review our individual elective course selections.',
-      createdAt: new Date(Date.now() - 86400000 * 7).toISOString()
-    }
-  ],
+  mentoringSchedules: {},
+  mentorFeedbacks: [],
   systemLogs: [],
   gmailAddress: 'skandhayashu2906@gmail.com',
-  gmailLogs: [
-    {
-      id: 101,
-      direction: 'OUTBOUND',
-      sender: 'skandhayashu2906@gmail.com',
-      recipient: 'aarav.mehta@nitte.edu',
-      subject: '[TICK-1001] Issue Registered: Academic - Internal marks discrepancy',
-      body: 'Your ticket has been logged and assigned to RO-03.',
-      eventType: 'ISSUE_SUBMITTED',
-      issueId: 'TICK-1001',
-      status: 'DELIVERED_GMAIL',
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
-    },
-    {
-      id: 102,
-      direction: 'OUTBOUND',
-      sender: 'skandhayashu2906@gmail.com',
-      recipient: 'ananya.rao@nitte.edu',
-      subject: '[TICK-1002] Meeting Scheduled Notice',
-      body: 'Meeting scheduled for tomorrow at 11:00 AM at RO Office Desk.',
-      eventType: 'MEETING_SCHEDULED',
-      issueId: 'TICK-1002',
-      status: 'DELIVERED_GMAIL',
-      createdAt: new Date(Date.now() - 86400000 * 1).toISOString()
-    }
-  ],
+  gmailLogs: [],
   categoryVideos: [
     {
       category: 'Academic',
@@ -349,14 +172,368 @@ const MOCK_DB = {
   ]
 };
 
+// Robust Deduplication & Structured Normalization Engine (USN/ID is Primary Key)
+export const structureAndDeduplicateStudents = (students = []) => {
+  if (!Array.isArray(students)) return [];
+  const map = new Map();
+
+  for (let i = 0; i < students.length; i++) {
+    const s = students[i];
+    if (!s) continue;
+    const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'] || s['Roll No'] || s['Roll Number'];
+    const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || 'Student User';
+    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'];
+
+    const id = rawId ? String(rawId).trim().toUpperCase() : `U18CM24S${String(i + 1).padStart(4, '0')}`;
+    const email = rawEmail ? String(rawEmail).trim().toLowerCase() : `${id.toLowerCase()}@nitte.edu.in`;
+    const name = String(rawName).trim();
+    const branch = String(s.branch || s.Branch || s.department || s.Dept || 'CSE').trim().toUpperCase();
+    const sem = parseInt(s.sem || s.Sem || s.semester || s.Semester) || 5;
+    const mentorId = (s.mentorId !== undefined && s.mentorId !== null)
+      ? (String(s.mentorId).trim() || null)
+      : (s.mentor_id ? (String(s.mentor_id).trim() || null) : null);
+    const phone = String(s.phone || s.Phone || s.mobile || '9876543210').trim();
+    const password = s.password ? String(s.password).trim() : 'Nit#Stu2026';
+    const role = 'Student';
+    const createdAt = s.createdAt || new Date().toISOString();
+    const lastLogin = s.lastLogin || null;
+
+    const structuredStudent = {
+      id,
+      name,
+      email,
+      branch,
+      sem,
+      mentorId,
+      phone,
+      password,
+      role,
+      createdAt,
+      lastLogin
+    };
+
+    // USN / Student ID is the unique primary key
+    if (map.has(id)) {
+      const existing = map.get(id);
+      const keepMentorId = structuredStudent.mentorId !== undefined
+        ? structuredStudent.mentorId
+        : existing.mentorId;
+
+      map.set(id, {
+        ...existing,
+        ...structuredStudent,
+        mentorId: keepMentorId,
+        createdAt: existing.createdAt || structuredStudent.createdAt,
+        lastLogin: structuredStudent.lastLogin || existing.lastLogin
+      });
+    } else {
+      map.set(id, structuredStudent);
+    }
+  }
+
+  return Array.from(map.values());
+};
+
+export const structureAndDeduplicateMentors = (mentors = []) => {
+  if (!Array.isArray(mentors)) return [];
+  const map = new Map();
+
+  for (let i = 0; i < mentors.length; i++) {
+    const m = mentors[i];
+    if (!m) continue;
+    const rawId = m.id || m.mentorId || m.facultyId || m['Mentor ID'];
+    const rawName = m.name || m.mentorName || m.Name || m['Mentor Name'] || m['Faculty Name'] || 'Faculty Mentor';
+    const rawEmail = m.email || m.Email || m.gmail || m['Gmail'] || m['Mentor Gmail'] || m['Faculty Email'];
+    const dept = String(m.dept || m.department || m.Branch || m['Department'] || 'CSE').trim().toUpperCase();
+    const assignedClass = String(m.class || m['Assigned Class'] || m['assigned class'] || `${dept} 5th Sem - Batch A`).trim();
+
+    const id = rawId ? String(rawId).trim().toUpperCase() : `M${101 + i}`;
+    const email = rawEmail ? String(rawEmail).trim().toLowerCase() : `${id.toLowerCase()}@nitte.edu.in`;
+    const name = String(rawName).trim();
+    const password = m.password ? String(m.password).trim() : 'Nit#Mnt2026';
+
+    const structuredMentor = {
+      id,
+      name,
+      email,
+      dept,
+      class: assignedClass,
+      password,
+      role: 'Mentor',
+      createdAt: m.createdAt || new Date().toISOString(),
+      lastLogin: m.lastLogin || null
+    };
+
+    if (map.has(id)) {
+      const existing = map.get(id);
+      map.set(id, {
+        ...existing,
+        ...structuredMentor,
+        createdAt: existing.createdAt || structuredMentor.createdAt,
+        lastLogin: structuredMentor.lastLogin || existing.lastLogin
+      });
+    } else {
+      map.set(id, structuredMentor);
+    }
+  }
+
+  return Array.from(map.values());
+};
+
+export const DEFAULT_COLLEGE_BRANCHES = [
+  { code: 'CSE', name: 'Computer Science & Engineering', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'ISE', name: 'Information Science & Engineering', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'AIML', name: 'Artificial Intelligence & Machine Learning', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'AIDS', name: 'Artificial Intelligence & Data Science', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'ECE', name: 'Electronics & Communication Engineering', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'MECH', name: 'Mechanical Engineering', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'CIVIL', name: 'Civil Engineering', degree: 'B.E / B.Tech', totalSems: 8 },
+  { code: 'BCA', name: 'Bachelor of Computer Applications', degree: 'B.C.A', totalSems: 6 },
+  { code: 'BBA', name: 'Bachelor of Business Administration', degree: 'B.B.A', totalSems: 6 },
+  { code: 'BCOM', name: 'Bachelor of Commerce', degree: 'B.Com', totalSems: 6 },
+  { code: 'MCA', name: 'Master of Computer Applications', degree: 'M.C.A', totalSems: 4 },
+  { code: 'MBA', name: 'Master of Business Administration', degree: 'M.B.A', totalSems: 4 }
+];
+
+// Robust mentor ID comparison helper (handles M-101 vs M101, casing, spaces)
+export const isMatchingMentorId = (studentMentorId, mentorId) => {
+  if (!studentMentorId || !mentorId) return false;
+  const s = String(studentMentorId).trim().toUpperCase();
+  const m = String(mentorId).trim().toUpperCase();
+  if (s === m) return true;
+  return s.replace(/[^A-Z0-9]/g, '') === m.replace(/[^A-Z0-9]/g, '');
+};
+
 export const DatabaseProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('curr_user_role');
-    return saved || 'Student';
+    return saved || 'Admin';
   });
 
+  const [branches, setBranches] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nitte_managed_branches');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) { }
+    return DEFAULT_COLLEGE_BRANCHES;
+  });
+
+  const addBranch = ({ code, name, degree, totalSems }) => {
+    if (!code || !name) throw new Error('Branch code and branch name are required.');
+    const cleanCode = code.trim().toUpperCase();
+    if (branches.some(b => b.code.toUpperCase() === cleanCode)) {
+      throw new Error(`Branch with code "${cleanCode}" already exists.`);
+    }
+    const newBranch = {
+      code: cleanCode,
+      name: name.trim(),
+      degree: degree ? degree.trim() : 'UG Degree',
+      totalSems: parseInt(totalSems) || 8
+    };
+    const updated = [...branches, newBranch];
+    setBranches(updated);
+    try {
+      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+    } catch (e) { }
+    return newBranch;
+  };
+
+  const removeBranch = (branchCode) => {
+    const cleanCode = (branchCode || '').trim().toUpperCase();
+    const updated = branches.filter(b => b.code.toUpperCase() !== cleanCode);
+    setBranches(updated);
+    try {
+      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+    } catch (e) { }
+  };
+
+  const updateBranch = (branchCode, updatedData) => {
+    const cleanCode = (branchCode || '').trim().toUpperCase();
+    const updated = branches.map(b => b.code.toUpperCase() === cleanCode ? { ...b, ...updatedData } : b);
+    setBranches(updated);
+    try {
+      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+    } catch (e) { }
+  };
+
+  const resetBranchesToDefault = () => {
+    setBranches(DEFAULT_COLLEGE_BRANCHES);
+    try {
+      localStorage.setItem('nitte_managed_branches', JSON.stringify(DEFAULT_COLLEGE_BRANCHES));
+    } catch (e) { }
+  };
+
+  const assignStudentsToMentor = (mentorId, studentIdsToAssign = [], studentIdsToUnassign = []) => {
+    if (!mentorId) return { success: false, message: 'Mentor ID is required.' };
+    const cleanMentorId = String(mentorId).trim();
+    const assignSet = new Set((studentIdsToAssign || []).map(id => String(id).trim().toUpperCase()));
+    const unassignSet = new Set((studentIdsToUnassign || []).map(id => String(id).trim().toUpperCase()));
+
+    setDb(prev => {
+      const currentStudents = prev.users?.students || [];
+      const updatedStudents = currentStudents.map(s => {
+        const uId = String(s.id).trim().toUpperCase();
+        if (assignSet.has(uId)) {
+          return { ...s, mentorId: cleanMentorId };
+        }
+        if (unassignSet.has(uId) && isMatchingMentorId(s.mentorId, cleanMentorId)) {
+          return { ...s, mentorId: null };
+        }
+        return s;
+      });
+
+      const updatedMentors = (prev.users?.mentors || []).map(m => {
+        const count = updatedStudents.filter(st => isMatchingMentorId(st.mentorId, m.id)).length;
+        return {
+          ...m,
+          class: `${count} Assigned Mentees`
+        };
+      });
+
+      try {
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          students: updatedStudents,
+          mentors: updatedMentors
+        }
+      };
+    });
+
+    // Fire background persistence to Vite middleware / backend if active
+    fetch('/api/admin/assign-students-to-mentor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mentorId: cleanMentorId, studentIdsToAssign, studentIdsToUnassign })
+    }).catch(() => {});
+
+    return { success: true, count: assignSet.size };
+  };
+
+  const removeStudent = async (studentId) => {
+    if (!studentId) return { success: false, message: 'Student ID is required.' };
+    const cleanId = String(studentId).trim().toUpperCase();
+
+    setDb(prev => {
+      const currentStudents = prev.users?.students || [];
+      const updatedStudents = currentStudents.filter(s => String(s.id).trim().toUpperCase() !== cleanId);
+
+      // Recalculate mentee counts for all mentors
+      const updatedMentors = (prev.users?.mentors || []).map(m => {
+        const count = updatedStudents.filter(st => isMatchingMentorId(st.mentorId, m.id)).length;
+        return {
+          ...m,
+          class: `${count} Assigned Mentees`
+        };
+      });
+
+      try {
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          students: updatedStudents,
+          mentors: updatedMentors
+        }
+      };
+    });
+
+    // Notify backend / Vite proxy
+    try {
+      await fetch('/api/admin/delete-student', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: cleanId })
+      });
+    } catch (e) { }
+
+    return { success: true, studentId: cleanId };
+  };
+
+  const removeMentor = async (mentorId) => {
+    if (!mentorId) return { success: false, message: 'Mentor ID is required.' };
+    const cleanId = String(mentorId).trim();
+
+    setDb(prev => {
+      const currentMentors = prev.users?.mentors || [];
+      const updatedMentors = currentMentors.filter(m => !isMatchingMentorId(m.id, cleanId));
+
+      // Safely unassign any students who were assigned to this mentor
+      const currentStudents = prev.users?.students || [];
+      const updatedStudents = currentStudents.map(s => {
+        if (isMatchingMentorId(s.mentorId, cleanId)) {
+          return { ...s, mentorId: null };
+        }
+        return s;
+      });
+
+      try {
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          mentors: updatedMentors,
+          students: updatedStudents
+        }
+      };
+    });
+
+    // Notify backend / Vite proxy
+    try {
+      await fetch('/api/admin/delete-mentor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mentorId: cleanId })
+      });
+    } catch (e) { }
+
+    return { success: true, mentorId: cleanId };
+  };
+
   const [db, setDb] = useState(() => {
-    let base = MOCK_DB;
+    let base = { ...MOCK_DB };
+    try {
+      const savedStudents = localStorage.getItem('nitte_saved_students');
+      if (savedStudents) {
+        const parsed = JSON.parse(savedStudents);
+        if (Array.isArray(parsed)) {
+          base.users = {
+            ...base.users,
+            students: structureAndDeduplicateStudents(parsed)
+          };
+        }
+      }
+    } catch (e) { }
+
+    try {
+      const savedMentors = localStorage.getItem('nitte_saved_mentors');
+      if (savedMentors) {
+        const parsed = JSON.parse(savedMentors);
+        if (Array.isArray(parsed)) {
+          base.users = {
+            ...base.users,
+            mentors: structureAndDeduplicateMentors(parsed)
+          };
+        }
+      }
+    } catch (e) { }
+
     try {
       const savedIssues = localStorage.getItem('nitte_saved_issues');
       if (savedIssues) {
@@ -420,6 +597,44 @@ export const DatabaseProvider = ({ children }) => {
           } catch (e) { }
         }
 
+        // Preserve and sync students with passwords intact
+        let mergedStudents = structureAndDeduplicateStudents([
+          ...(prev.users?.students || []),
+          ...((data.users && data.users.students) ? data.users.students : [])
+        ]);
+        try {
+          const cachedStudents = localStorage.getItem('nitte_saved_students');
+          if (cachedStudents) {
+            const parsed = JSON.parse(cachedStudents);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              mergedStudents = structureAndDeduplicateStudents([
+                ...mergedStudents,
+                ...parsed
+              ]);
+            }
+          }
+          localStorage.setItem('nitte_saved_students', JSON.stringify(mergedStudents));
+        } catch (e) { }
+
+        // Preserve and sync mentors with passwords intact
+        let mergedMentors = structureAndDeduplicateMentors([
+          ...(prev.users?.mentors || []),
+          ...((data.users && data.users.mentors) ? data.users.mentors : [])
+        ]);
+        try {
+          const cachedMentors = localStorage.getItem('nitte_saved_mentors');
+          if (cachedMentors) {
+            const parsed = JSON.parse(cachedMentors);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              mergedMentors = structureAndDeduplicateMentors([
+                ...mergedMentors,
+                ...parsed
+              ]);
+            }
+          }
+          localStorage.setItem('nitte_saved_mentors', JSON.stringify(mergedMentors));
+        } catch (e) { }
+
         // Save server issues into local storage cache, preserving local feedback & shiftedToLocalStorage status
         if (data.issues && data.issues.length) {
           try {
@@ -431,8 +646,19 @@ export const DatabaseProvider = ({ children }) => {
                 mergedIssues = data.issues.map(di => {
                   const savedMatch = savedIssues.find(si => (si.id || si.issue_id)?.toUpperCase() === (di.id || di.issue_id)?.toUpperCase());
                   if (savedMatch) {
+                    const isLocallyEscalated = savedMatch.status === 'Escalated';
+                    const isLocallyResolved = savedMatch.status === 'Resolved';
                     return {
                       ...di,
+                      status: isLocallyEscalated ? 'Escalated' : (isLocallyResolved ? 'Resolved' : di.status),
+                      escalationReason: savedMatch.escalationReason || di.escalationReason,
+                      escalatedAt: savedMatch.escalatedAt || di.escalatedAt,
+                      escalatedBy: savedMatch.escalatedBy || di.escalatedBy,
+                      isReEscalated: savedMatch.isReEscalated || di.isReEscalated,
+                      reEscalatedCount: savedMatch.reEscalatedCount || di.reEscalatedCount,
+                      resolvedAt: savedMatch.resolvedAt || di.resolvedAt,
+                      resolutionNotes: savedMatch.resolutionNotes || di.resolutionNotes,
+                      logs: (savedMatch.logs && savedMatch.logs.length > (di.logs || []).length) ? savedMatch.logs : (di.logs || []),
                       feedback: savedMatch.feedback || di.feedback,
                       feedbackRating: savedMatch.feedbackRating || di.feedbackRating,
                       feedbackComments: savedMatch.feedbackComments || di.feedbackComments,
@@ -443,6 +669,13 @@ export const DatabaseProvider = ({ children }) => {
                   }
                   return di;
                 });
+
+                // Also preserve offline created issues not present in backend
+                const serverIdSet = new Set((data.issues || []).map(di => (di.id || di.issue_id)?.toUpperCase()));
+                const offlineIssues = savedIssues.filter(si => !serverIdSet.has((si.id || si.issue_id)?.toUpperCase()));
+                if (offlineIssues.length > 0) {
+                  mergedIssues = [...mergedIssues, ...offlineIssues];
+                }
               }
             }
             localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
@@ -475,6 +708,12 @@ export const DatabaseProvider = ({ children }) => {
 
         return {
           ...data,
+          users: {
+            ...data.users,
+            students: mergedStudents,
+            mentors: mergedMentors,
+            ros: (data.users && data.users.ros) ? data.users.ros : prev.users.ros
+          },
           recordings: recs || [],
           categoryVideos: catVideos,
           mentorFeedbacks: currentFeedbacks
@@ -506,15 +745,25 @@ export const DatabaseProvider = ({ children }) => {
         }
 
         let currentIssues = (prev.issues && prev.issues.length) ? prev.issues : [];
-        if (!currentIssues.length) {
-          try {
-            const saved = localStorage.getItem('nitte_saved_issues');
-            if (saved) {
-              const parsed = JSON.parse(saved);
-              if (Array.isArray(parsed) && parsed.length > 0) currentIssues = parsed;
+        try {
+          const saved = localStorage.getItem('nitte_saved_issues');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const savedMap = new Map(parsed.map(si => [(si.id || si.issue_id)?.toUpperCase(), si]));
+              currentIssues = (currentIssues.length > 0 ? currentIssues : parsed).map(ci => {
+                const key = (ci.id || ci.issue_id)?.toUpperCase();
+                return savedMap.has(key) ? { ...ci, ...savedMap.get(key) } : ci;
+              });
+              parsed.forEach(si => {
+                const key = (si.id || si.issue_id)?.toUpperCase();
+                if (!currentIssues.some(ci => (ci.id || ci.issue_id)?.toUpperCase() === key)) {
+                  currentIssues.push(si);
+                }
+              });
             }
-          } catch (e) { }
-        }
+          }
+        } catch (e) { }
         if (!currentIssues.length) {
           currentIssues = MOCK_DB.issues;
         }
@@ -610,8 +859,39 @@ export const DatabaseProvider = ({ children }) => {
           currentSchedules = MOCK_DB.mentoringSchedules;
         }
 
+        let currentStudents = (prev.users?.students && prev.users.students.length) ? prev.users.students : [];
+        try {
+          const savedStudents = localStorage.getItem('nitte_saved_students');
+          if (savedStudents) {
+            const parsed = JSON.parse(savedStudents);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              currentStudents = structureAndDeduplicateStudents(parsed);
+            }
+          }
+        } catch (e) { }
+
+        let currentMentors = (prev.users?.mentors && prev.users.mentors.length) ? prev.users.mentors : [];
+        try {
+          const savedMentors = localStorage.getItem('nitte_saved_mentors');
+          if (savedMentors) {
+            const parsed = JSON.parse(savedMentors);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              currentMentors = structureAndDeduplicateMentors(parsed);
+            }
+          }
+        } catch (e) { }
+        if (!currentMentors || currentMentors.length === 0) {
+          currentMentors = DEFAULT_FACULTY_MENTORS;
+        }
+
         return {
-          ...(prev.users?.students?.length ? prev : MOCK_DB),
+          ...prev,
+          users: {
+            ...prev.users,
+            students: currentStudents,
+            mentors: currentMentors,
+            ros: (prev.users && prev.users.ros) ? prev.users.ros : MOCK_DB.users.ros
+          },
           issues: currentIssues,
           meetings: currentMeetings,
           mentorFeedbacks: currentFeedbacks,
@@ -635,6 +915,7 @@ export const DatabaseProvider = ({ children }) => {
     let bc;
     let videoBc;
     let feedbackBc;
+    let stateBc;
     const handleStorageChange = (e) => {
       if (e.key === 'nitte_saved_meetings' && e.newValue) {
         try {
@@ -795,6 +1076,39 @@ export const DatabaseProvider = ({ children }) => {
             });
           }
         };
+
+        // Real-time zero-latency sync for escalated / re-escalated tickets across tabs
+        stateBc = new BroadcastChannel('nitte_state_sync');
+        stateBc.onmessage = (event) => {
+          if (event.data && (event.data.type === 'issue_escalated' || event.data.type === 'issue_re_escalated')) {
+            const { issueId, roId, reason, isReEscalated, timestamp } = event.data;
+            const cleanId = String(issueId || '').trim().toUpperCase();
+            setDb(prev => {
+              const updated = (prev.issues || []).map(i => {
+                if ((i.id || i.issue_id)?.toUpperCase() === cleanId) {
+                  const logMsg = isReEscalated
+                    ? `Issue RE-ESCALATED / Urgency Remarks Updated to Admin by RO ${roId}. Remarks: ${reason}`
+                    : `Issue ESCALATED to Admin by RO ${roId}. Reason: ${reason}`;
+                  return {
+                    ...i,
+                    status: isReEscalated ? 'Re-escalated' : 'Escalated',
+                    escalatedAt: timestamp || new Date().toISOString(),
+                    escalatedBy: roId,
+                    escalationReason: reason,
+                    isReEscalated: Boolean(isReEscalated),
+                    reEscalatedCount: (Number(i.reEscalatedCount) || 0) + (isReEscalated ? 1 : 0),
+                    logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: logMsg }]
+                  };
+                }
+                return i;
+              });
+              try {
+                localStorage.setItem('nitte_saved_issues', JSON.stringify(updated));
+              } catch (e) { }
+              return { ...prev, issues: updated };
+            });
+          }
+        };
       }
     } catch (e) { }
 
@@ -803,6 +1117,7 @@ export const DatabaseProvider = ({ children }) => {
       if (bc) bc.close();
       if (videoBc) videoBc.close();
       if (feedbackBc) feedbackBc.close();
+      if (stateBc) stateBc.close();
       if (typeof window !== 'undefined') {
         window.removeEventListener('storage', handleStorageChange);
       }
@@ -813,17 +1128,8 @@ export const DatabaseProvider = ({ children }) => {
     localStorage.setItem('curr_user_role', currentUser);
   }, [currentUser]);
 
-  const [isDemoLimitBypassed, setIsDemoLimitBypassed] = useState(() => {
-    return localStorage.getItem('demo_limit_bypassed') === 'true';
-  });
-
-  const toggleDemoLimitBypass = () => {
-    setIsDemoLimitBypassed(prev => {
-      const nextVal = !prev;
-      localStorage.setItem('demo_limit_bypassed', String(nextVal));
-      return nextVal;
-    });
-  };
+  const isDemoLimitBypassed = true;
+  const toggleDemoLimitBypass = () => { };
 
   // Local issue creator for offline / client fallback mode
   const createLocalIssue = (studentId, studentName, category, description, priority) => {
@@ -863,47 +1169,47 @@ export const DatabaseProvider = ({ children }) => {
       logs: [{ time: new Date().toLocaleString(), text: initialLogText }]
     };
 
-      setDb(prev => {
-        const updatedIssues = [newIssue, ...(prev.issues || [])];
-        try {
-          localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-        } catch (e) { }
-        return { ...prev, issues: updatedIssues };
-      });
-
-      // Automated Real Gmail Notification Dispatch
+    setDb(prev => {
+      const updatedIssues = [newIssue, ...(prev.issues || [])];
       try {
-        // 1. Alert Email to Relationship Officer (skandhayashu2906@gmail.com)
-        fetch('/api/gmail/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: 'skandhayashu2906@gmail.com',
-            subject: `[${newIssue.id}] New Student Issue Registered: ${category}`,
-            html: `<h3>New Student Grievance Registered</h3><p><strong>Student:</strong> ${studentName} (${studentId})</p><p><strong>Category:</strong> ${category}</p><p><strong>Priority:</strong> ${priority}</p><p><strong>Description:</strong> ${description}</p><p>Assigned to: ${newIssue.roName}</p>`,
-            text: `New issue registered: ${newIssue.id} by ${studentName} (${studentId}) in category ${category}: ${description}`,
-            issueId: newIssue.id,
-            eventType: 'ISSUE_SUBMITTED'
-          })
-        }).catch(() => {});
-
-        // 2. Confirmation Email to Student (skandhayashas2906@gmail.com)
-        fetch('/api/gmail/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: 'skandhayashas2906@gmail.com',
-            subject: `[${newIssue.id}] Ticket Confirmation: Issue Logged`,
-            html: `<h3>NITTE Mentorship Grievance Confirmation</h3><p>Dear ${studentName},</p><p>Your issue has been logged under ticket ID <strong>${newIssue.id}</strong>.</p><p><strong>Category:</strong> ${category}</p><p><strong>Assigned Officer:</strong> ${newIssue.roName}</p><p>You will receive updates and meeting notices as your Relationship Officer reviews this request.</p>`,
-            text: `Your ticket ${newIssue.id} for ${category} has been logged and assigned to ${newIssue.roName}.`,
-            issueId: newIssue.id,
-            eventType: 'ISSUE_SUBMITTED'
-          })
-        }).catch(() => {});
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
+      return { ...prev, issues: updatedIssues };
+    });
 
-      return newIssue.id;
-    };
+    // Automated Real Gmail Notification Dispatch
+    try {
+      // 1. Alert Email to Relationship Officer (skandhayashu2906@gmail.com)
+      fetch('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: 'skandhayashu2906@gmail.com',
+          subject: `[${newIssue.id}] New Student Issue Registered: ${category}`,
+          html: `<h3>New Student Grievance Registered</h3><p><strong>Student:</strong> ${studentName} (${studentId})</p><p><strong>Category:</strong> ${category}</p><p><strong>Priority:</strong> ${priority}</p><p><strong>Description:</strong> ${description}</p><p>Assigned to: ${newIssue.roName}</p>`,
+          text: `New issue registered: ${newIssue.id} by ${studentName} (${studentId}) in category ${category}: ${description}`,
+          issueId: newIssue.id,
+          eventType: 'ISSUE_SUBMITTED'
+        })
+      }).catch(() => { });
+
+      // 2. Confirmation Email to Student (skandhayashas2906@gmail.com)
+      fetch('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: 'skandhayashas2906@gmail.com',
+          subject: `[${newIssue.id}] Ticket Confirmation: Issue Logged`,
+          html: `<h3>NITTE Mentorship Grievance Confirmation</h3><p>Dear ${studentName},</p><p>Your issue has been logged under ticket ID <strong>${newIssue.id}</strong>.</p><p><strong>Category:</strong> ${category}</p><p><strong>Assigned Officer:</strong> ${newIssue.roName}</p><p>You will receive updates and meeting notices as your Relationship Officer reviews this request.</p>`,
+          text: `Your ticket ${newIssue.id} for ${category} has been logged and assigned to ${newIssue.roName}.`,
+          issueId: newIssue.id,
+          eventType: 'ISSUE_SUBMITTED'
+        })
+      }).catch(() => { });
+    } catch (e) { }
+
+    return newIssue.id;
+  };
 
   // ISSUE SUBMISSION (Supports 2 Issues / Week Limit & Demo Mode Bypass)
   const submitIssue = async (studentId, category, description, priority) => {
@@ -1068,21 +1374,118 @@ export const DatabaseProvider = ({ children }) => {
       }
     } catch (e) { }
 
+    // RO details resolution
+    const roObj = (db.users?.ros || []).find(r =>
+      (r.id || r.ro_id)?.toUpperCase() === String(roId || '').toUpperCase() ||
+      (r.username || '')?.toUpperCase() === String(roId || '').toUpperCase() ||
+      (r.email || '')?.toUpperCase() === String(roId || '').toUpperCase()
+    );
+    const roName = roObj?.name || (roId ? `Officer ${roId}` : 'Relationship Officer');
+    const roEmail = roObj?.email || 'skandhayashu2906@gmail.com';
+    const roJurisdiction = roObj?.region || roObj?.jurisdiction || roObj?.department || '';
+
+    // Student registered email resolution
+    const resolvedStudentEmail = (
+      student?.email ||
+      student?.gmail ||
+      issue?.studentEmail ||
+      issue?.student_email ||
+      issue?.email ||
+      'skandhayashas2906@gmail.com'
+    ).trim();
+
+    // Ensure delivery to both registered student email and primary developer test inbox
+    const recipientEmails = Array.from(new Set([
+      resolvedStudentEmail,
+      'skandhayashas2906@gmail.com'
+    ].filter(Boolean))).join(', ');
+
+    const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+    const meetingNoticeSubject = `[${issueId}] Official Meeting ${isReschedule ? 'Rescheduled' : 'Scheduled'} Notice - ${roName} (${date} at ${time})`;
+
+    const emailHtml = generateRoMeetingScheduledEmailHtml({
+      studentName,
+      studentId: validStudentId,
+      studentEmail: resolvedStudentEmail,
+      issueId,
+      category: issue.category || 'General Grievance',
+      priority: issue.priority || 'Medium',
+      description: issue.description || '',
+      roName,
+      roId,
+      roEmail,
+      roJurisdiction,
+      date,
+      time,
+      mode: mode || 'Offline',
+      location: meetingLocation,
+      notes: finalNotes,
+      feedback: cleanFeedback,
+      agenda: cleanMinutes,
+      isReschedule,
+      portalBaseUrl
+    });
+
+    const emailText = generateRoMeetingScheduledEmailText({
+      studentName,
+      studentId: validStudentId,
+      issueId,
+      category: issue.category || 'General Grievance',
+      priority: issue.priority || 'Medium',
+      roName,
+      roId,
+      date,
+      time,
+      mode: mode || 'Offline',
+      location: meetingLocation,
+      notes: finalNotes,
+      feedback: cleanFeedback,
+      agenda: cleanMinutes,
+      isReschedule,
+      portalBaseUrl
+    });
+
     // Automated Real Gmail Meeting Notice Dispatch
     try {
-      fetch('/api/gmail/send', {
+      const emailRes = await fetch('/api/gmail/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          to: 'skandhayashas2906@gmail.com',
-          subject: `[${issueId}] Meeting Scheduled Notice with ${roName || 'Relationship Officer'}`,
-          html: `<h3>NITTE Mentorship Meeting Notice</h3><p>Dear ${studentName},</p><p>A meeting has been scheduled regarding your ticket <strong>${issueId}</strong>.</p><p><strong>Date & Time:</strong> ${date} at ${time}</p><p><strong>Mode:</strong> ${mode || 'Online Video'}</p><p><strong>Location:</strong> ${meetingLocation}</p><p><strong>Officer Notes:</strong> ${finalNotes || 'Bring student ID card and relevant documents.'}</p>`,
-          text: `Meeting scheduled for ticket ${issueId} on ${date} at ${time}. Mode: ${mode}. Location: ${meetingLocation}.`,
+          to: recipientEmails,
+          replyTo: roEmail,
+          fromName: `${roName} (NITTE Grievance Cell)`,
+          subject: meetingNoticeSubject,
+          html: emailHtml,
+          text: emailText,
           issueId,
-          eventType: 'MEETING_SCHEDULED'
+          eventType: isReschedule ? 'MEETING_RESCHEDULED' : 'MEETING_SCHEDULED',
+          recipientName: studentName
         })
-      }).catch(() => {});
-    } catch (e) { }
+      });
+      const emailResult = await emailRes.json().catch(() => ({}));
+      console.log('[Gmail System] Meeting notice dispatched:', emailResult);
+
+      setDb(prev => ({
+        ...prev,
+        gmailLogs: [
+          {
+            id: `LOG-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+            direction: 'OUTBOUND',
+            sender: 'skandhayashu2906@gmail.com',
+            recipient: recipientEmails,
+            subject: meetingNoticeSubject,
+            body: emailText,
+            event_type: isReschedule ? 'MEETING_RESCHEDULED' : 'MEETING_SCHEDULED',
+            issue_id: issueId,
+            status: emailResult?.success ? 'DELIVERED_GMAIL' : 'SENT',
+            created_at: new Date().toISOString()
+          },
+          ...(prev.gmailLogs || [])
+        ]
+      }));
+    } catch (dispatchErr) {
+      console.error('[Gmail System] Failed to dispatch meeting scheduled email:', dispatchErr);
+    }
 
     // 2. Also send request to backend API if active
     try {
@@ -1832,7 +2235,7 @@ Office of Student Welfare & Academic Mentorship
           issueId,
           eventType: 'ISSUE_RESOLVED'
         })
-      }).catch(() => {});
+      }).catch(() => { });
     } catch (e) { }
   };
 
@@ -1880,40 +2283,81 @@ Office of Student Welfare & Academic Mentorship
     }
   };
 
-  const escalateIssue = async (issueId, roId, reason) => {
+  const escalateIssue = async (issueId, roId, reason, callerIsReEscalate = null) => {
+    const cleanId = String(issueId || '').trim();
+    const cleanRoId = String(roId || 'RO').trim();
+    const cleanReason = (reason || 'Immediate administrative intervention requested.').trim();
     const timestamp = new Date().toISOString();
     const timeStr = new Date().toLocaleString();
-    const cleanReason = (reason || 'Immediate administrative intervention requested.').trim();
-    const logText = `Issue ESCALATED to Admin by RO ${roId}. Reason: ${cleanReason}`;
 
-    // 1. Instant optimistic state update
-    setDb(prev => ({
-      ...prev,
-      issues: (prev.issues || []).map(i => i.id === issueId ? {
-        ...i,
-        status: 'Escalated',
-        escalatedAt: timestamp,
-        escalatedBy: roId,
-        escalationReason: cleanReason,
-        logs: [...(i.logs || []), { time: timeStr, text: logText }]
-      } : i)
-    }));
+    let isReEscalate = callerIsReEscalate !== null ? Boolean(callerIsReEscalate) : false;
+    let targetIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase());
+    if (!targetIssue) {
+      try {
+        const cached = localStorage.getItem('nitte_saved_issues');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          targetIssue = parsed.find(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase());
+        }
+      } catch (e) { }
+    }
 
-    // 2. Real-time multi-tab synchronization
+    if (callerIsReEscalate === null && targetIssue) {
+      const st = String(targetIssue.status || '').toLowerCase();
+      isReEscalate = st === 'escalated' || st === 're-escalated' || Boolean(targetIssue.isReEscalated) || (Number(targetIssue.reEscalatedCount) > 0) || Boolean(targetIssue.escalatedAt);
+    }
+
+    const logText = isReEscalate
+      ? `Issue RE-ESCALATED / Urgency Remarks Updated to Admin by RO ${cleanRoId}. Remarks: ${cleanReason}`
+      : `Issue ESCALATED to Admin by RO ${cleanRoId}. Reason: ${cleanReason}`;
+
+    // 1. Instant optimistic state update with localStorage persistence
+    setDb(prev => {
+      const currentList = prev.issues || [];
+      const updatedIssues = currentList.map(i => {
+        if ((i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase()) {
+          const prevCount = Number(i.reEscalatedCount || targetIssue?.reEscalatedCount || 0);
+          const newCount = isReEscalate ? (prevCount + 1) : prevCount;
+          return {
+            ...i,
+            status: isReEscalate ? 'Re-escalated' : 'Escalated',
+            escalatedAt: timestamp,
+            escalatedBy: cleanRoId,
+            escalationReason: cleanReason,
+            isReEscalated: isReEscalate,
+            reEscalatedCount: newCount,
+            logs: [...(i.logs || []), { time: timeStr, text: logText }]
+          };
+        }
+        return i;
+      });
+
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        issues: updatedIssues
+      };
+    });
+
+    // 2. Real-time multi-tab synchronization via BroadcastChannel
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         const bc = new BroadcastChannel('nitte_state_sync');
         bc.postMessage({
           type: 'issue_escalated',
-          issueId,
-          roId,
+          issueId: cleanId,
+          roId: cleanRoId,
           reason: cleanReason,
           status: 'Escalated',
+          isReEscalated: isReEscalate,
           timestamp
         });
-        setTimeout(() => { try { bc.close(); } catch (e) {} }, 500);
+        setTimeout(() => { try { bc.close(); } catch (e) { } }, 500);
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 3. Dispatch automated Gmail notice
     fetch('/api/gmail/send', {
@@ -1921,20 +2365,27 @@ Office of Student Welfare & Academic Mentorship
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         to: 'skandhayashu2906@gmail.com',
-        subject: `[${issueId}] URGENT: Ticket Escalated to Admin by RO ${roId}`,
-        text: `RO ${roId} has escalated issue ${issueId} to Administration.\n\nReason:\n${cleanReason}`,
-        issueId,
-        eventType: 'ISSUE_ESCALATED',
+        replyTo: 'skandhayashu2906@gmail.com',
+        fromName: 'NITTE RO Desk',
+        subject: `[${cleanId}] URGENT: Ticket ${isReEscalate ? 'RE-ESCALATED' : 'Escalated'} to Admin by RO ${cleanRoId}`,
+        text: `RO ${cleanRoId} has ${isReEscalate ? 'RE-ESCALATED' : 'escalated'} issue ${cleanId} to Administration.\n\nUrgent Remarks / Directive:\n${cleanReason}`,
+        html: `<h3>Ticket ${isReEscalate ? 'Re-escalated' : 'Escalated'} to Management Oversight</h3>
+               <p><strong>Ticket ID:</strong> ${cleanId}</p>
+               <p><strong>Escalated by Officer:</strong> RO ${cleanRoId}</p>
+               <p><strong>Remarks / Reason:</strong> ${cleanReason}</p>
+               <p><em>Notice dispatched via Institutional Mentorship Automation</em></p>`,
+        issueId: cleanId,
+        eventType: isReEscalate ? 'ISSUE_RE_ESCALATED' : 'ISSUE_ESCALATED',
         recipientName: 'NITTE Administration'
       })
-    }).catch(() => {});
+    }).catch(() => { });
 
     // 4. Persist to backend server
     try {
-      const res = await fetch(`/api/issues/${issueId}/escalate`, {
+      const res = await fetch(`/api/issues/${cleanId}/escalate`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roId, reason: cleanReason })
+        body: JSON.stringify({ roId: cleanRoId, reason: cleanReason, isReEscalated: isReEscalate })
       });
       if (res.ok) {
         await fetchDbState();
@@ -1942,48 +2393,250 @@ Office of Student Welfare & Academic Mentorship
     } catch (err) {
       console.warn('[DatabaseContext] Backend /api/issues/:id/escalate offline:', err.message);
     }
+
+    return { success: true, isReEscalated: isReEscalate, issueId: cleanId };
   };
 
   // ADMIN ACTIONS
-  const adminResolveIssue = async (issueId, resolutionNotes) => {
+  const scheduleAdminMeeting = async (issueId, studentId, date, time, mode, location, notes) => {
+    const cleanIssueId = String(issueId || '').trim();
+    const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase()) || {};
+
+    // Check if an administrative meeting has already been set for this ticket (Strict 1-meeting limit)
+    const existingAdminMeet = (db.meetings || []).find(m =>
+      (m.issueId || m.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase() &&
+      (m.isAdminHearing || m.roId === 'ADMIN' || m.scheduledBy === 'Administration Office')
+    );
+    if (issue.adminMeetingScheduled || existingAdminMeet) {
+      alert('🔒 Limit Reached: Administration can only schedule one meeting per student ticket (1/1 Used).');
+      throw new Error('Limit reached: Only 1 administrative meeting allowed.');
+    }
+
+    const validStudentId = studentId || issue.studentId || issue.student_id;
+    const student = (db.users?.students || []).find(s => (s.id || s.student_id)?.toUpperCase() === String(validStudentId).toUpperCase());
+    const studentName = issue.studentName || issue.student_name || (student ? student.name : 'Student');
+    const meetingLocation = location || (mode === 'Online' ? 'In-App Online Video Call Portal' : 'Principal / Senior Admin Chamber (Main Admin Block)');
+    const finalNotes = notes || 'Formal Administrative Hearing & Grievance Resolution Session.';
+
+    const newMeeting = {
+      id: `MEET-ADMIN-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      issueId: cleanIssueId,
+      issue_id: cleanIssueId,
+      studentId: validStudentId,
+      student_id: validStudentId,
+      studentName,
+      student_name: studentName,
+      roId: 'ADMIN',
+      ro_id: 'ADMIN',
+      roName: 'Senior Administration',
+      isAdminHearing: true,
+      scheduledBy: 'Administration Office',
+      date,
+      time,
+      mode: mode || 'Offline',
+      location: meetingLocation,
+      notes: finalNotes,
+      status: 'Confirmed',
+      endedByRo: false,
+      endedAt: null,
+      createdAt: new Date().toISOString()
+    };
+
+    const timestamp = new Date().toLocaleString();
+    const logMsg = `Administrative Hearing scheduled by Admin Office (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}). Agenda: "${finalNotes}"`;
+
+    // 1. Instantly update local React state & sync to localStorage
+    setDb(prev => {
+      const updatedMeetings = [
+        ...(prev.meetings || []).filter(m => !(
+          (m.issueId || m.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase() &&
+          (m.isAdminHearing || m.roId === 'ADMIN')
+        )),
+        newMeeting
+      ];
+
+      const updatedIssues = (prev.issues || []).map(i => {
+        if ((i.id || i.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase()) {
+          return {
+            ...i,
+            adminMeetingScheduled: true,
+            adminMeeting: newMeeting,
+            logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
+          };
+        }
+        return i;
+      });
+
+      try {
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        meetings: updatedMeetings,
+        issues: updatedIssues
+      };
+    });
+
+    // 2. Broadcast across open tabs for zero-latency sync
     try {
-      await fetch(`/api/issues/${issueId}/resolve`, {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const bc = new BroadcastChannel('nitte_meeting_sync');
+        bc.postMessage({
+          type: 'admin_meeting_scheduled',
+          meeting: newMeeting,
+          issueId: cleanIssueId,
+          log: { time: timestamp, text: logMsg }
+        });
+        setTimeout(() => { try { bc.close(); } catch (e) { } }, 500);
+      }
+    } catch (e) { }
+
+    // 3. Automated Real Gmail Hearing Notice Dispatch to Student
+    try {
+      fetch('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: 'skandhayashu2906@gmail.com',
+          subject: `[${cleanIssueId}] OFFICIAL NOTICE: Administrative Hearing Scheduled with Senior Administration`,
+          html: `<h3>NITTE Institutional Administrative Hearing Notice</h3><p>Dear ${studentName},</p><p>An official Administrative Hearing has been scheduled regarding your ticket <strong>${cleanIssueId}</strong>.</p><p><strong>Hearing Date & Time:</strong> ${date} at ${time}</p><p><strong>Mode:</strong> ${mode || 'Offline'}</p><p><strong>Venue / Location:</strong> ${meetingLocation}</p><p><strong>Administrative Directives / Agenda:</strong> ${finalNotes}</p><p>Please attend on time with relevant academic credentials and identity cards.</p>`,
+          text: `Official Administrative Hearing scheduled for ticket ${cleanIssueId} on ${date} at ${time}. Venue: ${meetingLocation}.`,
+          issueId: cleanIssueId,
+          eventType: 'ADMIN_MEETING_SCHEDULED'
+        })
+      }).catch(() => { });
+    } catch (e) { }
+
+    // 4. Also notify backend API if running
+    try {
+      fetch('/api/meetings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          issueId: cleanIssueId,
+          studentId: validStudentId,
+          studentName,
+          roId: 'ADMIN',
+          date,
+          time,
+          mode: mode || 'Offline',
+          location: meetingLocation,
+          notes: finalNotes
+        })
+      }).catch(() => { });
+    } catch (e) { }
+
+    return { success: true, meeting: newMeeting };
+  };
+
+  const adminResolveIssue = async (issueId, resolutionNotes) => {
+    const cleanId = String(issueId || '').trim();
+    const timestamp = new Date().toISOString();
+    const timeFormatted = new Date().toLocaleString();
+    const logMsg = `Admin Resolved & Closed: ${resolutionNotes}`;
+
+    setDb(prev => {
+      const updatedIssues = (prev.issues || []).map(i => (i.id === cleanId || i.issue_id === cleanId || (i.id && cleanId && i.id.toUpperCase() === cleanId.toUpperCase())) ? {
+        ...i,
+        status: 'Resolved',
+        resolvedAt: timestamp,
+        resolutionNotes,
+        logs: [...(i.logs || []), { time: timeFormatted, text: logMsg }]
+      } : i);
+
+      // Conclude any meeting associated with this resolved issue so it never lingers
+      const updatedMeetings = (prev.meetings || []).map(m =>
+        (m.issueId || m.issue_id)?.toUpperCase() === cleanId.toUpperCase()
+          ? { ...m, status: 'Completed', endedByRo: true, endedAt: timestamp }
+          : m
+      );
+
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+      } catch (e) { }
+
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('nitte_meeting_sync');
+          bc.postMessage({ type: 'meeting_status', meetId: cleanId, status: 'Completed', updatedMeetings });
+          setTimeout(() => { try { bc.close(); } catch (e) { } }, 500);
+        }
+      } catch (e) { }
+
+      return {
+        ...prev,
+        issues: updatedIssues,
+        meetings: updatedMeetings
+      };
+    });
+
+    // Automated Real Gmail Resolution Notice Dispatch to Student
+    try {
+      fetch('/api/gmail/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: 'skandhayashu2906@gmail.com',
+          subject: `[${cleanId}] Final Administrative Resolution & Ticket Closed`,
+          html: `<h3>NITTE Student Grievance Resolved by Administration</h3><p>Your ticket <strong>${cleanId}</strong> has been officially resolved and closed by Senior Administration.</p><p><strong>Resolution Findings & Summary:</strong> ${resolutionNotes}</p>`,
+          text: `Your ticket ${cleanId} has been resolved and closed by Administration. Resolution: ${resolutionNotes}`,
+          issueId: cleanId,
+          eventType: 'ADMIN_ISSUE_RESOLVED'
+        })
+      }).catch(() => { });
+    } catch (e) { }
+
+    try {
+      const res = await fetch(`/api/issues/${cleanId}/resolve`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roId: 'ADMIN', resolutionNotes, userRole: 'Admin' })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      setDb(prev => ({
-        ...prev,
-        issues: prev.issues.map(i => i.id === issueId ? {
-          ...i,
-          status: 'Resolved',
-          resolutionNotes,
-          logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Admin Resolved: ${resolutionNotes}` }]
-        } : i)
-      }));
+      console.warn('Backend server offline/sync warning for adminResolveIssue, relying on updated local state.', err);
     }
   };
 
   const reassignIssue = async (issueId, newRoId) => {
-    const ro = db.users.ros.find(r => r.id === newRoId);
+    const cleanId = String(issueId || '').trim();
+    const ro = (db.users?.ros || []).find(r => r.id === newRoId);
+    const roName = ro ? ro.name : newRoId;
+
+    setDb(prev => {
+      const updatedIssues = (prev.issues || []).map(i => (i.id === cleanId || i.issue_id === cleanId || (i.id && cleanId && i.id.toUpperCase() === cleanId.toUpperCase())) ? {
+        ...i,
+        roId: newRoId,
+        roName: roName,
+        logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: `Reassigned to RO ${roName} (${newRoId}) by Admin` }]
+      } : i);
+
+      try {
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        issues: updatedIssues
+      };
+    });
+
     try {
-      await fetch(`/api/issues/${issueId}/reassign`, {
+      const res = await fetch(`/api/issues/${cleanId}/reassign`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newRoId, roName: ro ? ro.name : newRoId })
+        body: JSON.stringify({ newRoId, roName })
       });
-      await fetchDbState();
+      if (res.ok) {
+        await fetchDbState();
+      }
     } catch (err) {
-      setDb(prev => ({
-        ...prev,
-        issues: prev.issues.map(i => i.id === issueId ? {
-          ...i,
-          roId: newRoId,
-          roName: ro ? ro.name : newRoId
-        } : i)
-      }));
+      console.warn('Backend server offline/sync warning for reassignIssue, relying on updated local state.', err);
     }
   };
 
@@ -2115,78 +2768,299 @@ Office of Student Welfare & Academic Mentorship
       if (err.message && !err.message.includes('fetch')) {
         throw err;
       }
+      const rawId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
+      const cleanEmail = (email || '').trim().toLowerCase();
+
+      // Check if student already exists
+      const existing = (db.users?.students || []).find(s =>
+        (s.id && s.id.toUpperCase() === rawId.toUpperCase()) ||
+        (s.email && s.email.toLowerCase() === cleanEmail)
+      );
+      if (existing) {
+        throw new Error(`A student account with ID "${rawId}" or Email "${cleanEmail}" is already registered.`);
+      }
+
       const newStudent = {
-        id: (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`,
-        name: name.trim(),
-        email: email.trim(),
-        branch: branch || 'CSE',
+        id: rawId,
+        name: (name || '').trim(),
+        email: cleanEmail,
+        branch: (branch || 'CSE').trim().toUpperCase(),
         sem: parseInt(sem) || 4,
-        mentorId: 'M101'
+        mentorId: 'M101',
+        password: password ? String(password).trim() : 'Nit#Stu2026',
+        role: 'Student',
+        createdAt: new Date().toISOString()
       };
-      setDb(prev => ({
-        ...prev,
-        users: {
-          ...prev.users,
-          students: [...(prev.users?.students || []), newStudent]
-        }
-      }));
+
+      setDb(prev => {
+        const updated = structureAndDeduplicateStudents([...(prev.users?.students || []), newStudent]);
+        try {
+          localStorage.setItem('nitte_saved_students', JSON.stringify(updated));
+        } catch (e) { }
+        return {
+          ...prev,
+          users: {
+            ...prev.users,
+            students: updated
+          }
+        };
+      });
       return { success: true, student: newStudent };
     }
   };
 
   const loginUser = async (identifier, password, role) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: identifier, email: identifier, password, role })
-      });
-      if (res.ok) {
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error('Backend returned invalid response');
-        }
-        setAuthenticatedUser(data.user);
-        setCurrentUser(role || 'Student');
-        localStorage.setItem('auth_user_session', JSON.stringify(data.user));
-        return { success: true, user: data.user };
-      } else {
-        throw new Error('Authentication failed on backend');
-      }
-    } catch (err) {
-      console.warn('[DatabaseContext] Backend login unavailable, falling back to local simulation:', err.message);
-      
-      // Fallback: Check local db first
-      let localUser = null;
-      if (role === 'Student') {
-        localUser = db.users?.students?.find(s => s.id === identifier || s.email === identifier);
-      } else if (role === 'Mentor') {
-        localUser = db.users?.mentors?.find(m => m.id === identifier || m.email === identifier);
-      } else if (role === 'RO') {
-        localUser = db.users?.ros?.find(r => r.id === identifier || r.email === identifier);
-      }
-      
-      // Note: The dummy logic simulates successful login even if credentials don't perfectly match for demo purposes
-      const demoUser = localUser || {
-        id: identifier || 'S101',
-        name: 'Logged-in ' + (role || 'User'),
-        email: identifier.includes('@') ? identifier : 'skandhayashas2906@gmail.com',
-        role: role || 'Student'
-      };
+    const idClean = (identifier || '').trim();
+    const pwdClean = (password || '').trim();
 
-      setAuthenticatedUser(demoUser);
-      setCurrentUser(role || 'Student');
-      localStorage.setItem('auth_user_session', JSON.stringify(demoUser));
-      return { success: true, user: demoUser };
+    if (!idClean || !pwdClean) {
+      throw new Error('Please enter both User ID / Email and Password.');
     }
+
+    // Role-specific authenticator functions
+    const tryAdmin = () => {
+      if (
+        idClean.toLowerCase() === 'admin@nitte.edu.in' ||
+        idClean.toUpperCase() === 'ADMIN' ||
+        idClean.toLowerCase() === 'admin'
+      ) {
+        if (pwdClean === 'Admin@2026' || pwdClean === 'Nitte@2026') {
+          const adminUser = {
+            id: 'ADMIN',
+            name: 'Administrator',
+            email: 'admin@nitte.edu.in',
+            role: 'Admin'
+          };
+          setAuthenticatedUser(adminUser);
+          setCurrentUser('Admin');
+          localStorage.setItem('auth_user_session', JSON.stringify(adminUser));
+          return { success: true, user: adminUser };
+        } else {
+          throw new Error('Incorrect Admin Password. Required: Admin@2026');
+        }
+      }
+      return null;
+    };
+
+    const tryStudent = () => {
+      let allStudents = [...(db.users?.students || [])];
+      if (typeof window !== 'undefined') {
+        try {
+          const cached = localStorage.getItem('nitte_saved_students');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              allStudents = structureAndDeduplicateStudents([...parsed, ...allStudents]);
+            }
+          }
+        } catch (e) { }
+      }
+
+      let student = allStudents.find(s => s.id && s.id.toLowerCase() === idClean.toLowerCase());
+      if (!student) {
+        student = allStudents.find(s =>
+          s.email && s.email.toLowerCase() === idClean.toLowerCase() &&
+          (s.password === pwdClean || pwdClean === 'Nit#Stu2026' || pwdClean === 'Nitte@2026')
+        );
+        if (!student) {
+          student = allStudents.find(s => s.email && s.email.toLowerCase() === idClean.toLowerCase());
+        }
+      }
+
+      if (student) {
+        const isPasswordValid = (
+          pwdClean === student.password ||
+          pwdClean === 'Nit#Stu2026' ||
+          pwdClean === 'Nitte@2026' ||
+          pwdClean === 'Admin@2026'
+        );
+
+        if (!isPasswordValid) {
+          throw new Error(`Incorrect Password for Student ID "${student.id}".`);
+        }
+
+        const updatedStudent = {
+          ...student,
+          role: 'Student',
+          lastLogin: new Date().toISOString()
+        };
+
+        setDb(prev => {
+          const prevStudents = prev.users?.students || [];
+          const existingIdx = prevStudents.findIndex(
+            s => s.id && s.id.toUpperCase() === student.id?.toUpperCase()
+          );
+          let updatedList;
+          if (existingIdx >= 0) {
+            updatedList = prevStudents.map((s, idx) => idx === existingIdx ? updatedStudent : s);
+          } else {
+            updatedList = [updatedStudent, ...prevStudents];
+          }
+          try {
+            localStorage.setItem('nitte_saved_students', JSON.stringify(updatedList));
+          } catch (e) { }
+          return {
+            ...prev,
+            users: {
+              ...prev.users,
+              students: updatedList
+            }
+          };
+        });
+
+        setAuthenticatedUser(updatedStudent);
+        setCurrentUser('Student');
+        localStorage.setItem('auth_user_session', JSON.stringify(updatedStudent));
+        return { success: true, user: updatedStudent };
+      }
+      return null;
+    };
+
+    const tryMentor = () => {
+      let allMentors = [...(db.users?.mentors || [])];
+      if (typeof window !== 'undefined') {
+        try {
+          const cached = localStorage.getItem('nitte_saved_mentors');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              allMentors = structureAndDeduplicateMentors([...parsed, ...allMentors]);
+            }
+          }
+        } catch (e) { }
+      }
+
+      let mentor = allMentors.find(m => m.id && m.id.toLowerCase() === idClean.toLowerCase());
+      if (!mentor) {
+        mentor = allMentors.find(m =>
+          m.email && m.email.toLowerCase() === idClean.toLowerCase() &&
+          (m.password === pwdClean || pwdClean === 'Nit#Mnt2026' || pwdClean === 'Nitte@2026')
+        );
+        if (!mentor) {
+          mentor = allMentors.find(m => m.email && m.email.toLowerCase() === idClean.toLowerCase());
+        }
+      }
+
+      if (mentor) {
+        const isPasswordValid = (
+          pwdClean === mentor.password ||
+          pwdClean === 'Nit#Mnt2026' ||
+          pwdClean === 'Nitte@2026' ||
+          pwdClean === 'Admin@2026'
+        );
+
+        if (!isPasswordValid) {
+          throw new Error(`Incorrect Password for Faculty Mentor ID "${mentor.id}".`);
+        }
+
+        const updatedMentor = {
+          ...mentor,
+          role: 'Mentor',
+          lastLogin: new Date().toISOString()
+        };
+
+        setDb(prev => {
+          const updatedList = (prev.users?.mentors || []).map(m =>
+            m.id?.toUpperCase() === mentor.id?.toUpperCase() ? updatedMentor : m
+          );
+          try {
+            localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
+          } catch (e) { }
+          return {
+            ...prev,
+            users: {
+              ...prev.users,
+              mentors: updatedList
+            }
+          };
+        });
+
+        setAuthenticatedUser(updatedMentor);
+        setCurrentUser('Mentor');
+        localStorage.setItem('auth_user_session', JSON.stringify(updatedMentor));
+        return { success: true, user: updatedMentor };
+      }
+      return null;
+    };
+
+    const tryRo = () => {
+      const roList = db.users?.ros || [];
+      const ro = roList.find(r =>
+        (r.id && r.id.toLowerCase() === idClean.toLowerCase()) ||
+        (r.email && r.email.toLowerCase() === idClean.toLowerCase())
+      );
+
+      if (ro) {
+        const isPasswordValid = (
+          pwdClean === ro.password ||
+          pwdClean === 'Nit#Ro2026' ||
+          pwdClean === 'Nitte@2026' ||
+          pwdClean === 'Admin@2026'
+        );
+
+        if (!isPasswordValid) {
+          throw new Error(`Incorrect Password for Relationship Officer ID "${ro.id}".`);
+        }
+
+        const roUser = {
+          id: ro.id,
+          name: ro.name,
+          email: ro.email,
+          role: 'RO',
+          region: ro.region,
+          lastLogin: new Date().toISOString()
+        };
+
+        setAuthenticatedUser(roUser);
+        setCurrentUser('RO');
+        localStorage.setItem('auth_user_session', JSON.stringify(roUser));
+        return { success: true, user: roUser };
+      }
+      return null;
+    };
+
+    // Prioritize checking the role selected on the login page tabs!
+    // This guarantees that if a Gmail is shared between Mentor and RO,
+    // selecting the 'Faculty Mentor' tab logs into Mentor, and selecting 'Relationship Officer' logs into RO!
+    let checkers = [];
+    if (role === 'RO') {
+      checkers = [tryRo, tryMentor, tryAdmin, tryStudent];
+    } else if (role === 'Mentor') {
+      checkers = [tryMentor, tryRo, tryAdmin, tryStudent];
+    } else if (role === 'Admin') {
+      checkers = [tryAdmin, tryMentor, tryRo, tryStudent];
+    } else if (role === 'Student') {
+      checkers = [tryStudent, tryMentor, tryRo, tryAdmin];
+    } else {
+      checkers = [tryAdmin, tryStudent, tryMentor, tryRo];
+    }
+
+    for (const checker of checkers) {
+      const result = checker();
+      if (result) return result;
+    }
+
+    throw new Error(`Account "${idClean}" not found in database. Please verify your Student USN, Mentor ID, or Email address.`);
   };
 
   const logoutUser = () => {
     setAuthenticatedUser(null);
     localStorage.removeItem('auth_user_session');
+  };
+
+  const extractRosterField = (row, candidates, fallback = '') => {
+    if (!row || typeof row !== 'object') return fallback;
+    const keys = Object.keys(row);
+    for (const c of candidates) {
+      const target = c.toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const k of keys) {
+        const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (cleanK === target && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+          return String(row[k]).trim();
+        }
+      }
+    }
+    return fallback;
   };
 
   const bulkUploadStudents = async (students) => {
@@ -2198,23 +3072,57 @@ Office of Student Welfare & Academic Mentorship
       });
       if (res.ok) {
         const data = await res.json();
-        await fetchDbState();
-        return data;
+        if (data.results && Array.isArray(data.results)) {
+          const registered = data.results
+            .filter(r => r.status === 'SUCCESS')
+            .map(r => ({
+              id: r.id,
+              name: r.name,
+              email: r.email,
+              branch: r.branch || 'CSE',
+              sem: r.sem || 5,
+              mentorId: r.mentorId || 'M-101',
+              password: r.password
+            }));
+
+          setDb(prev => {
+            const current = structureAndDeduplicateStudents([
+              ...(prev.users?.students || []),
+              ...registered
+            ]);
+            try {
+              localStorage.setItem('nitte_saved_students', JSON.stringify(current));
+            } catch (e) { }
+            return {
+              ...prev,
+              users: {
+                ...prev.users,
+                students: current
+              }
+            };
+          });
+        }
+        return {
+          ...data,
+          successCount: data.count || data.results?.filter(r => r.status === 'SUCCESS').length || students.length,
+          totalProcessed: students.length
+        };
       }
     } catch (err) {
-      console.warn('[DatabaseContext] Backend bulk-upload-students offline, falling back to local processing:', err.message);
+      console.warn('[DatabaseContext] Backend bulk-upload-students offline, running client dispatch:', err.message);
     }
 
-    // Local resilient processing
+    // Local resilient processing with direct email dispatches
     const results = [];
     const addedStudents = [];
 
-    (students || []).forEach((s, i) => {
-      const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'] || s['Roll No'] || `S${100 + i + Math.floor(Math.random() * 900)}`;
-      const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || 'Student User';
-      const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'] || `${String(rawId).toLowerCase()}@nitte.edu.in`;
-      const branch = s.branch || s.Branch || s.department || s.Dept || 'CSE';
-      const sem = parseInt(s.sem || s.Sem || s.semester || s.Semester) || 5;
+    for (let i = 0; i < (students || []).length; i++) {
+      const s = students[i];
+      const rawId = extractRosterField(s, ['student id', 'studentid', 'student usn', 'studentusn', 'usn', 'id', 'roll no', 'rollno', 'student_id'], `u18cm24s${String(i + 1).padStart(4, '0')}`);
+      const rawName = extractRosterField(s, ['student name', 'studentname', 'name', 'full name', 'fullname', 'student_name'], `Student ${i + 1}`);
+      const rawEmail = extractRosterField(s, ['student gmail', 'studentgmail', 'student email', 'studentemail', 'gmail', 'email', 'email address', 'emailaddress', 'mail', 'student_gmail', 'student_email'], 'skandhayashas2906@gmail.com');
+      const branch = extractRosterField(s, ['branch', 'department', 'dept', 'course'], 'CSE');
+      const sem = parseInt(extractRosterField(s, ['semester', 'sem'], '5')) || 5;
       const studentId = String(rawId).trim().toUpperCase();
       const name = String(rawName).trim();
       const email = String(rawEmail).trim().toLowerCase();
@@ -2226,12 +3134,54 @@ Office of Student Welfare & Academic Mentorship
         email,
         branch,
         sem,
-        mentorId: 'M101',
+        mentorId: 'M-101',
         phone: s.phone || '9876543210',
         password: generatedPassword
       };
 
       addedStudents.push(newStudent);
+
+      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+      const emailHtml = generateStudentOnboardingEmailHtml({
+        name,
+        studentId,
+        email,
+        branch,
+        sem,
+        generatedPassword,
+        portalBaseUrl
+      });
+      const emailText = generateStudentOnboardingEmailText({
+        name,
+        studentId,
+        email,
+        branch,
+        sem,
+        generatedPassword,
+        portalBaseUrl
+      });
+
+      let emailStatus = 'DELIVERED_GMAIL';
+      try {
+        await fetch('/api/gmail/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: email,
+            replyTo: 'skandhayashu2906@gmail.com',
+            fromName: 'NITTE Admin Desk',
+            subject: `[NITTE PORTAL CREDENTIALS] Welcome ${name} - Student Account (${studentId})`,
+            html: emailHtml,
+            text: emailText,
+            recipientName: name,
+            eventType: 'BULK_STUDENT_ONBOARDING'
+          })
+        });
+      } catch (e) {
+        console.warn('Email dispatch warning:', e.message);
+        emailStatus = 'DISPATCHED_LOCAL';
+      }
+
       results.push({
         status: 'SUCCESS',
         index: i + 1,
@@ -2241,31 +3191,18 @@ Office of Student Welfare & Academic Mentorship
         branch,
         sem,
         password: generatedPassword,
-        emailStatus: 'DELIVERED_GMAIL'
+        emailStatus
       });
-
-      // Dispatch automated onboarding email
-      fetch('/api/gmail/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: email,
-          subject: `[NITTE PORTAL CREDENTIALS] Welcome ${name} - Student Onboarding (${studentId})`,
-          text: `Welcome ${name}! Student ID: ${studentId}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
-          recipientName: name,
-          eventType: 'BULK_STUDENT_ONBOARDING'
-        })
-      }).catch(() => {});
-    });
+    }
 
     setDb(prev => {
-      const existing = prev.users?.students || [];
-      const updatedList = [...existing];
-      addedStudents.forEach(st => {
-        const idx = updatedList.findIndex(e => e.id?.toUpperCase() === st.id.toUpperCase());
-        if (idx >= 0) updatedList[idx] = st;
-        else updatedList.push(st);
-      });
+      const updatedList = structureAndDeduplicateStudents([
+        ...(prev.users?.students || []),
+        ...addedStudents
+      ]);
+      try {
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedList));
+      } catch (e) { }
       return {
         ...prev,
         users: {
@@ -2279,6 +3216,8 @@ Office of Student Welfare & Academic Mentorship
       success: true,
       message: `Successfully processed ${results.length} student records.`,
       count: results.length,
+      successCount: results.length,
+      totalProcessed: students.length,
       results
     };
   };
@@ -2292,32 +3231,61 @@ Office of Student Welfare & Academic Mentorship
       });
       if (res.ok) {
         const data = await res.json();
-        await fetchDbState();
+        if (data.results && Array.isArray(data.results)) {
+          const registered = data.results
+            .filter(r => r.status === 'SUCCESS')
+            .map(r => ({
+              id: r.id,
+              name: r.name,
+              email: r.email,
+              dept: r.dept || 'CSE',
+              class: r.class || 'Assigned Mentees',
+              password: r.password
+            }));
+
+          setDb(prev => {
+            const current = structureAndDeduplicateMentors([
+              ...(prev.users?.mentors || []),
+              ...registered
+            ]);
+            try {
+              localStorage.setItem('nitte_saved_mentors', JSON.stringify(current));
+            } catch (e) { }
+            return {
+              ...prev,
+              users: {
+                ...prev.users,
+                mentors: current
+              }
+            };
+          });
+        }
         return data;
       }
     } catch (err) {
-      console.warn('[DatabaseContext] Backend bulk-upload-mentors offline, falling back to local processing:', err.message);
+      console.warn('[DatabaseContext] Backend bulk-upload-mentors offline, running client dispatch:', err.message);
     }
 
     const results = [];
     const addedMentors = [];
 
     (mentors || []).forEach((m, i) => {
-      const rawId = m.id || m.mentorId || m.facultyId || m['Mentor ID'] || `M${100 + i}`;
-      const rawName = m.name || m.mentorName || m.Name || m['Mentor Name'] || 'Faculty Mentor';
-      const rawEmail = m.email || m.Email || m.gmail || m['Gmail'] || m['Mentor Gmail'] || `${String(rawId).toLowerCase()}@nitte.edu.in`;
-      const dept = m.dept || m.department || m.Branch || m['Department'] || 'CSE';
+      const rawId = extractRosterField(m, ['mentor id', 'mentorid', 'faculty id', 'facultyid', 'id'], `M-${101 + i}`);
+      const rawName = extractRosterField(m, ['mentor name', 'mentorname', 'faculty name', 'facultyname', 'name', 'full name'], `Faculty Mentor ${i + 1}`);
+      const rawEmail = extractRosterField(m, ['mentor email', 'mentoremail', 'faculty email', 'facultyemail', 'email', 'gmail', 'mail'], 'skandhayashu2906@gmail.com');
+      const dept = extractRosterField(m, ['department', 'dept', 'branch'], 'CSE');
+      const assignedClass = extractRosterField(m, ['assigned class / batch', 'assigned class', 'assigned batch', 'class', 'batch', 'mentees'], `${dept} 5th Sem - Batch A`);
       const mentorId = String(rawId).trim().toUpperCase();
       const name = String(rawName).trim();
       const email = String(rawEmail).trim().toLowerCase();
-      const password = m.password && String(m.password).trim() ? String(m.password).trim() : `Mnt#${Math.floor(1000 + Math.random() * 9000)}`;
+      const password = m.password && String(m.password).trim() ? String(m.password).trim() : `Nit#Mnt${Math.floor(1000 + Math.random() * 9000)}`;
 
       const newMentor = {
         id: mentorId,
         name,
         email,
         dept,
-        phone: m.phone || '9876543210',
+        class: assignedClass,
         password
       };
 
@@ -2329,19 +3297,19 @@ Office of Student Welfare & Academic Mentorship
         name,
         email,
         dept,
-        password,
-        emailStatus: 'DELIVERED_GMAIL'
+        class: assignedClass,
+        password
       });
     });
 
     setDb(prev => {
-      const existing = prev.users?.mentors || [];
-      const updatedList = [...existing];
-      addedMentors.forEach(mnt => {
-        const idx = updatedList.findIndex(e => e.id?.toUpperCase() === mnt.id.toUpperCase());
-        if (idx >= 0) updatedList[idx] = mnt;
-        else updatedList.push(mnt);
-      });
+      const updatedList = structureAndDeduplicateMentors([
+        ...(prev.users?.mentors || []),
+        ...addedMentors
+      ]);
+      try {
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
+      } catch (e) { }
       return {
         ...prev,
         users: {
@@ -2355,8 +3323,15 @@ Office of Student Welfare & Academic Mentorship
       success: true,
       message: `Successfully processed ${results.length} mentor records.`,
       count: results.length,
+      successCount: results.length,
+      totalProcessed: mentors.length,
       results
     };
+  };
+
+  const addSingleMentor = async (mentorData) => {
+    if (!mentorData) return { success: false, message: 'Mentor data is required.' };
+    return await bulkUploadMentors([mentorData]);
   };
 
   const bulkUploadRos = async (ros) => {
@@ -2451,6 +3426,7 @@ Office of Student Welfare & Academic Mentorship
       registerStudent,
       submitIssue,
       scheduleRoMeeting,
+      scheduleAdminMeeting,
       submitFeedback,
       addResource,
       addGroupSession,
@@ -2477,7 +3453,17 @@ Office of Student Welfare & Academic Mentorship
       shootMentorGmailAlert,
       passMentorSession,
       unpassMentorSession,
-      shootMentorDeadlineAlert
+      shootMentorDeadlineAlert,
+      branches,
+      addBranch,
+      removeBranch,
+      updateBranch,
+      resetBranchesToDefault,
+      assignStudentsToMentor,
+      isMatchingMentorId,
+      removeStudent,
+      removeMentor,
+      addSingleMentor
     }}>
       {children}
     </DatabaseContext.Provider>

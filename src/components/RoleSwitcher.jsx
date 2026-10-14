@@ -1,237 +1,130 @@
 import React, { useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Shield, GraduationCap, UserCheck, Briefcase, RefreshCw, Layers, Mail, Key, LogIn, LogOut } from 'lucide-react';
+import { LogOut, User, Shield, GraduationCap, UserCheck, Briefcase } from 'lucide-react';
 import { NitteLogo } from './NitteLogo';
 
-export const RoleSwitcher = ({ selectedSubProfile, setSelectedSubProfile, onOpenLoginModal, onOpenLoginPage }) => {
-  const { currentUser, setCurrentUser, db, resetDatabase, isPgConnected, authenticatedUser, logoutUser, isDemoLimitBypassed, toggleDemoLimitBypass } = useContext(DatabaseContext);
+export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
+  const { currentUser, db, authenticatedUser, logoutUser } = useContext(DatabaseContext);
 
-  const roles = [
-    { name: 'Student', icon: GraduationCap, label: 'Student (Mentee)' },
-    { name: 'Mentor', icon: UserCheck, label: 'Mentor (Faculty)' },
-    { name: 'RO', icon: Briefcase, label: 'Relationship Officer' },
-    { name: 'Admin', icon: Shield, label: 'Admin / Principal' }
-  ];
-
-  const handleRoleChange = (roleName) => {
-    setCurrentUser(roleName);
-    
-    // Automatically set default sub-profile
-    if (roleName === 'Student') {
-      setSelectedSubProfile(db.users.students[0]?.id || 'u18cm24s0058');
-    } else if (roleName === 'Mentor') {
-      setSelectedSubProfile(db.users.mentors[0]?.id || 'M-101');
-    } else if (roleName === 'RO') {
-      setSelectedSubProfile(db.users.ros[0]?.id || 'RO-01');
-    } else {
-      setSelectedSubProfile('ADMIN');
+  const handleLogout = () => {
+    logoutUser();
+    if (onOpenLoginPage) {
+      onOpenLoginPage();
     }
   };
 
-  // Get options for the sub-profile switcher based on active role
-  const getSubProfileOptions = () => {
+  // Get display name & role icon
+  const getRoleIcon = () => {
+    if (currentUser === 'Admin') return Shield;
+    if (currentUser === 'Student') return GraduationCap;
+    if (currentUser === 'Mentor') return UserCheck;
+    if (currentUser === 'RO') return Briefcase;
+    return User;
+  };
+
+  const RoleIcon = getRoleIcon();
+
+  const getDisplayName = () => {
+    if (authenticatedUser?.name) return authenticatedUser.name;
+    if (currentUser === 'Admin') return 'Administrator';
     if (currentUser === 'Student') {
-      return db.users.students.map(s => ({ id: s.id, name: `${s.name} (${s.id} - Sem ${s.sem})` }));
+      const stu = db.users?.students?.find(s => s.id === selectedSubProfile);
+      return stu ? stu.name : (selectedSubProfile || 'Student');
     }
     if (currentUser === 'Mentor') {
-      return db.users.mentors.map(m => ({ id: m.id, name: m.name }));
+      const mnt = db.users?.mentors?.find(m => m.id === selectedSubProfile);
+      return mnt ? mnt.name : (selectedSubProfile || 'Faculty Mentor');
     }
     if (currentUser === 'RO') {
-      return db.users.ros.map(r => ({ id: r.id, name: r.name }));
+      const ro = db.users?.ros?.find(r => r.id === selectedSubProfile);
+      return ro ? ro.name : (selectedSubProfile || 'Relationship Officer');
     }
-    return [];
+    return currentUser;
   };
 
-  const activeSubProfiles = getSubProfileOptions();
-
-  // Get active issues count for the status ribbon
-  const activeIssues = db.issues.filter(i => i.status !== 'Resolved').length;
-
   return (
-    <header className="header-bar">
-      <div className="header-container">
-        {/* Logo & Branding */}
-        <div className="app-branding">
-          <NitteLogo height={38} />
-          <div className="portal-badge">
-            <span>MENTORSHIP PORTAL</span>
+    <header className="header-bar" style={{
+      background: '#ffffff',
+      borderBottom: '1px solid #e2e8f0',
+      padding: '10px 24px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+      position: 'sticky',
+      top: 0,
+      zIndex: 50
+    }}>
+      {/* Left: University Branding */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <NitteLogo height={34} />
+        <div>
+          <h1 style={{ margin: 0, fontSize: '0.94rem', fontWeight: 800, color: '#1e3a8a', letterSpacing: '0.2px' }}>
+            NITTE (Deemed to be University)
+          </h1>
+          <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
+            Student Mentorship & Escalation Support Portal
+          </p>
+        </div>
+      </div>
+
+      {/* Right: Current Session & Logout Button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* User Identity Chip */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          padding: '6px 12px',
+          borderRadius: '20px'
+        }}>
+          <div style={{
+            width: '26px',
+            height: '26px',
+            borderRadius: '50%',
+            background: currentUser === 'Admin' ? '#ffe4e6' : currentUser === 'Student' ? '#eff6ff' : currentUser === 'Mentor' ? '#ecfdf5' : '#fffbeb',
+            color: currentUser === 'Admin' ? '#e11d48' : currentUser === 'Student' ? '#2563eb' : currentUser === 'Mentor' ? '#059669' : '#d97706',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <RoleIcon size={14} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0f172a', lineHeight: '1.2' }}>
+              {getDisplayName()}
+            </span>
+            <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+              {currentUser} Account
+            </span>
           </div>
         </div>
 
-        {/* System Ribbon */}
-        <div className="system-ribbon">
-          <div className="ribbon-item">
-            <span 
-              className="ribbon-dot" 
-              style={{ backgroundColor: isPgConnected ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}
-            />
-            <span>{isPgConnected ? 'PostgreSQL Live' : 'Local Demo Mode'}</span>
-          </div>
-          <div className="ribbon-item" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '12px' }}>
-            <span>Active Issues: <strong>{activeIssues}</strong></span>
-          </div>
-
-          {/* Demo Mode 7-Day Limit Toggle Button */}
-          <button
-            onClick={toggleDemoLimitBypass}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: isDemoLimitBypassed ? '#10b981' : '#f59e0b',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '20px',
-              padding: '4px 10px',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginLeft: '8px',
-              boxShadow: isDemoLimitBypassed ? '0 2px 4px rgba(16, 185, 129, 0.3)' : '0 2px 4px rgba(245, 158, 11, 0.3)'
-            }}
-            title="Toggle 7-Day Limit (Demo Mode allows unlimited submissions for testing)"
-          >
-            <span>{isDemoLimitBypassed ? '🔓 Demo Mode: 7-Day Limit OFF' : '🔒 7-Day Limit: ON (2/Wk)'}</span>
-          </button>
-        </div>
-
-        {/* Profile Details Select & Role Switcher */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          {/* Main Portal Login Page Switcher */}
-          <button
-            onClick={onOpenLoginPage}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: '#eff6ff',
-              color: '#1e40af',
-              border: '1px solid #bfdbfe',
-              borderRadius: '8px',
-              padding: '6px 12px',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              boxShadow: '0 1px 2px rgba(30, 64, 175, 0.05)'
-            }}
-            title="Go to Multi-Role Portal Login Page"
-          >
-            <LogIn size={14} />
-            <span>Portal Login Page</span>
-          </button>
-
-          {/* Computer Password Login / Status Button */}
-          <button
-            onClick={onOpenLoginModal}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: authenticatedUser ? '#10b981' : '#ffffff',
-              color: authenticatedUser ? '#ffffff' : '#334155',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              padding: '6px 10px',
-              fontSize: '0.78rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)'
-            }}
-            title="Quick Login Modal"
-          >
-            <Key size={13} />
-            <span>{authenticatedUser ? `${authenticatedUser.name}` : 'Quick Modal'}</span>
-          </button>
-
-          {authenticatedUser && (
-            <button
-              onClick={() => {
-                logoutUser();
-                if (onOpenLoginPage) onOpenLoginPage();
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                backgroundColor: '#fef2f2',
-                color: '#dc2626',
-                border: '1px solid #fecaca',
-                borderRadius: '6px',
-                padding: '4px 8px',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-              title="Log out and return to Login Page"
-            >
-              <LogOut size={12} />
-              <span>Exit</span>
-            </button>
-          )}
-
-          {!authenticatedUser && activeSubProfiles.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Profile:</span>
-              <select
-                className="form-select"
-                style={{ padding: '6px 12px', width: 'auto', fontSize: '0.8rem', minWidth: '220px' }}
-                value={selectedSubProfile}
-                onChange={(e) => setSelectedSubProfile(e.target.value)}
-              >
-                {currentUser === 'RO' ? (
-                  <>
-                    {['Academic', 'Exams', 'Financial', 'Hostels', 'Placements', 'Facilities', 'Personal'].map(dept => {
-                      const deptROs = db.users.ros.filter(r => r.region && r.region.startsWith(dept));
-                      return (
-                        <optgroup key={dept} label={`${dept} Helpdesks`}>
-                          {deptROs.map(r => (
-                            <option key={r.id} value={r.id}>{r.name.replace('RO - ', '')}</option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  </>
-                ) : (
-                  activeSubProfiles.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))
-                )}
-              </select>
-            </div>
-          )}
-
-          {/* Role Tabs */}
-          {!authenticatedUser && (
-            <div className="role-switcher-group">
-              {roles.map(role => {
-                const Icon = role.icon;
-                const isActive = currentUser === role.name;
-                return (
-                  <button
-                    key={role.name}
-                    onClick={() => handleRoleChange(role.name)}
-                    className={`role-tab ${isActive ? `active-${role.name}` : ''}`}
-                    title={role.label}
-                  >
-                    <Icon size={16} />
-                    <span>{role.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Reset System Database */}
-          <button 
-            onClick={resetDatabase} 
-            className="btn-icon-only" 
-            title="Reset Database to Defaults"
-            style={{ padding: '8px' }}
-          >
-            <RefreshCw size={14} />
-          </button>
-        </div>
+        {/* Prominent Log Out Button */}
+        <button
+          onClick={handleLogout}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: '#fee2e2',
+            color: '#b91c1c',
+            border: '1px solid #fca5a5',
+            borderRadius: '8px',
+            padding: '7px 14px',
+            fontSize: '0.8rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: '0 1px 3px rgba(185, 28, 28, 0.08)'
+          }}
+          title="Sign out and return to Login Portal"
+        >
+          <LogOut size={14} />
+          <span>Log Out</span>
+        </button>
       </div>
     </header>
   );

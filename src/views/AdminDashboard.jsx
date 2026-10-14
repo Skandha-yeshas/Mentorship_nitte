@@ -1,25 +1,204 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { DatabaseContext } from '../context/DatabaseContext';
 import { BarChart, DonutChart } from '../components/CustomChart';
-import { 
-  Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert, 
-  Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight, 
+import {
+  Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert,
+  Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight,
   Filter, MoreVertical, TrendingUp, ArrowUp, ArrowDown, ExternalLink,
   GraduationCap, Briefcase, UserCheck, Activity, Eye, Layers, Clock,
   Upload, FileSpreadsheet, Mail, Key, Check, AlertCircle, X, UserPlus, Grid,
-  Printer, FileDown, MessageSquare
+  Printer, FileDown, MessageSquare, Plus, Trash2, Edit3, SlidersHorizontal,
+  ChevronLeft, ChevronRight, Sparkles, BookOpen, School, FolderPlus, Calendar
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
-  const { db, adminResolveIssue, reassignIssue, bulkUploadStudents, bulkUploadMentors, bulkUploadRos } = useContext(DatabaseContext);
-  
+  const {
+    db,
+    adminResolveIssue,
+    scheduleAdminMeeting,
+    reassignIssue,
+    bulkUploadStudents,
+    bulkUploadMentors,
+    bulkUploadRos,
+    branches = [],
+    addBranch,
+    removeBranch,
+    updateBranch,
+    resetBranchesToDefault,
+    assignStudentsToMentor,
+    isMatchingMentorId,
+    removeStudent,
+    removeMentor,
+    addSingleMentor
+  } = useContext(DatabaseContext);
+
   // Navigation State
   const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'students', 'mentors', 'ros', 'all-tickets', 'mentor-feedbacks'
   const [studentSubTab, setStudentSubTab] = useState('directory'); // 'directory', 'excel-import'
   const [mentorSubTab, setMentorSubTab] = useState('directory'); // 'directory', 'session-reports', 'excel-import'
   const [roSubTab, setRoSubTab] = useState('directory'); // 'directory', 'excel-import'
   const [ticketSubTab, setTicketSubTab] = useState('tickets'); // 'tickets', 'audit-logs'
+
+  // Course / Branch Management & Filtering State
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState('ALL');
+  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState('ALL');
+  const [studentSlotFilter, setStudentSlotFilter] = useState('ALL'); // 'ALL', 'AVAILABLE', 'REACHED'
+  const [studentPage, setStudentPage] = useState(1);
+  const [studentsPerPage, setStudentsPerPage] = useState(25);
+  const [isBranchManagerOpen, setIsBranchManagerOpen] = useState(false);
+  const [newBranchCode, setNewBranchCode] = useState('');
+  const [newBranchName, setNewBranchName] = useState('');
+  const [newBranchDegree, setNewBranchDegree] = useState('B.E / B.Tech');
+  const [newBranchTotalSems, setNewBranchTotalSems] = useState(8);
+  const [branchModalError, setBranchModalError] = useState('');
+  const [branchModalSuccess, setBranchModalSuccess] = useState('');
+
+  // Student Removal State (Subtle Action Menu & Security Confirmation)
+  const [studentPendingDelete, setStudentPendingDelete] = useState(null);
+  const [studentDeleteSuccessMsg, setStudentDeleteSuccessMsg] = useState('');
+  const [activeActionMenuStudentId, setActiveActionMenuStudentId] = useState(null);
+
+  // Faculty Mentor Removal State & Single Mentor Direct Add Form State
+  const [mentorPendingDelete, setMentorPendingDelete] = useState(null);
+  const [mentorDeleteSuccessMsg, setMentorDeleteSuccessMsg] = useState('');
+  const [activeActionMenuMentorId, setActiveActionMenuMentorId] = useState(null);
+  const [mentorEntryMode, setMentorEntryMode] = useState('single'); // 'single', 'excel'
+  const [singleMentorName, setSingleMentorName] = useState('');
+  const [singleMentorEmail, setSingleMentorEmail] = useState('');
+  const [singleMentorDept, setSingleMentorDept] = useState('BCA');
+  const [singleMentorId, setSingleMentorId] = useState('');
+  const [singleMentorClass, setSingleMentorClass] = useState('');
+  const [singleMentorPassword, setSingleMentorPassword] = useState('');
+  const [isSubmittingSingleMentor, setIsSubmittingSingleMentor] = useState(false);
+  const [singleMentorError, setSingleMentorError] = useState('');
+  const [singleMentorSuccess, setSingleMentorSuccess] = useState(null);
+
+  // Faculty Mentor-Centric Student Assignment State
+  const [assigningMentor, setAssigningMentor] = useState(null); // mentor object
+  const [mentorAssignBranch, setMentorAssignBranch] = useState('ALL');
+  const [mentorAssignSem, setMentorAssignSem] = useState('ALL');
+  const [mentorAssignFilterTab, setMentorAssignFilterTab] = useState('all'); // 'all', 'unassigned', 'assigned-to-this'
+  const [mentorAssignSearch, setMentorAssignSearch] = useState('');
+  const [selectedStudentIdsForMentor, setSelectedStudentIdsForMentor] = useState([]);
+  const [initialAssignedStudentIds, setInitialAssignedStudentIds] = useState([]);
+  const [mentorAssignSuccessMsg, setMentorAssignSuccessMsg] = useState('');
+  const [mentorFilterDept, setMentorFilterDept] = useState('ALL');
+
+  // Safely extract available branches with deduplication and custom branch inclusion
+  const availableBranchList = useMemo(() => {
+    return Array.from(new Set([
+      ...(branches || []).map(b => b.code.toUpperCase()),
+      ...(db.users?.students || []).map(s => (s.branch || '').toUpperCase()).filter(Boolean),
+      'BCA', 'BBA', 'BCOM', 'CSE', 'ISE', 'AIML', 'AIDS', 'ECE', 'MECH', 'CIVIL'
+    ])).filter(Boolean).sort();
+  }, [branches, db.users?.students]);
+
+  const handleOpenAssignmentModal = (mentor) => {
+    if (!mentor) return;
+    setAssigningMentor(mentor);
+    setMentorAssignBranch('ALL'); // Default to ALL branches so students are never hidden
+    setMentorAssignSem('ALL');
+    setMentorAssignFilterTab('all');
+    setMentorAssignSearch('');
+    setMentorAssignSuccessMsg('');
+    const currentMentees = (db.users?.students || [])
+      .filter(s => isMatchingMentorId(s.mentorId, mentor.id))
+      .map(s => s.id);
+    setSelectedStudentIdsForMentor(currentMentees);
+    setInitialAssignedStudentIds(currentMentees);
+  };
+
+  const handleSaveMentorAssignments = (e) => {
+    if (e) e.preventDefault();
+    if (!assigningMentor) return;
+
+    const toUnassign = initialAssignedStudentIds.filter(id => !selectedStudentIdsForMentor.includes(id));
+    assignStudentsToMentor(assigningMentor.id, selectedStudentIdsForMentor, toUnassign);
+    setMentorAssignSuccessMsg(`✅ Saved! ${selectedStudentIdsForMentor.length} students assigned to ${assigningMentor.name}.`);
+    setInitialAssignedStudentIds([...selectedStudentIdsForMentor]);
+    setTimeout(() => {
+      setAssigningMentor(null);
+    }, 1200);
+  };
+
+  const handleConfirmRemoveStudent = async () => {
+    if (!studentPendingDelete) return;
+    const name = studentPendingDelete.name;
+    const id = studentPendingDelete.id;
+    await removeStudent(id);
+    setStudentPendingDelete(null);
+    setStudentDeleteSuccessMsg(`✅ Student "${name}" (${id}) removed from institutional directory.`);
+    setTimeout(() => {
+      setStudentDeleteSuccessMsg('');
+    }, 4000);
+  };
+
+  const handleConfirmRemoveMentor = async () => {
+    if (!mentorPendingDelete) return;
+    const name = mentorPendingDelete.name;
+    const id = mentorPendingDelete.id;
+    await removeMentor(id);
+    setMentorPendingDelete(null);
+    setMentorDeleteSuccessMsg(`✅ Faculty Mentor "${name}" (${id}) removed. Any assigned students have been returned to the unallocated pool.`);
+    setTimeout(() => {
+      setMentorDeleteSuccessMsg('');
+    }, 4000);
+  };
+
+  const handleSingleMentorSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!singleMentorName.trim() || !singleMentorEmail.trim()) {
+      setSingleMentorError('Please provide both Faculty Name and Official Email address.');
+      return;
+    }
+
+    setSingleMentorError('');
+    setIsSubmittingSingleMentor(true);
+    setSingleMentorSuccess(null);
+
+    try {
+      let idToUse = singleMentorId.trim().toUpperCase();
+      if (!idToUse) {
+        const existingNums = (db.users?.mentors || [])
+          .map(m => {
+            const match = (m.id || '').match(/M-?(\d+)/i);
+            return match ? parseInt(match[1]) : 0;
+          })
+          .filter(n => n > 0);
+        const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 101;
+        idToUse = `M-${nextNum}`;
+      }
+
+      const mentorPayload = {
+        id: idToUse,
+        name: singleMentorName.trim(),
+        email: singleMentorEmail.trim().toLowerCase(),
+        dept: singleMentorDept || 'BCA',
+        class: singleMentorClass.trim() || `${singleMentorDept || 'BCA'} Faculty Mentorship`,
+        password: singleMentorPassword.trim() || undefined
+      };
+
+      const res = await addSingleMentor(mentorPayload);
+      const generatedPwd = res?.results?.[0]?.password || mentorPayload.password || 'Generated & Emailed';
+      setSingleMentorSuccess({
+        ...mentorPayload,
+        password: generatedPwd,
+        emailStatus: res?.results?.[0]?.emailStatus || 'DELIVERED_GMAIL'
+      });
+
+      // Clear form
+      setSingleMentorName('');
+      setSingleMentorEmail('');
+      setSingleMentorId('');
+      setSingleMentorClass('');
+      setSingleMentorPassword('');
+    } catch (err) {
+      setSingleMentorError(err.message || 'Failed to add faculty mentor.');
+    } finally {
+      setIsSubmittingSingleMentor(false);
+    }
+  };
 
   // Filter & Search State
   const [ticketStatusFilter, setTicketStatusFilter] = useState('All');
@@ -53,16 +232,46 @@ export const AdminDashboard = () => {
   const [isUploadingRoRoster, setIsUploadingRoRoster] = useState(false);
   const [roUploadResult, setRoUploadResult] = useState(null);
   const [roUploadError, setRoUploadError] = useState('');
-  
+
   // Modal State
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [resolutionNotes, setResolutionNotes] = useState('');
+
+  // Admin Meeting Scheduling State (Strict 1-Meeting Policy)
+  const [showAdminMeetingModal, setShowAdminMeetingModal] = useState(false);
+  const [adminMeetingTargetIssue, setAdminMeetingTargetIssue] = useState(null);
+  const [adminMeetingDate, setAdminMeetingDate] = useState(() => {
+    const tmrw = new Date();
+    tmrw.setDate(tmrw.getDate() + 1);
+    return tmrw.toISOString().split('T')[0];
+  });
+  const [adminMeetingTime, setAdminMeetingTime] = useState('11:00');
+  const [adminMeetingMode, setAdminMeetingMode] = useState('Offline');
+  const [adminMeetingLocation, setAdminMeetingLocation] = useState('Principal / Senior Admin Chamber (Main Admin Block)');
+  const [adminMeetingNotes, setAdminMeetingNotes] = useState('Official Administrative Grievance Hearing. Please bring student ID and academic documentation.');
+  const [isSubmittingAdminMeeting, setIsSubmittingAdminMeeting] = useState(false);
+  const [adminMeetingSuccessMsg, setAdminMeetingSuccessMsg] = useState('');
 
   // Reassign State
   const [targetRoId, setTargetRoId] = useState('');
   const [selectedRoForFilter, setSelectedRoForFilter] = useState('ALL');
 
   // Excel / CSV Parsing Handlers
+  const getRosterField = (row, candidates, fallback = '') => {
+    if (!row || typeof row !== 'object') return fallback;
+    const keys = Object.keys(row);
+    for (const c of candidates) {
+      const target = c.toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const k of keys) {
+        const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (cleanK === target && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+          return String(row[k]).trim();
+        }
+      }
+    }
+    return fallback;
+  };
+
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -74,8 +283,8 @@ export const AdminDashboard = () => {
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const buffer = evt.target.result;
+        const wb = XLSX.read(buffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
@@ -92,14 +301,14 @@ export const AdminDashboard = () => {
         setParsedRoster([]);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const handleDownloadTemplate = () => {
     const sampleData = [
-      { 'Student ID': 'S109', 'Student Name': 'Rohan Sharma', 'Student Gmail': 'rohan.sharma@gmail.com', 'Branch': 'CSE', 'Semester': 5 },
-      { 'Student ID': 'S110', 'Student Name': 'Ananya Verma', 'Student Gmail': 'ananya.verma@gmail.com', 'Branch': 'ISE', 'Semester': 3 },
-      { 'Student ID': 'S111', 'Student Name': 'Vikram Hegde', 'Student Gmail': 'vikram.hegde@gmail.com', 'Branch': 'ECE', 'Semester': 6 }
+      { 'Student ID': 'u18cm24s0001', 'Student Name': 'Aarav Nair', 'Student Gmail': 'skandhayashas2906@gmail.com', 'Branch': 'CSE', 'Semester': 5 },
+      { 'Student ID': 'u18cm24s0002', 'Student Name': 'Ananya Bhat', 'Student Gmail': 'skandhayashu2906@gmail.com', 'Branch': 'CSE', 'Semester': 5 },
+      { 'Student ID': 'u18cm24s0003', 'Student Name': 'Aditya Kulkarni', 'Student Gmail': 'skandhayashas2906@gmail.com', 'Branch': 'ISE', 'Semester': 5 }
     ];
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
@@ -133,7 +342,7 @@ export const AdminDashboard = () => {
     if (!uploadResult || !uploadResult.results) return;
     let csvContent = 'data:text/csv;charset=utf-8,Index,Student ID,Student Name,Gmail Address,Generated Password,Email Delivery Status\n';
     uploadResult.results.forEach((row, i) => {
-      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.password || 'N/A'}","${row.status === 'SUCCESS' ? 'DELIVERED_GMAIL' : 'FAILED'}"\n`;
+      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.password || 'N/A'}","${row.emailStatus || (row.status === 'SUCCESS' ? 'DELIVERED_GMAIL' : 'FAILED')}"\n`;
     });
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
@@ -156,8 +365,8 @@ export const AdminDashboard = () => {
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const buffer = evt.target.result;
+        const wb = XLSX.read(buffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
@@ -174,7 +383,7 @@ export const AdminDashboard = () => {
         setParsedMentorRoster([]);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const handleDownloadMentorTemplate = () => {
@@ -238,8 +447,8 @@ export const AdminDashboard = () => {
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const buffer = evt.target.result;
+        const wb = XLSX.read(buffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
@@ -256,7 +465,7 @@ export const AdminDashboard = () => {
         setParsedRoRoster([]);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const handleDownloadRoTemplate = () => {
@@ -311,7 +520,7 @@ export const AdminDashboard = () => {
   // MS WORD (.doc) AUDIT REPORT GENERATOR
   const handleDownloadWordReport = (issue) => {
     if (!issue) return;
-    
+
     const ro = db.users.ros.find(r => r.id === issue.roId);
     const roName = ro ? ro.name : issue.roId;
     const logsHtml = (issue.logs || []).map((l, i) => `
@@ -543,24 +752,91 @@ export const AdminDashboard = () => {
   };
 
 
+  const isEscalatedOrReEscalated = (i) => i.status !== 'Resolved' && (
+    i.status === 'Escalated' ||
+    i.status === 'Re-escalated' ||
+    Boolean(i.isReEscalated) ||
+    (Number(i.reEscalatedCount) > 0) ||
+    Boolean(i.adminMeetingScheduled)
+  );
+  const isReEscalatedIssue = (i) => i.status !== 'Resolved' && (i.status === 'Re-escalated' || Boolean(i.isReEscalated) || (Number(i.reEscalatedCount) > 0));
+
+  const getAdminMeetingForIssue = (issue) => {
+    if (!issue) return null;
+    const cleanId = String(issue.id || issue.issue_id || '').toUpperCase();
+    if (issue.adminMeeting) return issue.adminMeeting;
+    return (db.meetings || []).find(m =>
+      (m.issueId || m.issue_id)?.toUpperCase() === cleanId &&
+      (m.isAdminHearing || m.roId === 'ADMIN' || m.scheduledBy === 'Administration Office')
+    ) || null;
+  };
+
+  const hasAdminMeetingForIssue = (issue) => {
+    if (!issue) return false;
+    return Boolean(issue.adminMeetingScheduled || getAdminMeetingForIssue(issue));
+  };
+
+  const handleOpenAdminScheduleModal = (issue) => {
+    if (!issue) return;
+    if (hasAdminMeetingForIssue(issue)) {
+      alert('🔒 Limit Reached: Only 1 Administrative Hearing can be scheduled per ticket. You can now Close the Ticket.');
+      return;
+    }
+    setAdminMeetingTargetIssue(issue);
+    const tmrw = new Date();
+    tmrw.setDate(tmrw.getDate() + 1);
+    setAdminMeetingDate(tmrw.toISOString().split('T')[0]);
+    setAdminMeetingTime('11:00');
+    setAdminMeetingMode('Offline');
+    setAdminMeetingLocation('Principal / Senior Admin Chamber (Main Admin Block)');
+    setAdminMeetingNotes('Official Administrative Grievance Hearing. Please bring student ID and academic documentation.');
+    setShowAdminMeetingModal(true);
+  };
+
+  const handleAdminMeetingSubmit = async (e) => {
+    e.preventDefault();
+    if (!adminMeetingTargetIssue) return;
+    setIsSubmittingAdminMeeting(true);
+    try {
+      await scheduleAdminMeeting(
+        adminMeetingTargetIssue.id,
+        adminMeetingTargetIssue.studentId,
+        adminMeetingDate,
+        adminMeetingTime,
+        adminMeetingMode,
+        adminMeetingLocation,
+        adminMeetingNotes
+      );
+      setAdminMeetingSuccessMsg(`Administrative Hearing successfully scheduled for ${adminMeetingDate} at ${adminMeetingTime}. You can now Close the Ticket.`);
+      setTimeout(() => setAdminMeetingSuccessMsg(''), 5000);
+      setShowAdminMeetingModal(false);
+      setAdminMeetingTargetIssue(null);
+    } catch (err) {
+      alert(err.message || 'Failed to schedule administrative meeting.');
+    } finally {
+      setIsSubmittingAdminMeeting(false);
+    }
+  };
+
   // 1. STATS CALCULATION
   const totalIssues = db.issues.length;
   const resolvedIssues = db.issues.filter(i => i.status === 'Resolved').length;
-  const escalatedIssues = db.issues.filter(i => i.status === 'Escalated').length;
+  const escalatedIssues = db.issues.filter(isEscalatedOrReEscalated).length;
+  const reEscalatedCount = db.issues.filter(isReEscalatedIssue).length;
   const activeIssues = totalIssues - resolvedIssues;
-  
+
   const resolutionRate = totalIssues > 0 ? Math.round((resolvedIssues / totalIssues) * 100) : 0;
 
   // Calculate Average Student Satisfaction
   const ratedIssues = db.issues.filter(i => i.feedback && i.feedback.rating);
-  const averageSatisfaction = ratedIssues.length > 0 
+  const averageSatisfaction = ratedIssues.length > 0
     ? (ratedIssues.reduce((sum, i) => sum + i.feedback.rating, 0) / ratedIssues.length).toFixed(1)
     : 'N/A';
 
   // 2. CHART DATA PREPARATION
   const statusData = [
     { name: 'Resolved', value: db.issues.filter(i => i.status === 'Resolved').length },
-    { name: 'Escalated', value: db.issues.filter(i => i.status === 'Escalated').length },
+    { name: 'Escalated', value: escalatedIssues },
     { name: 'Scheduled', value: db.issues.filter(i => i.status === 'Meeting Scheduled').length },
     { name: 'Assigned/New', value: db.issues.filter(i => i.status === 'Assigned to RO' || i.status === 'Submitted').length }
   ];
@@ -571,9 +847,17 @@ export const AdminDashboard = () => {
     value: db.issues.filter(i => i.category.startsWith(cat)).length
   }));
 
-  // Escalated Issues list
-  const escalations = db.issues.filter(i => i.status === 'Escalated');
-  const selectedIssue = db.issues.find(i => i.id === selectedIssueId);
+  // Escalated Issues list — sorted so Re-escalated tickets appear at the very top!
+  const escalations = db.issues
+    .filter(isEscalatedOrReEscalated)
+    .sort((a, b) => {
+      const aRe = isReEscalatedIssue(a);
+      const bRe = isReEscalatedIssue(b);
+      if (aRe && !bRe) return -1;
+      if (!aRe && bRe) return 1;
+      return new Date(b.escalatedAt || b.createdAt || 0) - new Date(a.escalatedAt || a.createdAt || 0);
+    });
+  const selectedIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
 
   const handleResolveSubmit = (e) => {
     e.preventDefault();
@@ -594,7 +878,7 @@ export const AdminDashboard = () => {
   // CSV DOWNLOAD REPORT GENERATOR
   const handleDownloadReport = (reportType) => {
     let csvContent = 'data:text/csv;charset=utf-8,';
-    
+
     if (reportType === 'daily') {
       csvContent += 'Date,Total Issues Raised,Resolved Issues,Escalated Issues,Avg Satisfaction\n';
       csvContent += `${new Date().toLocaleDateString()},${totalIssues},${resolvedIssues},${escalatedIssues},${averageSatisfaction}\n`;
@@ -619,17 +903,17 @@ export const AdminDashboard = () => {
   // MENTOR FEEDBACK STATS & FILTERING
   const mentorFeedbacks = db.mentorFeedbacks || [];
   const totalMf = mentorFeedbacks.length;
-  const avgRegularity = totalMf > 0 
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.regularityRating) || 0), 0) / totalMf).toFixed(1) 
+  const avgRegularity = totalMf > 0
+    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.regularityRating) || 0), 0) / totalMf).toFixed(1)
     : '0.0';
-  const avgClarity = totalMf > 0 
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.clarityRating) || 0), 0) / totalMf).toFixed(1) 
+  const avgClarity = totalMf > 0
+    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.clarityRating) || 0), 0) / totalMf).toFixed(1)
     : '0.0';
-  const avgParticipation = totalMf > 0 
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.participationRating) || 0), 0) / totalMf).toFixed(1) 
+  const avgParticipation = totalMf > 0
+    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.participationRating) || 0), 0) / totalMf).toFixed(1)
     : '0.0';
-  const avgOverall = totalMf > 0 
-    ? ((Number(avgRegularity) + Number(avgClarity) + Number(avgParticipation)) / 3).toFixed(1) 
+  const avgOverall = totalMf > 0
+    ? ((Number(avgRegularity) + Number(avgClarity) + Number(avgParticipation)) / 3).toFixed(1)
     : '0.0';
 
   const filteredMentorFeedbacks = mentorFeedbacks.filter(f => {
@@ -684,7 +968,7 @@ export const AdminDashboard = () => {
         </div>
 
         {/* Tab 1: Overview & Escalations (Landing View) */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'overview' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('overview')}
         >
@@ -692,15 +976,15 @@ export const AdminDashboard = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
             <span>Overview & Escalations</span>
             {escalations.length > 0 && (
-              <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
-                {escalations.length}
+              <span style={{ background: reEscalatedCount > 0 ? '#dc2626' : '#ef4444', color: '#fff', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>
+                {escalations.length} {reEscalatedCount > 0 ? `(⚡${reEscalatedCount})` : ''}
               </span>
             )}
           </div>
         </button>
 
         {/* Tab 2: Students Division */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'students' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('students')}
         >
@@ -709,7 +993,7 @@ export const AdminDashboard = () => {
         </button>
 
         {/* Tab 3: Faculty Mentors */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'mentors' && mentorSubTab === 'directory' ? 'active Admin' : ''}`}
           onClick={() => { setActiveTab('mentors'); setMentorSubTab('directory'); }}
         >
@@ -718,7 +1002,7 @@ export const AdminDashboard = () => {
         </button>
 
         {/* Tab 3.5: Faculty Session Logs (6-Field Audit Reports) */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'mentors' && mentorSubTab === 'session-reports' ? 'active Admin' : ''}`}
           onClick={() => { setActiveTab('mentors'); setMentorSubTab('session-reports'); }}
         >
@@ -732,7 +1016,7 @@ export const AdminDashboard = () => {
         </button>
 
         {/* Tab 4: Relationship Officers */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'ros' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('ros')}
         >
@@ -741,7 +1025,7 @@ export const AdminDashboard = () => {
         </button>
 
         {/* Tab 5: All Tickets & Audit Logs */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'all-tickets' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('all-tickets')}
         >
@@ -750,7 +1034,7 @@ export const AdminDashboard = () => {
         </button>
 
         {/* Tab 6: Mentor Feedbacks */}
-        <button 
+        <button
           className={`panel-btn ${activeTab === 'mentor-feedbacks' ? 'active Admin' : ''}`}
           onClick={() => setActiveTab('mentor-feedbacks')}
         >
@@ -781,16 +1065,16 @@ export const AdminDashboard = () => {
 
       {/* Main Content Pane */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        
+
         {/* TOP BAR / SEARCH HEADER */}
         <div className="glass-card" style={{ padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ position: 'relative', width: '100%', maxWidth: '440px' }}>
             <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input 
-              type="text" 
-              className="form-control" 
-              style={{ paddingLeft: '36px', height: '38px', fontSize: '0.85rem' }} 
-              placeholder="Search students, faculty mentors, ROs, or ticket IDs..." 
+            <input
+              type="text"
+              className="form-control"
+              style={{ paddingLeft: '36px', height: '38px', fontSize: '0.85rem' }}
+              placeholder="Search students, faculty mentors, ROs, or ticket IDs..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -810,14 +1094,19 @@ export const AdminDashboard = () => {
         {/* ============================================================== */}
         {activeTab === 'overview' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
+
             {/* 1. ESCALATED ISSUES CONTROL CENTER BANNER */}
             <div className="glass-card" style={{ borderLeft: escalations.length > 0 ? '4px solid #ef4444' : '4px solid #10b981' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
-                  <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <ShieldAlert size={22} style={{ color: escalations.length > 0 ? '#ef4444' : '#10b981' }} />
                     Critical Escalations Queue ({escalations.length})
+                    {reEscalatedCount > 0 && (
+                      <span style={{ fontSize: '0.75rem', background: '#dc2626', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                        ⚡ {reEscalatedCount} Re-escalated
+                      </span>
+                    )}
                   </h2>
                   <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
                     Issues requiring direct Administrative Resolution Override or RO Reassignment.
@@ -833,6 +1122,24 @@ export const AdminDashboard = () => {
                   </span>
                 )}
               </div>
+
+              {adminMeetingSuccessMsg && (
+                <div style={{
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  border: '1px solid #10b981',
+                  color: '#34d399',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '0.84rem',
+                  fontWeight: 600
+                }}>
+                  <CheckCircle2 size={16} /> {adminMeetingSuccessMsg}
+                </div>
+              )}
 
               {escalations.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)' }}>
@@ -856,21 +1163,136 @@ export const AdminDashboard = () => {
                     >
                       <div className="issue-card-header" style={{ marginBottom: '8px' }}>
                         <div>
-                          <strong style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>{issue.category}</strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>{issue.category}</strong>
+                            {Boolean(issue.isReEscalated || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) && (
+                              <span style={{
+                                fontSize: '0.7rem',
+                                background: 'rgba(239, 68, 68, 0.25)',
+                                color: '#f87171',
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                border: '1px solid rgba(239, 68, 68, 0.5)',
+                                fontWeight: '700'
+                              }}>
+                                ⚡ Re-escalated {issue.reEscalatedCount ? `(${issue.reEscalatedCount}x)` : ''}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                             Ticket ID: <code>{issue.id}</code> &nbsp;|&nbsp; Escalated from: <strong>{db.users.ros.find(r => r.id === issue.roId)?.name || issue.roId}</strong>
                           </div>
                         </div>
-                        <span className="badge badge-escalated" style={{ fontSize: '0.75rem' }}>Escalated</span>
+                        <span className="badge badge-escalated" style={{
+                          fontSize: '0.75rem',
+                          background: (issue.isReEscalated || issue.status === 'Re-escalated' || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) ? 'rgba(239, 68, 68, 0.25)' : undefined,
+                          color: (issue.isReEscalated || issue.status === 'Re-escalated' || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) ? '#f87171' : undefined,
+                          border: (issue.isReEscalated || issue.status === 'Re-escalated' || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) ? '1px solid #ef4444' : undefined,
+                          fontWeight: (issue.isReEscalated || issue.status === 'Re-escalated' || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) ? '700' : undefined
+                        }}>
+                          {Boolean(issue.isReEscalated || issue.status === 'Re-escalated' || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) ? '⚡ Re-escalated' : 'Escalated'}
+                        </span>
                       </div>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 10px 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {issue.description}
                       </p>
+                      {issue.escalationReason && (
+                        <div style={{ background: 'rgba(244,63,94,0.1)', border: '1px dashed rgba(244,63,94,0.35)', padding: '6px 12px', borderRadius: '6px', marginBottom: '10px', fontSize: '0.8rem', color: '#fecdd3' }}>
+                          <strong>RO Urgency Directive:</strong> <span style={{ fontStyle: 'italic' }}>"{issue.escalationReason}"</span>
+                        </div>
+                      )}
                       <div className="issue-meta" style={{ fontSize: '0.78rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Student: <strong>{issue.studentName}</strong> (<code>{issue.studentId}</code>) &nbsp;|&nbsp; Priority: <span style={{ color: '#fca5a5', fontWeight: '600' }}>{issue.priority}</span></span>
                         <span style={{ color: '#60a5fa', fontWeight: '600', textDecoration: 'underline', display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <Eye size={14} /> Open Audit Detail & Download MS Word Report →
                         </span>
+                      </div>
+
+                      {/* ADMIN MEETING & CLOSE TICKET ACTION BAR */}
+                      <div style={{
+                        marginTop: '12px',
+                        paddingTop: '10px',
+                        borderTop: '1px solid rgba(255,255,255,0.08)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '8px',
+                        flexWrap: 'wrap'
+                      }}>
+                        {!hasAdminMeetingForIssue(issue) ? (
+                          <>
+                            <span style={{ fontSize: '0.75rem', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Shield size={13} /> Step 1: Direct Meeting with Mentee (1 Allowed)
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenAdminScheduleModal(issue);
+                              }}
+                              className="btn btn-primary"
+                              style={{
+                                padding: '6px 14px',
+                                fontSize: '0.8rem',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                                border: 'none',
+                                borderRadius: '6px',
+                                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <Calendar size={14} /> Setup Meeting with Student
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {(() => {
+                              const m = getAdminMeetingForIssue(issue);
+                              return (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  background: 'rgba(59, 130, 246, 0.12)',
+                                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '0.75rem',
+                                  color: '#93c5fd'
+                                }}>
+                                  <Calendar size={13} />
+                                  <span>Hearing: <strong>{m?.date || 'Scheduled'}</strong> at <strong>{m?.time || '11:00 AM'}</strong> ({m?.mode || 'Offline'})</span>
+                                </div>
+                              );
+                            })()}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedIssueId(issue.id);
+                                setShowResolveModal(true);
+                              }}
+                              className="btn btn-success"
+                              style={{
+                                padding: '6px 14px',
+                                fontSize: '0.8rem',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                border: 'none',
+                                borderRadius: '6px',
+                                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <CheckCircle2 size={14} /> Close the Ticket
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -967,9 +1389,9 @@ export const AdminDashboard = () => {
                     Student ratings on mentoring class regularity, explanation clarity, classroom participation, and reported difficulties.
                   </p>
                 </div>
-                <button 
-                  onClick={() => setActiveTab('mentor-feedbacks')} 
-                  className="btn btn-primary" 
+                <button
+                  onClick={() => setActiveTab('mentor-feedbacks')}
+                  className="btn btn-primary"
                   style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <MessageSquare size={14} /> View All Feedbacks ({totalMf}) →
@@ -1017,7 +1439,7 @@ export const AdminDashboard = () => {
           <div className="glass-card">
             {/* Sub-tab pills */}
             <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px', marginBottom: '20px' }}>
-              <button 
+              <button
                 className={`btn ${studentSubTab === 'directory' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setStudentSubTab('directory')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1025,7 +1447,7 @@ export const AdminDashboard = () => {
                 <GraduationCap size={16} />
                 Mentees Directory & Slot Limits ({db.users.students.length})
               </button>
-              <button 
+              <button
                 className={`btn ${studentSubTab === 'excel-import' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setStudentSubTab('excel-import')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1036,88 +1458,792 @@ export const AdminDashboard = () => {
             </div>
 
             {/* Sub-tab 1: Directory */}
-            {studentSubTab === 'directory' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <div>
-                    <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>🎓 Students Division Directory & Limit Monitor</h2>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                      Monitor student accounts, assigned faculty mentors, active ticket load, and 2-issue slot limit statuses.
-                    </p>
+            {studentSubTab === 'directory' && (() => {
+              // Extract unique branches from database students as well as configured branches
+              const allKnownBranchCodes = Array.from(
+                new Set([
+                  ...branches.map(b => b.code.toUpperCase()),
+                  ...db.users.students.map(s => (s.branch || 'CSE').toUpperCase())
+                ])
+              ).filter(Boolean);
+
+              // Calculate branch distribution counts
+              const branchCounts = {};
+              allKnownBranchCodes.forEach(code => {
+                branchCounts[code] = db.users.students.filter(s => (s.branch || 'CSE').toUpperCase() === code).length;
+              });
+
+              // Apply Filters
+              const filteredStudents = db.users.students.filter(student => {
+                const sBranch = (student.branch || 'CSE').toUpperCase();
+                const sSem = parseInt(student.sem) || 5;
+
+                // Branch filter
+                if (selectedBranchFilter !== 'ALL' && sBranch !== selectedBranchFilter.toUpperCase()) {
+                  return false;
+                }
+
+                // Semester filter
+                if (selectedSemesterFilter !== 'ALL' && sSem !== parseInt(selectedSemesterFilter)) {
+                  return false;
+                }
+
+                // Search query
+                if (searchTerm.trim()) {
+                  const q = searchTerm.toLowerCase();
+                  const nameMatch = (student.name || '').toLowerCase().includes(q);
+                  const idMatch = (student.id || '').toLowerCase().includes(q);
+                  const emailMatch = (student.email || '').toLowerCase().includes(q);
+                  const branchMatch = (student.branch || '').toLowerCase().includes(q);
+                  if (!nameMatch && !idMatch && !emailMatch && !branchMatch) return false;
+                }
+
+                // Slot limit filter
+                if (studentSlotFilter !== 'ALL') {
+                  const recentCount = db.issues.filter(i => {
+                    if (i.studentId !== student.id) return false;
+                    const created = new Date(i.createdAt).getTime();
+                    return created >= Date.now() - (7 * 24 * 60 * 60 * 1000);
+                  }).length;
+                  if (studentSlotFilter === 'REACHED' && recentCount < 2) return false;
+                  if (studentSlotFilter === 'AVAILABLE' && recentCount >= 2) return false;
+                }
+
+                return true;
+              });
+
+              // Pagination
+              const totalPages = Math.max(1, Math.ceil(filteredStudents.length / studentsPerPage));
+              const currentPage = Math.min(studentPage, totalPages);
+              const startIndex = (currentPage - 1) * studentsPerPage;
+              const paginatedStudents = filteredStudents.slice(startIndex, startIndex + studentsPerPage);
+
+              const handleExportFilteredStudents = () => {
+                if (filteredStudents.length === 0) return;
+                const exportData = filteredStudents.map((s, idx) => ({
+                  'Sl No': idx + 1,
+                  'Student USN / ID': s.id,
+                  'Student Name': s.name,
+                  'Gmail Address': s.email,
+                  'Branch / Course': s.branch || 'CSE',
+                  'Semester': s.sem || 5,
+                  'Assigned Mentor': db.users.mentors.find(m => m.id === s.mentorId)?.name || 'Unassigned',
+                  'Phone Number': s.phone || 'N/A'
+                }));
+                const ws = XLSX.utils.json_to_sheet(exportData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Filtered Students');
+                XLSX.writeFile(wb, `nitte_students_${selectedBranchFilter}_sem${selectedSemesterFilter}_${Date.now()}.xlsx`);
+              };
+
+              const handleAddBranchSubmit = (e) => {
+                e.preventDefault();
+                setBranchModalError('');
+                setBranchModalSuccess('');
+                try {
+                  addBranch({
+                    code: newBranchCode,
+                    name: newBranchName,
+                    degree: newBranchDegree,
+                    totalSems: newBranchTotalSems
+                  });
+                  setBranchModalSuccess(`Branch "${newBranchCode.toUpperCase()}" added successfully!`);
+                  setNewBranchCode('');
+                  setNewBranchName('');
+                  setNewBranchTotalSems(8);
+                } catch (err) {
+                  setBranchModalError(err.message || 'Failed to add branch.');
+                }
+              };
+
+              return (
+                <div>
+                  {/* Top Header & Quick Action Buttons */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                    <div>
+                      <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <School size={20} style={{ color: '#3b82f6' }} />
+                        Degree College Student Directory & Course Explorer
+                      </h2>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                        Browse, filter, and manage student divisions across all degree programs and semesters.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => setIsBranchManagerOpen(true)}
+                        className="btn btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '6px 14px' }}
+                      >
+                        <SlidersHorizontal size={15} />
+                        Manage College Branches ({branches.length})
+                      </button>
+                      <button
+                        onClick={handleExportFilteredStudents}
+                        className="btn btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '6px 14px' }}
+                        title="Export current filtered view to Excel"
+                      >
+                        <Download size={15} />
+                        Export Filtered List ({filteredStudents.length})
+                      </button>
+                      <button
+                        onClick={() => setStudentSubTab('excel-import')}
+                        className="btn btn-primary"
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '6px 14px' }}
+                      >
+                        <FileSpreadsheet size={16} />
+                        Import Excel Roster
+                      </button>
+                    </div>
                   </div>
-                  <button 
-                    onClick={() => setStudentSubTab('excel-import')}
-                    className="btn btn-primary"
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 14px' }}
-                  >
-                    <FileSpreadsheet size={16} />
-                    Import Excel Roster
-                  </button>
-                </div>
 
-                <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
-                  <table className="custom-table">
-                    <thead>
-                      <tr>
-                        <th>Student ID / USN</th>
-                        <th>Student Name</th>
-                        <th>Gmail Address</th>
-                        <th>Branch / Sem</th>
-                        <th>Assigned Mentor</th>
-                        <th>Active Issues</th>
-                        <th>Slot Limit Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {db.users.students
-                        .filter(s => 
-                          s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          s.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          s.email.toLowerCase().includes(searchTerm.toLowerCase())
-                        )
-                        .map(student => {
-                          const mentor = db.users.mentors.find(m => m.id === student.mentorId);
-                          const activeCount = db.issues.filter(i => i.studentId === student.id && i.status !== 'Resolved').length;
-                          const recentWeeklyIssuesCount = db.issues.filter(i => {
-                            if (i.studentId !== student.id) return false;
-                            const created = new Date(i.createdAt).getTime();
-                            const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-                            return created >= sevenDaysAgo;
-                          }).length;
+                  {/* Branch Filter Pills Bar */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '10px',
+                    padding: '12px 16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <BookOpen size={14} style={{ color: '#3b82f6' }} /> Filter By College Branch / Department:
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Showing {filteredStudents.length} of {db.users.students.length} Total Enrolled
+                      </span>
+                    </div>
 
-                          const isLimitReached = recentWeeklyIssuesCount >= 2;
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => { setSelectedBranchFilter('ALL'); setStudentPage(1); }}
+                        style={{
+                          background: selectedBranchFilter === 'ALL' ? '#2563eb' : 'rgba(255, 255, 255, 0.05)',
+                          color: selectedBranchFilter === 'ALL' ? '#ffffff' : 'var(--text-primary)',
+                          border: selectedBranchFilter === 'ALL' ? '1px solid #2563eb' : '1px solid var(--border-color)',
+                          borderRadius: '20px',
+                          padding: '4px 12px',
+                          fontSize: '0.8rem',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        All Branches
+                        <span style={{
+                          background: selectedBranchFilter === 'ALL' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.1)',
+                          padding: '1px 6px',
+                          borderRadius: '10px',
+                          fontSize: '0.72rem'
+                        }}>
+                          {db.users.students.length}
+                        </span>
+                      </button>
 
-                          return (
-                            <tr key={student.id}>
-                              <td><code>{student.id}</code></td>
-                              <td><strong>{student.name}</strong></td>
-                              <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{student.email}</td>
-                              <td><span className="badge badge-assigned">{student.branch} - Sem {student.sem}</span></td>
-                              <td>{mentor ? mentor.name : <span style={{ color: 'var(--text-muted)' }}>Unassigned</span>}</td>
-                              <td>
-                                <span style={{ fontWeight: '700', color: activeCount > 0 ? 'var(--accent-amber)' : 'var(--text-muted)' }}>
-                                  {activeCount} active
-                                </span>
-                              </td>
-                              <td>
-                                {isLimitReached ? (
-                                  <span style={{ fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '3px 8px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <AlertTriangle size={12} /> Limit Reached (2/2)
+                      {allKnownBranchCodes.map(code => {
+                        const count = branchCounts[code] || 0;
+                        const isSelected = selectedBranchFilter === code;
+                        const branchInfo = branches.find(b => b.code.toUpperCase() === code);
+
+                        return (
+                          <button
+                            key={code}
+                            onClick={() => { setSelectedBranchFilter(code); setStudentPage(1); }}
+                            title={branchInfo ? `${branchInfo.name} (${branchInfo.degree})` : code}
+                            style={{
+                              background: isSelected ? '#2563eb' : 'rgba(255, 255, 255, 0.05)',
+                              color: isSelected ? '#ffffff' : 'var(--text-primary)',
+                              border: isSelected ? '1px solid #2563eb' : '1px solid var(--border-color)',
+                              borderRadius: '20px',
+                              padding: '4px 12px',
+                              fontSize: '0.8rem',
+                              fontWeight: '600',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {code}
+                            <span style={{
+                              background: isSelected ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.1)',
+                              padding: '1px 6px',
+                              borderRadius: '10px',
+                              fontSize: '0.72rem',
+                              color: isSelected ? '#ffffff' : count > 0 ? '#93c5fd' : 'var(--text-muted)'
+                            }}>
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        onClick={() => setIsBranchManagerOpen(true)}
+                        style={{
+                          background: 'rgba(59, 130, 246, 0.1)',
+                          color: '#60a5fa',
+                          border: '1px dashed rgba(59, 130, 246, 0.4)',
+                          borderRadius: '20px',
+                          padding: '4px 12px',
+                          fontSize: '0.78rem',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <Plus size={13} /> Add / Remove Branch
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Secondary Filter & Search Row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                    {/* Live Search */}
+                    <div style={{ position: 'relative' }}>
+                      <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        placeholder="Search USN, Name, Gmail, Branch..."
+                        value={searchTerm}
+                        onChange={(e) => { setSearchTerm(e.target.value); setStudentPage(1); }}
+                        className="form-control"
+                        style={{ paddingLeft: '36px', height: '38px', fontSize: '0.85rem' }}
+                      />
+                      {searchTerm && (
+                        <button
+                          onClick={() => { setSearchTerm(''); setStudentPage(1); }}
+                          style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Semester Dropdown Filter */}
+                    <div>
+                      <select
+                        value={selectedSemesterFilter}
+                        onChange={(e) => { setSelectedSemesterFilter(e.target.value); setStudentPage(1); }}
+                        className="form-control"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      >
+                        <option value="ALL">All Semesters (1 to 8)</option>
+                        <option value="1">1st Semester</option>
+                        <option value="2">2nd Semester</option>
+                        <option value="3">3rd Semester</option>
+                        <option value="4">4th Semester</option>
+                        <option value="5">5th Semester</option>
+                        <option value="6">6th Semester</option>
+                        <option value="7">7th Semester</option>
+                        <option value="8">8th Semester</option>
+                      </select>
+                    </div>
+
+                    {/* Slot Limit Status Filter */}
+                    <div>
+                      <select
+                        value={studentSlotFilter}
+                        onChange={(e) => { setStudentSlotFilter(e.target.value); setStudentPage(1); }}
+                        className="form-control"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      >
+                        <option value="ALL">All Slot Limit Statuses</option>
+                        <option value="AVAILABLE">Slots Available (0-1 Tickets)</option>
+                        <option value="REACHED">Limit Reached (2/2 Tickets)</option>
+                      </select>
+                    </div>
+
+                    {/* Page Size Selector */}
+                    <div>
+                      <select
+                        value={studentsPerPage}
+                        onChange={(e) => { setStudentsPerPage(parseInt(e.target.value)); setStudentPage(1); }}
+                        className="form-control"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      >
+                        <option value="15">Show 15 per page</option>
+                        <option value="25">Show 25 per page</option>
+                        <option value="50">Show 50 per page</option>
+                        <option value="100">Show 100 per page</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Student Delete Success Alert */}
+                  {studentDeleteSuccessMsg && (
+                    <div style={{
+                      background: 'rgba(16, 185, 129, 0.15)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      color: '#34d399',
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      marginBottom: '16px',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <CheckCircle2 size={16} />
+                        <span>{studentDeleteSuccessMsg}</span>
+                      </div>
+                      <button
+                        onClick={() => setStudentDeleteSuccessMsg('')}
+                        style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer', padding: 0 }}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Student Table */}
+                  <div className="custom-table-container" style={{ maxHeight: '540px', overflowY: 'auto' }}>
+                    <table className="custom-table">
+                      <thead>
+                        <tr>
+                          <th>Student ID / USN</th>
+                          <th>Student Name</th>
+                          <th>Gmail Address</th>
+                          <th>Branch & Degree</th>
+                          <th>Semester</th>
+                          <th>Assigned Mentor</th>
+                          <th>Active Tickets</th>
+                          <th>Slot Limit Status</th>
+                          <th style={{ width: '45px', textAlign: 'center' }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedStudents.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                              <GraduationCap size={36} style={{ marginBottom: '8px', opacity: 0.5 }} />
+                              <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600' }}>No students found matching the selected filters.</p>
+                              <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem' }}>
+                                Try selecting "All Branches" or clear your search query.
+                              </p>
+                            </td>
+                          </tr>
+                        ) : (
+                          paginatedStudents.map(student => {
+                            const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, student.mentorId));
+                            const activeCount = db.issues.filter(i => i.studentId === student.id && i.status !== 'Resolved').length;
+                            const recentWeeklyIssuesCount = db.issues.filter(i => {
+                              if (i.studentId !== student.id) return false;
+                              const created = new Date(i.createdAt).getTime();
+                              const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+                              return created >= sevenDaysAgo;
+                            }).length;
+
+                            const isLimitReached = recentWeeklyIssuesCount >= 2;
+                            const branchInfo = branches.find(b => b.code.toUpperCase() === (student.branch || '').toUpperCase());
+
+                            return (
+                              <tr key={student.id}>
+                                <td><code style={{ fontWeight: 'bold', color: '#93c5fd' }}>{student.id}</code></td>
+                                <td>
+                                  <div style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{student.name}</div>
+                                  {student.phone && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>📞 {student.phone}</span>}
+                                </td>
+                                <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{student.email}</td>
+                                <td>
+                                  <span className="badge badge-assigned" title={branchInfo ? branchInfo.name : student.branch}>
+                                    {student.branch || 'CSE'}
+                                    {branchInfo?.degree && <span style={{ opacity: 0.75, fontSize: '0.7rem', marginLeft: '4px' }}>({branchInfo.degree})</span>}
                                   </span>
-                                ) : (
-                                  <span style={{ fontSize: '0.75rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '3px 8px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <CheckCircle2 size={12} /> {recentWeeklyIssuesCount}/2 Slots Available
+                                </td>
+                                <td>
+                                  <span style={{ fontSize: '0.82rem', fontWeight: '600' }}>
+                                    Sem {student.sem || 5}
                                   </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
+                                </td>
+                                <td>
+                                  <select
+                                    value={mentor ? mentor.id : ''}
+                                    onChange={(e) => {
+                                      const newMentorId = e.target.value;
+                                      if (newMentorId) {
+                                        assignStudentsToMentor(newMentorId, [student.id], student.mentorId ? [student.id] : []);
+                                      } else if (student.mentorId) {
+                                        assignStudentsToMentor(student.mentorId, [], [student.id]);
+                                      }
+                                    }}
+                                    className="form-control"
+                                    style={{
+                                      height: '30px',
+                                      fontSize: '0.78rem',
+                                      padding: '2px 8px',
+                                      minWidth: '150px',
+                                      background: mentor ? 'rgba(124, 58, 237, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+                                      borderColor: mentor ? 'rgba(124, 58, 237, 0.35)' : 'var(--border-color)',
+                                      color: mentor ? '#c4b5fd' : 'var(--text-muted)',
+                                      fontWeight: mentor ? '600' : 'normal'
+                                    }}
+                                    title="Quick assign or change faculty mentor"
+                                  >
+                                    <option value="">⚪ Unassigned</option>
+                                    {(db.users?.mentors || []).map(m => (
+                                      <option key={m.id} value={m.id}>
+                                        {m.name} ({m.dept || 'Faculty'})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td>
+                                  <span style={{ fontWeight: '700', color: activeCount > 0 ? 'var(--accent-amber)' : 'var(--text-muted)' }}>
+                                    {activeCount} active
+                                  </span>
+                                </td>
+                                <td>
+                                  {isLimitReached ? (
+                                    <span style={{ fontSize: '0.75rem', background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '3px 8px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                      <AlertTriangle size={12} /> Limit Reached (2/2)
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.75rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '3px 8px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                      <CheckCircle2 size={12} /> {recentWeeklyIssuesCount}/2 Slots Used
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveActionMenuStudentId(activeActionMenuStudentId === student.id ? null : student.id);
+                                      }}
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: 'var(--text-muted)',
+                                        cursor: 'pointer',
+                                        padding: '5px',
+                                        borderRadius: '6px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        opacity: 0.65,
+                                        transition: 'all 0.2s'
+                                      }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.65'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                                      title="Student actions"
+                                    >
+                                      <MoreVertical size={16} />
+                                    </button>
+
+                                    {activeActionMenuStudentId === student.id && (
+                                      <>
+                                        <div
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActiveActionMenuStudentId(null);
+                                          }}
+                                          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 }}
+                                        />
+                                        <div
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{
+                                            position: 'absolute',
+                                            right: 0,
+                                            top: '100%',
+                                            marginTop: '4px',
+                                            background: 'var(--bg-secondary)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 10px 25px rgba(0, 0, 0, 0.5)',
+                                            zIndex: 101,
+                                            minWidth: '165px',
+                                            padding: '4px'
+                                          }}
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuStudentId(null);
+                                              setStudentPendingDelete(student);
+                                            }}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              width: '100%',
+                                              padding: '8px 12px',
+                                              fontSize: '0.8rem',
+                                              fontWeight: '600',
+                                              background: 'none',
+                                              border: 'none',
+                                              color: '#f87171',
+                                              cursor: 'pointer',
+                                              borderRadius: '6px',
+                                              textAlign: 'left'
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                          >
+                                            <Trash2 size={14} />
+                                            Remove Student
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination Footer */}
+                  {filteredStudents.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        Showing <strong>{startIndex + 1}</strong> to <strong>{Math.min(startIndex + studentsPerPage, filteredStudents.length)}</strong> of <strong>{filteredStudents.length}</strong> students
+                        {selectedBranchFilter !== 'ALL' && <span> in <strong>{selectedBranchFilter}</strong></span>}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <button
+                          onClick={() => setStudentPage(prev => Math.max(1, prev - 1))}
+                          disabled={currentPage === 1}
+                          className="btn btn-secondary"
+                          style={{ padding: '4px 10px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', opacity: currentPage === 1 ? 0.5 : 1 }}
+                        >
+                          <ChevronLeft size={14} /> Prev
+                        </button>
+
+                        <div style={{ fontSize: '0.82rem', fontWeight: '600', padding: '0 8px' }}>
+                          Page {currentPage} of {totalPages}
+                        </div>
+
+                        <button
+                          onClick={() => setStudentPage(prev => Math.min(totalPages, prev + 1))}
+                          disabled={currentPage === totalPages}
+                          className="btn btn-secondary"
+                          style={{ padding: '4px 10px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', opacity: currentPage === totalPages ? 0.5 : 1 }}
+                        >
+                          Next <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Branch Management Modal */}
+                  {isBranchManagerOpen && (
+                    <div style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: 'rgba(0, 0, 0, 0.75)',
+                      backdropFilter: 'blur(8px)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 9999,
+                      padding: '20px'
+                    }}>
+                      <div style={{
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '16px',
+                        maxWidth: '700px',
+                        width: '100%',
+                        maxHeight: '90vh',
+                        overflowY: 'auto',
+                        padding: '28px',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px' }}>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <School size={22} style={{ color: '#3b82f6' }} />
+                              Manage College Branches & Degree Courses
+                            </h3>
+                            <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                              Add new degree branches or remove inactive departments from the college filter list.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => { setIsBranchManagerOpen(false); setBranchModalError(''); setBranchModalSuccess(''); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                          >
+                            <X size={20} />
+                          </button>
+                        </div>
+
+                        {/* Error / Success Notifications */}
+                        {branchModalError && (
+                          <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <AlertCircle size={16} />
+                            {branchModalError}
+                          </div>
+                        )}
+                        {branchModalSuccess && (
+                          <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <CheckCircle2 size={16} />
+                            {branchModalSuccess}
+                          </div>
+                        )}
+
+                        {/* Form to Add New Branch */}
+                        <form onSubmit={handleAddBranchSubmit} style={{
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '10px',
+                          padding: '16px',
+                          marginBottom: '20px'
+                        }}>
+                          <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', fontWeight: '700', color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Plus size={16} /> Add New College Branch / Course
+                          </h4>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+                            <div>
+                              <label style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Branch Code *</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. BCA, BBA, MCA"
+                                value={newBranchCode}
+                                onChange={(e) => setNewBranchCode(e.target.value.toUpperCase())}
+                                required
+                                className="form-control"
+                                style={{ height: '36px', fontSize: '0.85rem', textTransform: 'uppercase' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Course / Branch Full Name *</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Bachelor of Computer Applications"
+                                value={newBranchName}
+                                onChange={(e) => setNewBranchName(e.target.value)}
+                                required
+                                className="form-control"
+                                style={{ height: '36px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Degree Level</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. B.C.A, B.Tech, M.B.A"
+                                value={newBranchDegree}
+                                onChange={(e) => setNewBranchDegree(e.target.value)}
+                                className="form-control"
+                                style={{ height: '36px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Total Semesters</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="12"
+                                value={newBranchTotalSems}
+                                onChange={(e) => setNewBranchTotalSems(e.target.value)}
+                                className="form-control"
+                                style={{ height: '36px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+                          </div>
+                          <button
+                            type="submit"
+                            className="btn btn-primary"
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.85rem', fontWeight: '600', padding: '8px' }}
+                          >
+                            <Plus size={16} />
+                            Save Branch to College System
+                          </button>
+                        </form>
+
+                        {/* List of Configured Branches */}
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: '700' }}>Active Configured Branches ({branches.length})</h4>
+                            <button
+                              onClick={() => {
+                                if (window.confirm('Reset all branches to official default degree college branches?')) {
+                                  resetBranchesToDefault();
+                                  setBranchModalSuccess('Reset to default college branches.');
+                                }
+                              }}
+                              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.78rem', cursor: 'pointer', textDecoration: 'underline' }}
+                            >
+                              Reset to Institutional Defaults
+                            </button>
+                          </div>
+
+                          <div style={{ maxHeight: '260px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                            <table className="custom-table" style={{ fontSize: '0.82rem' }}>
+                              <thead>
+                                <tr>
+                                  <th>Code</th>
+                                  <th>Course Name</th>
+                                  <th>Degree Level</th>
+                                  <th>Enrolled Students</th>
+                                  <th style={{ textAlign: 'right' }}>Action</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {branches.map(b => {
+                                  const count = db.users.students.filter(s => (s.branch || '').toUpperCase() === b.code.toUpperCase()).length;
+                                  return (
+                                    <tr key={b.code}>
+                                      <td><strong style={{ color: '#93c5fd' }}>{b.code}</strong></td>
+                                      <td>{b.name}</td>
+                                      <td><span style={{ opacity: 0.8 }}>{b.degree} ({b.totalSems || 8} Sems)</span></td>
+                                      <td>
+                                        <span className="badge badge-assigned">{count} Students</span>
+                                      </td>
+                                      <td style={{ textAlign: 'right' }}>
+                                        <button
+                                          onClick={() => {
+                                            if (window.confirm(`Are you sure you want to remove branch "${b.code}" from the filter list?`)) {
+                                              removeBranch(b.code);
+                                              if (selectedBranchFilter === b.code) setSelectedBranchFilter('ALL');
+                                            }
+                                          }}
+                                          style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem' }}
+                                          title="Remove branch"
+                                        >
+                                          <Trash2 size={13} /> Remove
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: '20px', textAlign: 'right' }}>
+                          <button
+                            onClick={() => { setIsBranchManagerOpen(false); setBranchModalError(''); setBranchModalSuccess(''); }}
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 20px', fontSize: '0.85rem' }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Sub-tab 2: Excel Import */}
             {studentSubTab === 'excel-import' && (
@@ -1152,11 +2278,11 @@ export const AdminDashboard = () => {
                 </div>
 
                 {/* Upload Drag & Drop Area */}
-                <div style={{ 
-                  border: '2px dashed var(--border-color)', 
-                  borderRadius: '12px', 
-                  padding: '36px 20px', 
-                  textAlign: 'center', 
+                <div style={{
+                  border: '2px dashed var(--border-color)',
+                  borderRadius: '12px',
+                  padding: '36px 20px',
+                  textAlign: 'center',
                   background: 'rgba(255, 255, 255, 0.02)',
                   marginBottom: '24px'
                 }}>
@@ -1165,16 +2291,16 @@ export const AdminDashboard = () => {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                     Drag and drop your file here or click below to browse from your computer
                   </p>
-                  
-                  <input 
-                    type="file" 
+
+                  <input
+                    type="file"
                     id="rosterFileInput"
                     accept=".xlsx, .xls, .csv"
                     onChange={handleFileSelect}
                     style={{ display: 'none' }}
                   />
-                  <label 
-                    htmlFor="rosterFileInput" 
+                  <label
+                    htmlFor="rosterFileInput"
                     className="btn btn-primary"
                     style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                   >
@@ -1209,8 +2335,8 @@ export const AdminDashboard = () => {
                       <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
                         Previewing {parsedRoster.length} Student Record{parsedRoster.length > 1 ? 's' : ''} Ready for Onboarding
                       </h3>
-                      <button 
-                        onClick={handleRosterSubmit} 
+                      <button
+                        onClick={handleRosterSubmit}
                         disabled={isUploadingRoster}
                         className="btn btn-success"
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', fontSize: '0.9rem', fontWeight: '600' }}
@@ -1244,11 +2370,11 @@ export const AdminDashboard = () => {
                         </thead>
                         <tbody>
                           {parsedRoster.map((row, idx) => {
-                            const idVal = row['Student ID'] || row['USN'] || row['studentId'] || row['id'] || row['Student USN'] || '—';
-                            const nameVal = row['Student Name'] || row['Name'] || row['studentName'] || row['Full Name'] || '—';
-                            const emailVal = row['Student Gmail'] || row['Gmail'] || row['Email'] || row['studentEmail'] || row['Email Address'] || '—';
-                            const branchVal = row['Branch'] || row['branch'] || row['Dept'] || 'CSE';
-                            const semVal = row['Semester'] || row['sem'] || row['Sem'] || 5;
+                            const idVal = getRosterField(row, ['student id', 'studentid', 'student usn', 'studentusn', 'usn', 'id', 'roll no', 'rollno', 'student_id'], '—');
+                            const nameVal = getRosterField(row, ['student name', 'studentname', 'name', 'full name', 'fullname', 'student_name'], '—');
+                            const emailVal = getRosterField(row, ['student gmail', 'studentgmail', 'student email', 'studentemail', 'gmail', 'email', 'email address', 'emailaddress', 'mail', 'student_gmail', 'student_email'], '—');
+                            const branchVal = getRosterField(row, ['branch', 'department', 'dept', 'course'], 'CSE');
+                            const semVal = getRosterField(row, ['semester', 'sem'], '5');
 
                             return (
                               <tr key={idx}>
@@ -1282,6 +2408,9 @@ export const AdminDashboard = () => {
                         </h3>
                         <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
                           Successfully registered <strong>{uploadResult.successCount}</strong> out of <strong>{uploadResult.totalProcessed}</strong> students into PostgreSQL and dispatched onboarding emails.
+                        </p>
+                        <p style={{ fontSize: '0.78rem', color: '#38bdf8', margin: '6px 0 0 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Sparkles size={14} /> Dispatched modern HTML credentials email featuring a direct 1-click student portal login button (auto-populates ID & Password).
                         </p>
                       </div>
                       <button onClick={handleExportCredentialsCsv} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
@@ -1347,7 +2476,7 @@ export const AdminDashboard = () => {
           <div className="glass-card">
             {/* Sub-tab pills */}
             <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px', marginBottom: '20px' }}>
-              <button 
+              <button
                 className={`btn ${mentorSubTab === 'directory' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setMentorSubTab('directory')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1355,7 +2484,7 @@ export const AdminDashboard = () => {
                 <UserCheck size={16} />
                 Faculty Mentors Directory ({db.users.mentors.length})
               </button>
-              <button 
+              <button
                 className={`btn ${mentorSubTab === 'session-reports' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setMentorSubTab('session-reports')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1363,54 +2492,849 @@ export const AdminDashboard = () => {
                 <FileText size={16} />
                 Faculty Mentoring Session Audit ({(db.mentorSessionRecords || []).length})
               </button>
-              <button 
+              <button
                 className={`btn ${mentorSubTab === 'excel-import' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setMentorSubTab('excel-import')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
               >
-                <FileSpreadsheet size={16} />
-                Import Mentors Roster
+                <UserPlus size={16} />
+                Add / Import Mentors
               </button>
             </div>
 
             {/* Sub-tab 1: Faculty Directory */}
-            {mentorSubTab === 'directory' && (
-              <div>
-                <h2 className="section-title" style={{ fontSize: '1.2rem', marginBottom: '16px' }}>👨‍🏫 Faculty Mentors Directory</h2>
-                <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
-                  <table className="custom-table">
-                    <thead>
-                      <tr>
-                        <th>Mentor ID</th>
-                        <th>Faculty Name</th>
-                        <th>Email Address</th>
-                        <th>Department</th>
-                        <th>Assigned Class & Mentees</th>
-                        <th>Password Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {db.users.mentors
-                        .filter(m => 
-                          m.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          m.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          m.email.toLowerCase().includes(searchTerm.toLowerCase())
-                        )
-                        .map(mentor => (
-                          <tr key={mentor.id}>
-                            <td><code>{mentor.id}</code></td>
-                            <td><strong>{mentor.name}</strong></td>
-                            <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{mentor.email}</td>
-                            <td><span className="badge badge-assigned">{mentor.dept || 'CSE'}</span></td>
-                            <td>{mentor.class || '5th Sem CSE - Section A (28 Mentees)'}</td>
-                            <td><span className="badge badge-resolved">Nit#Mnt2026</span></td>
-                          </tr>
+            {mentorSubTab === 'directory' && (() => {
+              // Stats
+              const totalStudents = db.users.students.length;
+              const assignedStudentsCount = db.users.students.filter(s => !!s.mentorId).length;
+              const unassignedStudentsCount = totalStudents - assignedStudentsCount;
+
+              // Filtered mentors list
+              const filteredMentors = db.users.mentors.filter(m => {
+                const matchDept = mentorFilterDept === 'ALL' || (m.dept || '').toUpperCase() === mentorFilterDept.toUpperCase();
+                const q = searchTerm.toLowerCase();
+                const matchSearch = !q || (m.name || '').toLowerCase().includes(q) || (m.id || '').toLowerCase().includes(q) || (m.email || '').toLowerCase().includes(q) || (m.dept || '').toLowerCase().includes(q);
+                return matchDept && matchSearch;
+              });
+
+              // Mentor departments
+              const allMentorDepts = Array.from(new Set(db.users.mentors.map(m => (m.dept || 'CSE').toUpperCase()))).sort();
+
+              return (
+                <div>
+                  {/* Header & Quick Summary */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                    <div>
+                      <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <UserCheck size={20} style={{ color: '#8b5cf6' }} />
+                        Faculty Mentors Directory & Student Allocation
+                      </h2>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                        Manage faculty mentors, add mentors directly, and assign degree college students with 1-click batch allocation.
+                      </p>
+                    </div>
+
+                    {/* Summary KPI Badges & Quick Add Action */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <div style={{ background: 'rgba(139, 92, 246, 0.12)', border: '1px solid rgba(139, 92, 246, 0.3)', padding: '4px 12px', borderRadius: '8px', fontSize: '0.78rem' }}>
+                        👨‍🏫 Faculty: <strong style={{ color: '#c4b5fd' }}>{db.users.mentors.length}</strong>
+                      </div>
+                      <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '4px 12px', borderRadius: '8px', fontSize: '0.78rem' }}>
+                        ✅ Assigned: <strong style={{ color: '#34d399' }}>{assignedStudentsCount}</strong> / {totalStudents}
+                      </div>
+                      {unassignedStudentsCount > 0 && (
+                        <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '4px 12px', borderRadius: '8px', fontSize: '0.78rem' }}>
+                          ⚠️ Unassigned: <strong style={{ color: '#f87171' }}>{unassignedStudentsCount}</strong>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMentorSubTab('excel-import');
+                          setMentorEntryMode('single');
+                        }}
+                        className="btn btn-primary"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '0.82rem',
+                          padding: '6px 14px',
+                          background: '#7c3aed',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontWeight: '600'
+                        }}
+                        title="Add a single faculty mentor directly without spreadsheet"
+                      >
+                        <Plus size={15} /> Add Single Mentor
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mentor Delete Success Alert */}
+                  {mentorDeleteSuccessMsg && (
+                    <div style={{
+                      background: 'rgba(16, 185, 129, 0.15)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      color: '#34d399',
+                      padding: '12px 16px',
+                      borderRadius: '8px',
+                      marginBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.88rem',
+                      fontWeight: '600'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <CheckCircle2 size={18} />
+                        <span>{mentorDeleteSuccessMsg}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMentorDeleteSuccessMsg('')}
+                        style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer' }}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Filter & Search Bar */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ position: 'relative' }}>
+                      <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        placeholder="Search Faculty Name, ID, Email, Dept..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="form-control"
+                        style={{ paddingLeft: '36px', height: '38px', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div>
+                      <select
+                        value={mentorFilterDept}
+                        onChange={(e) => setMentorFilterDept(e.target.value)}
+                        className="form-control"
+                        style={{ height: '38px', fontSize: '0.85rem' }}
+                      >
+                        <option value="ALL">All Faculty Departments</option>
+                        {allMentorDepts.map(dept => (
+                          <option key={dept} value={dept}>
+                            {dept} Department ({db.users.mentors.filter(m => (m.dept || '').toUpperCase() === dept).length} Mentors)
+                          </option>
                         ))}
-                    </tbody>
-                  </table>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Faculty Mentors Table */}
+                  <div className="custom-table-container" style={{ maxHeight: '520px', overflowY: 'auto' }}>
+                    <table className="custom-table">
+                      <thead>
+                        <tr>
+                          <th>Mentor ID</th>
+                          <th>Faculty Mentor Name</th>
+                          <th>Email Address</th>
+                          <th>Department</th>
+                          <th>Assigned Mentees Count</th>
+                          <th>Action</th>
+                          <th style={{ width: '50px', textAlign: 'center' }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMentors.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                              <UserCheck size={36} style={{ marginBottom: '8px', opacity: 0.5 }} />
+                              <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600' }}>No faculty mentors found.</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredMentors.map(mentor => {
+                            const mentees = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
+                            const mentorDept = (mentor.dept || 'CSE').toUpperCase();
+                            const deptStudentsTotal = (db.users?.students || []).filter(s => (s.branch || '').toUpperCase() === mentorDept).length;
+
+                            return (
+                              <tr key={mentor.id}>
+                                <td><code style={{ fontWeight: 'bold', color: '#c4b5fd' }}>{mentor.id}</code></td>
+                                <td>
+                                  <strong style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>{mentor.name}</strong>
+                                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{mentor.class || `${mentees.length} Assigned Mentees`}</div>
+                                </td>
+                                <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{mentor.email}</td>
+                                <td>
+                                  <span className="badge badge-assigned" style={{ background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+                                    {mentorDept}
+                                  </span>
+                                </td>
+                                <td>
+                                  <button
+                                    onClick={() => handleOpenAssignmentModal(mentor)}
+                                    style={{
+                                      background: mentees.length > 0 ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                                      border: mentees.length > 0 ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                                      color: mentees.length > 0 ? '#34d399' : '#fca5a5',
+                                      borderRadius: '16px',
+                                      padding: '4px 12px',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '700',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px'
+                                    }}
+                                    title="Click to view and assign students"
+                                  >
+                                    <Users size={13} />
+                                    {mentees.length} Mentees Assigned
+                                  </button>
+                                  {deptStudentsTotal > 0 && (
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: '6px' }}>
+                                      ({deptStudentsTotal} total {mentorDept} students)
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  <button
+                                    onClick={() => handleOpenAssignmentModal(mentor)}
+                                    className="btn btn-primary"
+                                    style={{
+                                      fontSize: '0.8rem',
+                                      padding: '6px 14px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      fontWeight: '600',
+                                      background: '#7c3aed',
+                                      border: 'none',
+                                      cursor: 'pointer'
+                                    }}
+                                    title={`Click to assign students to ${mentor.name}`}
+                                  >
+                                    <UserPlus size={15} />
+                                    Assign Students
+                                  </button>
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveActionMenuMentorId(activeActionMenuMentorId === mentor.id ? null : mentor.id);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255, 255, 255, 0.06)',
+                                        border: '1px solid var(--border-color)',
+                                        color: 'var(--text-secondary)',
+                                        cursor: 'pointer',
+                                        padding: '5px 7px',
+                                        borderRadius: '6px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'all 0.2s'
+                                      }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                                      title="Faculty mentor actions"
+                                    >
+                                      <MoreVertical size={16} />
+                                    </button>
+
+                                    {activeActionMenuMentorId === mentor.id && (
+                                      <>
+                                        <div
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActiveActionMenuMentorId(null);
+                                          }}
+                                          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 }}
+                                        />
+                                        <div
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{
+                                            position: 'absolute',
+                                            right: 0,
+                                            top: '100%',
+                                            marginTop: '4px',
+                                            background: 'var(--bg-secondary)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 10px 25px rgba(0, 0, 0, 0.5)',
+                                            zIndex: 101,
+                                            minWidth: '170px',
+                                            padding: '4px'
+                                          }}
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuMentorId(null);
+                                              handleOpenAssignmentModal(mentor);
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              padding: '8px 12px',
+                                              background: 'none',
+                                              border: 'none',
+                                              color: 'var(--text-primary)',
+                                              borderRadius: '6px',
+                                              fontSize: '0.82rem',
+                                              fontWeight: '500',
+                                              cursor: 'pointer',
+                                              textAlign: 'left'
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                          >
+                                            <UserPlus size={14} style={{ color: '#8b5cf6' }} /> Assign Students
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuMentorId(null);
+                                              setMentorPendingDelete(mentor);
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              padding: '8px 12px',
+                                              background: 'none',
+                                              border: 'none',
+                                              color: '#f87171',
+                                              borderRadius: '6px',
+                                              fontSize: '0.82rem',
+                                              fontWeight: '600',
+                                              cursor: 'pointer',
+                                              textAlign: 'left',
+                                              transition: 'background 0.15s ease'
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                          >
+                                            <Trash2 size={14} /> Remove Mentor
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* ========================================================= */}
+                  {/* ZERO-TYPING STUDENT ASSIGNMENT MODAL */}
+                  {/* ========================================================= */}
+                  {assigningMentor && (() => {
+                    const mentorDept = (assigningMentor.dept || 'CSE').toUpperCase();
+
+                    // Filtered students for modal checklist
+                    const modalStudents = (db.users?.students || []).filter(s => {
+                      // Branch Filter
+                      if (mentorAssignBranch !== 'ALL' && (s.branch || '').toUpperCase() !== mentorAssignBranch.toUpperCase()) {
+                        return false;
+                      }
+                      // Semester Filter
+                      if (mentorAssignSem !== 'ALL' && parseInt(s.sem) !== parseInt(mentorAssignSem)) {
+                        return false;
+                      }
+                      // Status tab filter
+                      if (mentorAssignFilterTab === 'unassigned' && !!s.mentorId) {
+                        return false;
+                      }
+                      if (mentorAssignFilterTab === 'assigned-to-this' && !isMatchingMentorId(s.mentorId, assigningMentor.id)) {
+                        return false;
+                      }
+                      // Search filter
+                      if (mentorAssignSearch.trim()) {
+                        const q = mentorAssignSearch.toLowerCase();
+                        const matchName = (s.name || '').toLowerCase().includes(q);
+                        const matchId = (s.id || '').toLowerCase().includes(q);
+                        const matchBranch = (s.branch || '').toLowerCase().includes(q);
+                        if (!matchName && !matchId && !matchBranch) return false;
+                      }
+                      return true;
+                    });
+
+                    // Quick counts
+                    const allDeptStudents = (db.users?.students || []).filter(s => (s.branch || '').toUpperCase() === mentorDept);
+                    const unassignedDeptStudents = allDeptStudents.filter(s => !s.mentorId || isMatchingMentorId(s.mentorId, assigningMentor.id));
+                    const allUnassignedStudents = (db.users?.students || []).filter(s => !s.mentorId || isMatchingMentorId(s.mentorId, assigningMentor.id));
+
+                    // 1-Click Handlers (ZERO TYPING!)
+                    const handleQuickSelectAllVisible = () => {
+                      const visibleIds = modalStudents.map(s => s.id);
+                      setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...visibleIds])));
+                    };
+
+                    const handleQuickSelectAllDept = () => {
+                      const deptIds = allDeptStudents.map(s => s.id);
+                      setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...deptIds])));
+                    };
+
+                    const handleQuickSelectUnassignedDept = () => {
+                      const unassignedIds = unassignedDeptStudents.map(s => s.id);
+                      setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...unassignedIds])));
+                    };
+
+                    const handleQuickSelectAllUnassigned = () => {
+                      const unassignedIds = allUnassignedStudents.map(s => s.id);
+                      setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...unassignedIds])));
+                    };
+
+                    const handleQuickSelectSem = (semNumber) => {
+                      const semStudents = (db.users?.students || []).filter(s => {
+                        const matchSem = parseInt(s.sem) === semNumber;
+                        const matchBranch = mentorAssignBranch === 'ALL' || (s.branch || '').toUpperCase() === mentorAssignBranch.toUpperCase();
+                        return matchSem && matchBranch;
+                      }).map(s => s.id);
+                      setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...semStudents])));
+                    };
+
+                    const handleToggleSelectAllVisible = () => {
+                      const visibleIds = modalStudents.map(s => s.id);
+                      const allVisibleSelected = visibleIds.every(id => selectedStudentIdsForMentor.includes(id));
+                      if (allVisibleSelected) {
+                        setSelectedStudentIdsForMentor(selectedStudentIdsForMentor.filter(id => !visibleIds.includes(id)));
+                      } else {
+                        setSelectedStudentIdsForMentor(Array.from(new Set([...selectedStudentIdsForMentor, ...visibleIds])));
+                      }
+                    };
+
+                    const handleToggleStudent = (studentId) => {
+                      if (selectedStudentIdsForMentor.includes(studentId)) {
+                        setSelectedStudentIdsForMentor(selectedStudentIdsForMentor.filter(id => id !== studentId));
+                      } else {
+                        setSelectedStudentIdsForMentor([...selectedStudentIdsForMentor, studentId]);
+                      }
+                    };
+
+                    const isAllVisibleSelected = modalStudents.length > 0 && modalStudents.every(s => selectedStudentIdsForMentor.includes(s.id));
+
+                    return (
+                      <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0, 0, 0, 0.78)',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        padding: '20px'
+                      }}>
+                        <div style={{
+                          background: 'var(--bg-secondary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '16px',
+                          maxWidth: '780px',
+                          width: '100%',
+                          maxHeight: '92vh',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+                          overflow: 'hidden'
+                        }}>
+                          {/* Modal Header */}
+                          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(124, 58, 237, 0.06)' }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c4b5fd' }}>
+                                  <UserCheck size={22} />
+                                </div>
+                                <div>
+                                  <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                                    Assign Students to {assigningMentor.name}
+                                  </h3>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                                    <span style={{ fontSize: '0.75rem', background: 'rgba(139, 92, 246, 0.2)', color: '#c4b5fd', padding: '1px 8px', borderRadius: '10px', fontWeight: '700' }}>
+                                      {mentorDept} Department
+                                    </span>
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                      {assigningMentor.email}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: '700', background: '#7c3aed', color: '#ffffff', padding: '4px 12px', borderRadius: '16px' }}>
+                                {selectedStudentIdsForMentor.length} Mentees Selected
+                              </span>
+                              <button
+                                onClick={() => setAssigningMentor(null)}
+                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              >
+                                <X size={20} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Modal Body */}
+                          <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>
+                            {/* Success Notification */}
+                            {mentorAssignSuccessMsg && (
+                              <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <CheckCircle2 size={16} />
+                                {mentorAssignSuccessMsg}
+                              </div>
+                            )}
+
+                            {/* 1-Click Smart Actions Bar (ZERO TYPING REQUIRED!) */}
+                            <div style={{
+                              background: 'rgba(255, 255, 255, 0.02)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '10px',
+                              padding: '12px 14px',
+                              marginBottom: '16px'
+                            }}>
+                              <div style={{ fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Sparkles size={14} style={{ color: '#fbbf24' }} /> 1-Click Quick Batch Allocations (Zero Typing):
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  onClick={handleQuickSelectAllVisible}
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.78rem', padding: '5px 12px', background: 'rgba(124, 58, 237, 0.18)', border: '1px solid rgba(124, 58, 237, 0.4)', color: '#c4b5fd', fontWeight: '700' }}
+                                >
+                                  ⚡ Select All Visible Students ({modalStudents.length})
+                                </button>
+                                {allDeptStudents.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={handleQuickSelectAllDept}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.78rem', padding: '5px 12px', background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)', color: '#93c5fd' }}
+                                  >
+                                    ➕ All {mentorDept} ({allDeptStudents.length})
+                                  </button>
+                                )}
+                                {unassignedDeptStudents.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={handleQuickSelectUnassignedDept}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.78rem', padding: '5px 12px', background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399' }}
+                                  >
+                                    ➕ Unassigned {mentorDept} ({unassignedDeptStudents.length})
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleQuickSelectAllUnassigned}
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: '0.78rem', padding: '5px 12px', background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}
+                                >
+                                  ➕ All Unassigned ({allUnassignedStudents.length})
+                                </button>
+                                {[1, 2, 3, 4, 5, 6].map(sem => (
+                                  <button
+                                    key={sem}
+                                    type="button"
+                                    onClick={() => handleQuickSelectSem(sem)}
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.75rem', padding: '3px 8px' }}
+                                  >
+                                    + Sem {sem}
+                                  </button>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedStudentIdsForMentor([])}
+                                  style={{ background: 'none', border: 'none', color: '#f87171', fontSize: '0.75rem', cursor: 'pointer', marginLeft: 'auto', textDecoration: 'underline' }}
+                                >
+                                  Clear All
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Checklist Filters & Search */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '10px', marginBottom: '8px' }}>
+                              <div style={{ position: 'relative' }}>
+                                <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                                <input
+                                  type="text"
+                                  placeholder="Search USN, Name, Branch..."
+                                  value={mentorAssignSearch}
+                                  onChange={(e) => setMentorAssignSearch(e.target.value)}
+                                  className="form-control"
+                                  style={{ paddingLeft: '32px', height: '34px', fontSize: '0.82rem' }}
+                                />
+                              </div>
+                              <select
+                                value={mentorAssignBranch}
+                                onChange={(e) => setMentorAssignBranch(e.target.value)}
+                                className="form-control"
+                                style={{ height: '34px', fontSize: '0.82rem' }}
+                              >
+                                <option value="ALL">All Branches ({(db.users?.students || []).length})</option>
+                                {availableBranchList.map(code => (
+                                  <option key={code} value={code}>
+                                    {code} ({(db.users?.students || []).filter(s => (s.branch || '').toUpperCase() === code).length} Students)
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={mentorAssignSem}
+                                onChange={(e) => setMentorAssignSem(e.target.value)}
+                                className="form-control"
+                                style={{ height: '34px', fontSize: '0.82rem' }}
+                              >
+                                <option value="ALL">All Semesters</option>
+                                <option value="1">Sem 1</option>
+                                <option value="2">Sem 2</option>
+                                <option value="3">Sem 3</option>
+                                <option value="4">Sem 4</option>
+                                <option value="5">Sem 5</option>
+                                <option value="6">Sem 6</option>
+                                <option value="7">Sem 7</option>
+                                <option value="8">Sem 8</option>
+                              </select>
+                            </div>
+
+                            {/* 1-Click Branch Quick Filter Pills */}
+                            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                              <button
+                                type="button"
+                                onClick={() => setMentorAssignBranch('ALL')}
+                                style={{
+                                  fontSize: '0.72rem',
+                                  padding: '2px 8px',
+                                  borderRadius: '12px',
+                                  border: '1px solid',
+                                  borderColor: mentorAssignBranch === 'ALL' ? '#7c3aed' : 'var(--border-color)',
+                                  background: mentorAssignBranch === 'ALL' ? 'rgba(124, 58, 237, 0.25)' : 'rgba(255, 255, 255, 0.03)',
+                                  color: mentorAssignBranch === 'ALL' ? '#c4b5fd' : 'var(--text-muted)',
+                                  cursor: 'pointer',
+                                  fontWeight: mentorAssignBranch === 'ALL' ? '700' : 'normal'
+                                }}
+                              >
+                                All ({(db.users?.students || []).length})
+                              </button>
+                              {availableBranchList.map(bCode => {
+                                const count = (db.users?.students || []).filter(s => (s.branch || '').toUpperCase() === bCode).length;
+                                if (count === 0 && bCode !== mentorDept) return null;
+                                const isSelected = mentorAssignBranch === bCode;
+                                return (
+                                  <button
+                                    key={bCode}
+                                    type="button"
+                                    onClick={() => setMentorAssignBranch(bCode)}
+                                    style={{
+                                      fontSize: '0.72rem',
+                                      padding: '2px 8px',
+                                      borderRadius: '12px',
+                                      border: '1px solid',
+                                      borderColor: isSelected ? '#7c3aed' : 'var(--border-color)',
+                                      background: isSelected ? 'rgba(124, 58, 237, 0.25)' : 'rgba(255, 255, 255, 0.03)',
+                                      color: isSelected ? '#c4b5fd' : 'var(--text-secondary)',
+                                      cursor: 'pointer',
+                                      fontWeight: isSelected ? '700' : 'normal'
+                                    }}
+                                  >
+                                    {bCode} ({count})
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Status Tabs */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingBottom: '6px', borderBottom: '1px solid var(--border-color)' }}>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setMentorAssignFilterTab('all')}
+                                  style={{
+                                    background: mentorAssignFilterTab === 'all' ? 'rgba(124, 58, 237, 0.2)' : 'none',
+                                    border: 'none',
+                                    color: mentorAssignFilterTab === 'all' ? '#c4b5fd' : 'var(--text-muted)',
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '600',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  All ({modalStudents.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setMentorAssignFilterTab('unassigned')}
+                                  style={{
+                                    background: mentorAssignFilterTab === 'unassigned' ? 'rgba(124, 58, 237, 0.2)' : 'none',
+                                    border: 'none',
+                                    color: mentorAssignFilterTab === 'unassigned' ? '#c4b5fd' : 'var(--text-muted)',
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '600',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Unassigned Only
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setMentorAssignFilterTab('assigned-to-this')}
+                                  style={{
+                                    background: mentorAssignFilterTab === 'assigned-to-this' ? 'rgba(124, 58, 237, 0.2)' : 'none',
+                                    border: 'none',
+                                    color: mentorAssignFilterTab === 'assigned-to-this' ? '#c4b5fd' : 'var(--text-muted)',
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '600',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Currently Assigned to this Mentor ({selectedStudentIdsForMentor.length})
+                                </button>
+                              </div>
+
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: '600', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isAllVisibleSelected}
+                                  onChange={handleToggleSelectAllVisible}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                                Select All Visible ({modalStudents.length})
+                              </label>
+                            </div>
+
+                            {/* Students Interactive Checklist */}
+                            <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                              {modalStudents.length === 0 ? (
+                                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                  No students match the current filters.
+                                </div>
+                              ) : (
+                                <table className="custom-table" style={{ fontSize: '0.82rem', margin: 0 }}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ width: '36px' }}></th>
+                                      <th>Student USN / ID</th>
+                                      <th>Student Name</th>
+                                      <th>Branch & Sem</th>
+                                      <th>Current Assignment Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {modalStudents.map(student => {
+                                      const isSelected = selectedStudentIdsForMentor.includes(student.id);
+                                      const currentMentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, student.mentorId));
+                                      const isAssignedToThisMentor = isMatchingMentorId(student.mentorId, assigningMentor.id);
+
+                                      return (
+                                        <tr
+                                          key={student.id}
+                                          onClick={() => handleToggleStudent(student.id)}
+                                          style={{
+                                            cursor: 'pointer',
+                                            background: isSelected ? 'rgba(124, 58, 237, 0.12)' : 'transparent'
+                                          }}
+                                        >
+                                          <td onClick={(e) => e.stopPropagation()}>
+                                            <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => handleToggleStudent(student.id)}
+                                              style={{ cursor: 'pointer' }}
+                                            />
+                                          </td>
+                                          <td><code style={{ fontWeight: 'bold', color: '#93c5fd' }}>{student.id}</code></td>
+                                          <td><strong style={{ color: 'var(--text-primary)' }}>{student.name}</strong></td>
+                                          <td>
+                                            <span style={{ fontSize: '0.75rem', background: 'rgba(255, 255, 255, 0.06)', padding: '2px 6px', borderRadius: '4px' }}>
+                                              {student.branch || 'CSE'} · Sem {student.sem || 5}
+                                            </span>
+                                          </td>
+                                          <td>
+                                            {isAssignedToThisMentor ? (
+                                              <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '2px 8px', borderRadius: '10px', fontWeight: '700' }}>
+                                                ✅ Assigned to {assigningMentor.name}
+                                              </span>
+                                            ) : currentMentor ? (
+                                              <span style={{ fontSize: '0.72rem', background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', padding: '2px 8px', borderRadius: '10px' }}>
+                                                ⚠️ Assigned to {currentMentor.name}
+                                              </span>
+                                            ) : (
+                                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                ⚪ Unassigned
+                                              </span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Modal Footer */}
+                          <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 0, 0, 0.2)' }}>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                              Total Selected: <strong style={{ color: '#c4b5fd' }}>{selectedStudentIdsForMentor.length} Students</strong>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              <button
+                                type="button"
+                                onClick={() => setAssigningMentor(null)}
+                                className="btn btn-secondary"
+                                style={{ padding: '7px 18px', fontSize: '0.85rem' }}
+                              >
+                                Close
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveMentorAssignments}
+                                className="btn btn-primary"
+                                style={{
+                                  padding: '7px 24px',
+                                  fontSize: '0.85rem',
+                                  fontWeight: '700',
+                                  background: '#7c3aed',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}
+                              >
+                                <CheckCircle2 size={16} />
+                                Save Assigned Students ({selectedStudentIdsForMentor.length})
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Sub-tab 2: Faculty Session Reports Audit */}
             {mentorSubTab === 'session-reports' && (
@@ -1471,44 +3395,350 @@ export const AdminDashboard = () => {
               </div>
             )}
 
-            {/* Sub-tab 3: Faculty Mentors Excel Import */}
+            {/* Sub-tab 3: Faculty Mentors Onboarding & Excel Import */}
             {mentorSubTab === 'excel-import' && (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
                   <div>
                     <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <FileSpreadsheet size={22} style={{ color: '#3b82f6' }} />
-                      Faculty Mentors Roster Import & Automated Credential Dispatch
+                      <UserPlus size={22} style={{ color: '#8b5cf6' }} />
+                      Faculty Mentors Onboarding & Credential Dispatch
                     </h2>
                     <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                      Upload faculty mentor rosters in Excel (<code>.xlsx</code>, <code>.xls</code>) or <code>.csv</code> format. The system automatically registers faculty accounts in PostgreSQL, generates login credentials, and emails credentials directly to mentors.
+                      Add faculty mentors individually via the quick form or bulk-upload institutional rosters via Excel / CSV spreadsheets.
                     </p>
                   </div>
-                  <button onClick={handleDownloadMentorTemplate} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                  {mentorEntryMode === 'excel' && (
+                    <button onClick={handleDownloadMentorTemplate} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+                      <FileSpreadsheet size={16} />
+                      Download Sample Excel Template
+                    </button>
+                  )}
+                </div>
+
+                {/* Mode Switcher: Add Single Mentor vs Bulk Excel/CSV Import */}
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '12px',
+                  padding: '5px',
+                  marginBottom: '20px'
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setMentorEntryMode('single')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: mentorEntryMode === 'single' ? '#7c3aed' : 'transparent',
+                      color: mentorEntryMode === 'single' ? '#ffffff' : 'var(--text-secondary)',
+                      fontWeight: mentorEntryMode === 'single' ? '700' : '600',
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <UserPlus size={16} />
+                    Add Single Mentor Directly (No Spreadsheet Needed)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMentorEntryMode('excel')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: mentorEntryMode === 'excel' ? '#2563eb' : 'transparent',
+                      color: mentorEntryMode === 'excel' ? '#ffffff' : 'var(--text-secondary)',
+                      fontWeight: mentorEntryMode === 'excel' ? '700' : '600',
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                  >
                     <FileSpreadsheet size={16} />
-                    Download Sample Excel Template
+                    Bulk Upload via Excel / CSV Spreadsheet
                   </button>
                 </div>
 
-                {/* Instruction Banner */}
-                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '8px', padding: '16px', marginBottom: '24px' }}>
-                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#60a5fa', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Shield size={16} /> How Bulk Faculty Onboarding Works:
-                  </h4>
-                  <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <li>Your uploaded spreadsheet must include headers for <strong>Mentor ID</strong> (e.g. <code>M102</code>), <strong>Faculty Name</strong>, and <strong>Faculty Email</strong>. (Department and Assigned Class are optional).</li>
-                    <li>The system will automatically generate a secure password (e.g. <code>Nit#K9m2</code>) for each faculty mentor unless a custom password column is provided.</li>
-                    <li>Accounts are saved into PostgreSQL. An automated onboarding email with login credentials & URL is sent via <code>skandhayashu2906@gmail.com</code>.</li>
-                    <li>Admin receives a full audit table and can download an Excel/CSV copy of all generated faculty credentials.</li>
-                  </ul>
-                </div>
+                {/* MODE 1: SINGLE MENTOR DIRECT FORM */}
+                {mentorEntryMode === 'single' && (
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '14px',
+                    padding: '24px',
+                    marginBottom: '24px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: '700', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <UserPlus size={20} style={{ color: '#8b5cf6' }} />
+                          Quick Single Mentor Registration
+                        </h3>
+                        <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                          Create an individual faculty mentor account immediately. Credentials will be generated and dispatched to their email automatically.
+                        </p>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', background: 'rgba(124, 58, 237, 0.15)', color: '#c4b5fd', padding: '4px 10px', borderRadius: '12px', fontWeight: '600' }}>
+                        ⚡ Instant Provisioning
+                      </span>
+                    </div>
+
+                    {/* Success Feedback Card */}
+                    {singleMentorSuccess && (
+                      <div style={{
+                        background: 'rgba(16, 185, 129, 0.1)',
+                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                        borderRadius: '12px',
+                        padding: '18px 20px',
+                        marginBottom: '20px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#34d399', fontWeight: '700', fontSize: '0.95rem' }}>
+                            <CheckCircle2 size={20} />
+                            Faculty Mentor "{singleMentorSuccess.name}" Successfully Registered!
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSingleMentorSuccess(null)}
+                            style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer' }}
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', fontSize: '0.82rem', marginBottom: '14px' }}>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)' }}>Mentor ID:</span>{' '}
+                            <code style={{ color: '#c4b5fd', fontWeight: 'bold' }}>{singleMentorSuccess.id}</code>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)' }}>Email:</span>{' '}
+                            <strong style={{ color: 'var(--text-primary)' }}>{singleMentorSuccess.email}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)' }}>Department:</span>{' '}
+                            <span className="badge badge-assigned">{singleMentorSuccess.dept}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)' }}>Generated Password:</span>{' '}
+                            <code style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                              {singleMentorSuccess.password}
+                            </code>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSingleMentorSuccess(null);
+                              setMentorSubTab('directory');
+                            }}
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.82rem', padding: '6px 14px' }}
+                          >
+                            View in Faculty Directory
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const registered = (db.users?.mentors || []).find(m => m.id === singleMentorSuccess.id) || singleMentorSuccess;
+                              handleOpenAssignmentModal(registered);
+                            }}
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.82rem', padding: '6px 14px', background: '#7c3aed', border: 'none' }}
+                          >
+                            <UserPlus size={14} /> Assign Students to {singleMentorSuccess.name}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Message */}
+                    {singleMentorError && (
+                      <div style={{
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        color: '#fca5a5',
+                        padding: '12px 16px',
+                        borderRadius: '8px',
+                        marginBottom: '20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '0.85rem'
+                      }}>
+                        <AlertCircle size={18} />
+                        <span>{singleMentorError}</span>
+                      </div>
+                    )}
+
+                    {/* Form Grid */}
+                    <form onSubmit={handleSingleMentorSubmit}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Faculty Mentor Name *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. Dr. Raghavan Sharma"
+                            value={singleMentorName}
+                            onChange={(e) => setSingleMentorName(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Official Email Address / Gmail *
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            placeholder="e.g. raghavan.sharma@nitte.edu.in"
+                            value={singleMentorEmail}
+                            onChange={(e) => setSingleMentorEmail(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            Login credentials & portal access URL will be sent to this email.
+                          </span>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Faculty Department / Degree Branch *
+                          </label>
+                          <select
+                            value={singleMentorDept}
+                            onChange={(e) => setSingleMentorDept(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          >
+                            {availableBranchList.map(bCode => (
+                              <option key={bCode} value={bCode}>{bCode} Department</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Mentor ID / Faculty ID <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. M-105 (Auto-generated if left blank)"
+                            value={singleMentorId}
+                            onChange={(e) => setSingleMentorId(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Assigned Class / Batch / Cabin <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={`e.g. ${singleMentorDept || 'BCA'} 3rd Sem or Room 302`}
+                            value={singleMentorClass}
+                            onChange={(e) => setSingleMentorClass(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', marginBottom: '6px', color: 'var(--text-primary)' }}>
+                            Initial Password <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Leave empty to auto-generate e.g. Nit#Mnt4821"
+                            value={singleMentorPassword}
+                            onChange={(e) => setSingleMentorPassword(e.target.value)}
+                            className="form-control"
+                            style={{ fontSize: '0.85rem' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <button
+                          type="submit"
+                          disabled={isSubmittingSingleMentor}
+                          className="btn btn-primary"
+                          style={{
+                            background: '#7c3aed',
+                            border: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '10px 24px',
+                            fontSize: '0.9rem',
+                            fontWeight: '700',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isSubmittingSingleMentor ? (
+                            <>
+                              <RefreshCw size={16} className="spin" />
+                              Registering Faculty Mentor & Sending Credentials...
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus size={16} />
+                              Register Faculty Mentor & Dispatch Credentials
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                {/* MODE 2: EXCEL / CSV BULK IMPORT */}
+                {mentorEntryMode === 'excel' && (
+                  <div>
+                    {/* Instruction Banner */}
+                    <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: '8px', padding: '16px', marginBottom: '24px' }}>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#60a5fa', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Shield size={16} /> How Bulk Faculty Onboarding Works:
+                      </h4>
+                      <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <li>Your uploaded spreadsheet must include headers for <strong>Mentor ID</strong> (e.g. <code>M102</code>), <strong>Faculty Name</strong>, and <strong>Faculty Email</strong>. (Department and Assigned Class are optional).</li>
+                        <li>The system will automatically generate a secure password (e.g. <code>Nit#K9m2</code>) for each faculty mentor unless a custom password column is provided.</li>
+                        <li>Accounts are saved into PostgreSQL. An automated onboarding email with login credentials & URL is sent via <code>skandhayashu2906@gmail.com</code>.</li>
+                        <li>Admin receives a full audit table and can download an Excel/CSV copy of all generated faculty credentials.</li>
+                      </ul>
+                    </div>
 
                 {/* Upload Drag & Drop Area */}
-                <div style={{ 
-                  border: '2px dashed var(--border-color)', 
-                  borderRadius: '12px', 
-                  padding: '36px 20px', 
-                  textAlign: 'center', 
+                <div style={{
+                  border: '2px dashed var(--border-color)',
+                  borderRadius: '12px',
+                  padding: '36px 20px',
+                  textAlign: 'center',
                   background: 'rgba(255, 255, 255, 0.02)',
                   marginBottom: '24px'
                 }}>
@@ -1517,16 +3747,16 @@ export const AdminDashboard = () => {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                     Drag and drop your faculty roster file here or click below to browse from your computer
                   </p>
-                  
-                  <input 
-                    type="file" 
+
+                  <input
+                    type="file"
                     id="mentorRosterFileInput"
                     accept=".xlsx, .xls, .csv"
                     onChange={handleMentorFileSelect}
                     style={{ display: 'none' }}
                   />
-                  <label 
-                    htmlFor="mentorRosterFileInput" 
+                  <label
+                    htmlFor="mentorRosterFileInput"
                     className="btn btn-primary"
                     style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
                   >
@@ -1561,8 +3791,8 @@ export const AdminDashboard = () => {
                       <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
                         Previewing {parsedMentorRoster.length} Faculty Mentor Record{parsedMentorRoster.length > 1 ? 's' : ''} Ready for Onboarding
                       </h3>
-                      <button 
-                        onClick={handleMentorRosterSubmit} 
+                      <button
+                        onClick={handleMentorRosterSubmit}
                         disabled={isUploadingMentorRoster}
                         className="btn btn-success"
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', fontSize: '0.9rem', fontWeight: '600' }}
@@ -1630,7 +3860,7 @@ export const AdminDashboard = () => {
                           PostgreSQL accounts created/updated, passwords generated, and credential emails dispatched via Gmail SMTP.
                         </p>
                       </div>
-                      <button 
+                      <button
                         onClick={handleExportMentorCredentialsCsv}
                         className="btn btn-secondary"
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1686,10 +3916,13 @@ export const AdminDashboard = () => {
                     </div>
                   </div>
                 )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
+
 
         {/* ============================================================== */}
         {/* TAB 4: RELATIONSHIP OFFICERS */}
@@ -1698,7 +3931,7 @@ export const AdminDashboard = () => {
           <div className="glass-card">
             {/* Sub-tab pills */}
             <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px', marginBottom: '20px' }}>
-              <button 
+              <button
                 className={`btn ${roSubTab === 'directory' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setRoSubTab('directory')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1706,7 +3939,7 @@ export const AdminDashboard = () => {
                 <Users size={16} />
                 Relationship Officers Directory ({db.users.ros.length})
               </button>
-              <button 
+              <button
                 className={`btn ${roSubTab === 'excel-import' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setRoSubTab('excel-import')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1738,8 +3971,8 @@ export const AdminDashboard = () => {
                     </thead>
                     <tbody>
                       {db.users.ros
-                        .filter(r => 
-                          r.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                        .filter(r =>
+                          r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           r.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           r.region.toLowerCase().includes(searchTerm.toLowerCase())
                         )
@@ -1799,11 +4032,11 @@ export const AdminDashboard = () => {
                 </div>
 
                 {/* Upload Drag & Drop Area */}
-                <div style={{ 
-                  border: '2px dashed var(--border-color)', 
-                  borderRadius: '12px', 
-                  padding: '36px 20px', 
-                  textAlign: 'center', 
+                <div style={{
+                  border: '2px dashed var(--border-color)',
+                  borderRadius: '12px',
+                  padding: '36px 20px',
+                  textAlign: 'center',
                   background: 'rgba(255, 255, 255, 0.02)',
                   marginBottom: '24px'
                 }}>
@@ -1812,16 +4045,16 @@ export const AdminDashboard = () => {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                     Drag and drop your RO roster file here or click below to browse from your computer
                   </p>
-                  
-                  <input 
-                    type="file" 
+
+                  <input
+                    type="file"
                     id="roRosterFileInput"
                     accept=".xlsx, .xls, .csv"
                     onChange={handleRoFileSelect}
                     style={{ display: 'none' }}
                   />
-                  <label 
-                    htmlFor="roRosterFileInput" 
+                  <label
+                    htmlFor="roRosterFileInput"
                     className="btn btn-primary"
                     style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#059669', borderColor: '#059669' }}
                   >
@@ -1856,8 +4089,8 @@ export const AdminDashboard = () => {
                       <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
                         Previewing {parsedRoRoster.length} Relationship Officer Record{parsedRoRoster.length > 1 ? 's' : ''} Ready for Onboarding
                       </h3>
-                      <button 
-                        onClick={handleRoRosterSubmit} 
+                      <button
+                        onClick={handleRoRosterSubmit}
                         disabled={isUploadingRoRoster}
                         className="btn btn-success"
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 20px', fontSize: '0.9rem', fontWeight: '600', background: '#059669', borderColor: '#059669' }}
@@ -1922,7 +4155,7 @@ export const AdminDashboard = () => {
                           PostgreSQL accounts created/updated, passwords generated, and credential emails dispatched via Gmail SMTP.
                         </p>
                       </div>
-                      <button 
+                      <button
                         onClick={handleExportRoCredentialsCsv}
                         className="btn btn-secondary"
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -1992,7 +4225,7 @@ export const AdminDashboard = () => {
           <div className="glass-card">
             {/* Sub-tab pills */}
             <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '14px', marginBottom: '20px' }}>
-              <button 
+              <button
                 className={`btn ${ticketSubTab === 'tickets' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setTicketSubTab('tickets')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -2000,7 +4233,7 @@ export const AdminDashboard = () => {
                 <Ticket size={16} />
                 All & Closed Tickets Directory ({db.issues.length})
               </button>
-              <button 
+              <button
                 className={`btn ${ticketSubTab === 'audit-logs' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setTicketSubTab('audit-logs')}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
@@ -2016,8 +4249,8 @@ export const AdminDashboard = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>🎫 All Support Tickets</h2>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <select 
-                      className="form-select" 
+                    <select
+                      className="form-select"
                       style={{ fontSize: '0.8rem', padding: '6px 12px' }}
                       value={ticketStatusFilter}
                       onChange={(e) => setTicketStatusFilter(e.target.value)}
@@ -2027,11 +4260,12 @@ export const AdminDashboard = () => {
                       <option value="Assigned to RO">Assigned to RO</option>
                       <option value="Meeting Scheduled">Meeting Scheduled</option>
                       <option value="Escalated">Escalated</option>
+                      <option value="Re-escalated">⚡ Re-escalated</option>
                       <option value="Resolved">Resolved</option>
                     </select>
 
-                    <select 
-                      className="form-select" 
+                    <select
+                      className="form-select"
                       style={{ fontSize: '0.8rem', padding: '6px 12px' }}
                       value={selectedRoForFilter}
                       onChange={(e) => setSelectedRoForFilter(e.target.value)}
@@ -2060,9 +4294,14 @@ export const AdminDashboard = () => {
                     </thead>
                     <tbody>
                       {db.issues
-                        .filter(i => ticketStatusFilter === 'All' || i.status === ticketStatusFilter)
+                        .filter(i => {
+                          if (ticketStatusFilter === 'All') return true;
+                          if (ticketStatusFilter === 'Re-escalated') return Boolean(i.isReEscalated || i.status === 'Re-escalated' || (i.reEscalatedCount && i.reEscalatedCount > 0));
+                          if (ticketStatusFilter === 'Escalated') return i.status === 'Escalated' || i.status === 'Re-escalated' || Boolean(i.isReEscalated);
+                          return i.status === ticketStatusFilter;
+                        })
                         .filter(i => selectedRoForFilter === 'ALL' || i.roId === selectedRoForFilter)
-                        .filter(i => 
+                        .filter(i =>
                           i.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           i.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           i.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -2075,7 +4314,14 @@ export const AdminDashboard = () => {
                             <td style={{ fontSize: '0.8rem' }}>{issue.category}</td>
                             <td><span className={`badge badge-${issue.priority.toLowerCase()}`}>{issue.priority}</span></td>
                             <td>{db.users.ros.find(r => r.id === issue.roId)?.name || issue.roId}</td>
-                            <td><span className={`badge badge-${issue.status.toLowerCase().replace(' ', '-')}`}>{issue.status}</span></td>
+                            <td>
+                              <span className={`badge badge-${issue.status.toLowerCase().replace(' ', '-')}`}>{issue.status}</span>
+                              {Boolean(issue.isReEscalated || (issue.reEscalatedCount && issue.reEscalatedCount > 0)) && (
+                                <span style={{ marginLeft: '6px', fontSize: '0.68rem', background: 'rgba(239, 68, 68, 0.25)', color: '#f87171', padding: '1px 6px', borderRadius: '8px', fontWeight: '700', border: '1px solid rgba(239, 68, 68, 0.4)' }}>
+                                  ⚡ {issue.reEscalatedCount ? `${issue.reEscalatedCount}x` : 'Re-escalated'}
+                                </span>
+                              )}
+                            </td>
                             <td>
                               {issue.feedback ? (
                                 <span style={{ color: 'var(--accent-amber)', fontSize: '0.8rem', fontWeight: 'bold' }}>
@@ -2087,21 +4333,35 @@ export const AdminDashboard = () => {
                             </td>
                             <td>
                               <div style={{ display: 'flex', gap: '6px' }}>
-                                <button 
+                                <button
                                   onClick={() => setViewLogIssueId(issue.id)}
-                                  className="btn btn-secondary" 
+                                  className="btn btn-secondary"
                                   style={{ padding: '4px 8px', fontSize: '0.75rem' }}
                                 >
                                   Logs
                                 </button>
                                 {issue.status !== 'Resolved' && (
-                                  <button 
-                                    onClick={() => { setSelectedIssueId(issue.id); setShowResolveModal(true); }}
-                                    className="btn btn-success" 
-                                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                                  >
-                                    Override Resolve
-                                  </button>
+                                  <>
+                                    {!hasAdminMeetingForIssue(issue) ? (
+                                      <button
+                                        onClick={() => handleOpenAdminScheduleModal(issue)}
+                                        className="btn btn-primary"
+                                        style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        title="Setup 1 Meeting with Student"
+                                      >
+                                        <Calendar size={12} /> Setup Meeting
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => { setSelectedIssueId(issue.id); setShowResolveModal(true); }}
+                                        className="btn btn-success"
+                                        style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        title="Close the Ticket"
+                                      >
+                                        <CheckCircle2 size={12} /> Close Ticket
+                                      </button>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -2170,10 +4430,10 @@ export const AdminDashboard = () => {
               </div>
 
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button 
+                <button
                   onClick={handleExportMentorFeedbacksCsv}
                   disabled={filteredMentorFeedbacks.length === 0}
-                  className="btn btn-secondary" 
+                  className="btn btn-secondary"
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem' }}
                 >
                   <Download size={15} /> Export Audit CSV
@@ -2224,8 +4484,8 @@ export const AdminDashboard = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginBottom: '20px' }}>
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="Search by student, mentor, or problem..."
                   value={mfSearchTerm}
                   onChange={(e) => setMfSearchTerm(e.target.value)}
@@ -2235,8 +4495,8 @@ export const AdminDashboard = () => {
               </div>
 
               <div>
-                <select 
-                  value={mfMentorFilter} 
+                <select
+                  value={mfMentorFilter}
                   onChange={(e) => setMfMentorFilter(e.target.value)}
                   className="form-select"
                   style={{ fontSize: '0.84rem' }}
@@ -2249,8 +4509,8 @@ export const AdminDashboard = () => {
               </div>
 
               <div>
-                <select 
-                  value={mfRatingFilter} 
+                <select
+                  value={mfRatingFilter}
                   onChange={(e) => setMfRatingFilter(e.target.value)}
                   className="form-select"
                   style={{ fontSize: '0.84rem' }}
@@ -2268,9 +4528,9 @@ export const AdminDashboard = () => {
                 <MessageSquare size={44} style={{ marginBottom: '12px', opacity: 0.4 }} />
                 <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-secondary)' }}>No student mentor feedbacks match your search or filter criteria.</p>
                 {(mfSearchTerm || mfMentorFilter !== 'ALL' || mfRatingFilter !== 'ALL') && (
-                  <button 
+                  <button
                     onClick={() => { setMfSearchTerm(''); setMfMentorFilter('ALL'); setMfRatingFilter('ALL'); }}
-                    className="btn btn-secondary" 
+                    className="btn btn-secondary"
                     style={{ marginTop: '12px', fontSize: '0.78rem' }}
                   >
                     Reset Filters
@@ -2282,10 +4542,10 @@ export const AdminDashboard = () => {
                 {filteredMentorFeedbacks.map((fb, idx) => {
                   const avg = ((Number(fb.regularityRating || 0) + Number(fb.clarityRating || 0) + Number(fb.participationRating || 0)) / 3).toFixed(1);
                   return (
-                    <div 
+                    <div
                       key={fb.id || idx}
                       className="glass-card"
-                      style={{ 
+                      style={{
                         background: 'rgba(255,255,255,0.02)',
                         border: '1px solid var(--border-color)',
                         borderRadius: '10px',
@@ -2377,33 +4637,219 @@ export const AdminDashboard = () => {
 
       </div>
 
-      {/* ADMIN RESOLVE DIRECT OVERRIDE MODAL */}
+      {/* ADMIN RESOLVE DIRECT OVERRIDE / CLOSE TICKET MODAL */}
       {showResolveModal && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3 style={{ fontWeight: '700' }}>Administrative Override Resolution</h3>
+              <h3 style={{ fontWeight: '700', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CheckCircle2 size={20} color="#10b981" /> Administrative Resolution & Close Ticket
+              </h3>
               <button onClick={() => setShowResolveModal(false)} className="btn-icon-only">✕</button>
             </div>
             <form onSubmit={handleResolveSubmit}>
               <div className="modal-body">
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  You are performing an administrative resolution override on ticket <strong>{selectedIssue?.id}</strong>. This forces the issue closed and logs your action.
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+                  You are performing an official administrative resolution on ticket <strong>{selectedIssue?.id}</strong>. This concludes the grievance, closes the ticket, and archives the file.
                 </p>
+
+                {(() => {
+                  const m = getAdminMeetingForIssue(selectedIssue);
+                  if (!m) return null;
+                  return (
+                    <div style={{
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      borderRadius: '8px',
+                      padding: '10px 14px',
+                      marginBottom: '14px',
+                      fontSize: '0.82rem',
+                      color: '#93c5fd'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
+                        <Calendar size={14} /> Hearing Conducted / Scheduled:
+                      </div>
+                      <div style={{ marginTop: '2px' }}>
+                        {m.date} at {m.time} ({m.mode || 'Offline'} - {m.location})
+                      </div>
+                      {m.notes && (
+                        <div style={{ fontSize: '0.78rem', marginTop: '3px', fontStyle: 'italic', opacity: 0.9 }}>
+                          Hearing Directives: "{m.notes}"
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="form-group">
-                  <label className="form-label">Resolution Override Notes</label>
-                  <textarea 
+                  <label className="form-label">Final Resolution & Closure Findings *</label>
+                  <textarea
                     className="form-textarea"
                     required
+                    rows={4}
                     value={resolutionNotes}
                     onChange={(e) => setResolutionNotes(e.target.value)}
-                    placeholder="e.g. Principal approved attendance waiver for Aarav Mehta due to representing college in national robotics championship."
+                    placeholder="e.g. Administrative hearing completed. Principal and HOD reviewed academic records and approved 10% attendance dispensation due to state sports tournament. Issue officially closed."
                   />
                 </div>
               </div>
               <div className="modal-footer">
                 <button type="button" onClick={() => setShowResolveModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-success">Force Resolve & Close</button>
+                <button type="submit" className="btn btn-success" style={{ fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CheckCircle2 size={16} /> Confirm & Close the Ticket
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN MEETING SETUP MODAL (STRICT 1-MEETING RULE) */}
+      {showAdminMeetingModal && adminMeetingTargetIssue && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="modal-content" style={{ maxWidth: '580px', width: '100%', borderRadius: '16px', overflow: 'hidden' }}>
+            <div className="modal-header" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.15), rgba(37,99,235,0.05))', borderBottom: '1px solid var(--border-color)', padding: '16px 20px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={20} color="#3b82f6" /> Setup Meeting with Student
+                </h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Formal Administrative Grievance Hearing (Ticket #{adminMeetingTargetIssue.id})
+                </p>
+              </div>
+              <button onClick={() => setShowAdminMeetingModal(false)} className="btn-icon-only">✕</button>
+            </div>
+
+            <form onSubmit={handleAdminMeetingSubmit}>
+              <div className="modal-body" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {/* 1-Meeting Policy Notice */}
+                <div style={{
+                  background: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  display: 'flex',
+                  gap: '10px',
+                  alignItems: 'flex-start'
+                }}>
+                  <AlertTriangle size={18} color="#f59e0b" style={{ flexShrink: 0, marginTop: '2px' }} />
+                  <div style={{ fontSize: '0.8rem', color: '#fbbf24', lineHeight: 1.4 }}>
+                    <strong>Institutional 1-Meeting Rule:</strong> The Administration can schedule exactly <strong>one meeting</strong> with the student for this ticket. Once scheduled, the meeting button will disappear and transition to the <strong>"Close the Ticket"</strong> button.
+                  </div>
+                </div>
+
+                {/* Student & Ticket Snapshot */}
+                <div style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '12px 14px',
+                  fontSize: '0.82rem',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '8px'
+                }}>
+                  <div><strong>Student:</strong> {adminMeetingTargetIssue.studentName} (<code>{adminMeetingTargetIssue.studentId}</code>)</div>
+                  <div><strong>Category:</strong> {adminMeetingTargetIssue.category}</div>
+                  <div><strong>Priority:</strong> <span style={{ color: '#f87171', fontWeight: 600 }}>{adminMeetingTargetIssue.priority}</span></div>
+                  <div><strong>Assigned Officer:</strong> {db.users.ros.find(r => r.id === adminMeetingTargetIssue.roId)?.name || adminMeetingTargetIssue.roId}</div>
+                </div>
+
+                {/* Date & Time Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>Hearing Date *</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      required
+                      value={adminMeetingDate}
+                      min={new Date().toISOString().split('T')[0]}
+                      onChange={(e) => setAdminMeetingDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>Hearing Time *</label>
+                    <input
+                      type="time"
+                      className="form-input"
+                      required
+                      value={adminMeetingTime}
+                      onChange={(e) => setAdminMeetingTime(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Meeting Mode (Mandatory Offline In-Person Hearing) */}
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>Meeting Mode *</label>
+                  <div style={{
+                    padding: '10px 14px',
+                    background: 'rgba(59, 130, 246, 0.12)',
+                    border: '1px solid rgba(59, 130, 246, 0.35)',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}>
+                    <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🏢 In-Person / Offline Hearing
+                    </span>
+                    <span style={{ fontSize: '0.72rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                      Offline Only (Administrative Protocol)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Location / Venue */}
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>Venue / Location *</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    required
+                    value={adminMeetingLocation}
+                    onChange={(e) => setAdminMeetingLocation(e.target.value)}
+                    placeholder="e.g. Principal / Senior Admin Chamber (Main Admin Block)"
+                  />
+                </div>
+
+                {/* Hearing Agenda / Directives */}
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>Hearing Agenda & Directives for Mentee</label>
+                  <textarea
+                    className="form-textarea"
+                    rows={3}
+                    value={adminMeetingNotes}
+                    onChange={(e) => setAdminMeetingNotes(e.target.value)}
+                    placeholder="Specify directives, documents required, and grievance points to review..."
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', padding: '14px 20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  disabled={isSubmittingAdminMeeting}
+                  onClick={() => setShowAdminMeetingModal(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingAdminMeeting}
+                  className="btn btn-primary"
+                  style={{
+                    background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {isSubmittingAdminMeeting ? 'Scheduling...' : 'Confirm & Schedule 1 Meeting'}
+                </button>
               </div>
             </form>
           </div>
@@ -2521,15 +4967,15 @@ export const AdminDashboard = () => {
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <button 
-                        onClick={() => handleDownloadWordReport(modalIssue)} 
+                      <button
+                        onClick={() => handleDownloadWordReport(modalIssue)}
                         className="btn btn-primary"
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 14px' }}
                       >
                         <FileDown size={16} /> MS Word (.doc)
                       </button>
-                      <button 
-                        onClick={() => handlePrintReport(modalIssue)} 
+                      <button
+                        onClick={() => handlePrintReport(modalIssue)}
                         className="btn btn-secondary"
                         style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
                       >
@@ -2543,7 +4989,12 @@ export const AdminDashboard = () => {
                     {/* Metadata Grid */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', padding: '14px', borderRadius: '8px', fontSize: '0.85rem' }}>
                       <div><strong>Ticket ID:</strong> <code>{modalIssue.id}</code></div>
-                      <div><strong>Escalation Status:</strong> <span className="badge badge-escalated">{modalIssue.status}</span></div>
+                      <div><strong>Escalation Status:</strong> <span className="badge badge-escalated" style={{
+                        background: (modalIssue.isReEscalated || modalIssue.status === 'Re-escalated' || (modalIssue.reEscalatedCount && modalIssue.reEscalatedCount > 0)) ? 'rgba(239, 68, 68, 0.25)' : undefined,
+                        color: (modalIssue.isReEscalated || modalIssue.status === 'Re-escalated' || (modalIssue.reEscalatedCount && modalIssue.reEscalatedCount > 0)) ? '#f87171' : undefined,
+                        border: (modalIssue.isReEscalated || modalIssue.status === 'Re-escalated' || (modalIssue.reEscalatedCount && modalIssue.reEscalatedCount > 0)) ? '1px solid #ef4444' : undefined,
+                        fontWeight: '700'
+                      }}>{Boolean(modalIssue.isReEscalated || modalIssue.status === 'Re-escalated' || (modalIssue.reEscalatedCount && modalIssue.reEscalatedCount > 0)) ? '⚡ Re-escalated' : modalIssue.status}</span></div>
                       <div><strong>Category:</strong> {modalIssue.category}</div>
                       <div><strong>Priority Level:</strong> <span className={`badge badge-${modalIssue.priority.toLowerCase()}`}>{modalIssue.priority}</span></div>
                       <div><strong>Student Name:</strong> <strong>{modalIssue.studentName}</strong></div>
@@ -2551,6 +5002,30 @@ export const AdminDashboard = () => {
                       <div><strong>Assigned Relationship Officer:</strong> <strong>{roName}</strong> (<code>{modalIssue.roId}</code>)</div>
                       <div><strong>Submission Date:</strong> {new Date(modalIssue.createdAt).toLocaleString()}</div>
                     </div>
+
+                    {/* Latest RO Escalation Directive / Urgency Remarks */}
+                    {modalIssue.escalationReason && (
+                      <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderLeft: '5px solid #ef4444', padding: '12px 16px', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#fca5a5' }}>
+                            ⚡ Active RO Escalation Directive / Urgency Remarks:
+                          </span>
+                          {Boolean(modalIssue.isReEscalated || (modalIssue.reEscalatedCount && modalIssue.reEscalatedCount > 0)) && (
+                            <span style={{ fontSize: '0.72rem', background: 'rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '2px 8px', borderRadius: '10px', fontWeight: '700', border: '1px solid rgba(239,68,68,0.5)' }}>
+                              ⚡ Re-escalated {modalIssue.reEscalatedCount ? `(${modalIssue.reEscalatedCount}x)` : ''}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '0.88rem', color: '#fff', fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+                          "{modalIssue.escalationReason}"
+                        </div>
+                        {modalIssue.escalatedAt && (
+                          <div style={{ fontSize: '0.75rem', color: '#fca5a5', marginTop: '6px', opacity: 0.85 }}>
+                            Dispatched: {new Date(modalIssue.escalatedAt).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Initial Description */}
                     <div>
@@ -2580,20 +5055,105 @@ export const AdminDashboard = () => {
                     {/* Administrative Action Controls */}
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       <h4 style={{ fontSize: '0.85rem', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>Administrative Action Controls:</h4>
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <button 
-                          onClick={() => { setSelectedIssueId(modalIssue.id); setShowResolveModal(true); setEscalationModalIssueId(null); }} 
-                          className="btn btn-success" 
-                          style={{ flex: 1, padding: '10px', fontSize: '0.85rem', fontWeight: '600' }}
-                        >
-                          Administrative Force Resolve & Close Ticket
-                        </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {!hasAdminMeetingForIssue(modalIssue) ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <button
+                              onClick={() => handleOpenAdminScheduleModal(modalIssue)}
+                              className="btn btn-primary"
+                              style={{
+                                width: '100%',
+                                padding: '12px 18px',
+                                fontSize: '0.9rem',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 14px rgba(59, 130, 246, 0.35)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <Calendar size={18} /> Setup Meeting with Student (1 Meeting Allowed)
+                            </button>
+                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                              ⚠️ 1-Meeting Policy: Admin may schedule exactly 1 formal hearing with the mentee. After setting the meeting, this button disappears and unlocks "Close the Ticket".
+                            </span>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {/* Scheduled Admin Hearing Summary Card */}
+                            {(() => {
+                              const m = getAdminMeetingForIssue(modalIssue);
+                              return (
+                                <div style={{
+                                  background: 'rgba(59, 130, 246, 0.1)',
+                                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                                  borderRadius: '8px',
+                                  padding: '12px 16px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '6px'
+                                }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ color: '#60a5fa', fontWeight: '700', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <Calendar size={15} /> Administrative Hearing Scheduled (1/1 Meeting Used)
+                                    </span>
+                                    <span style={{ fontSize: '0.7rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                                      Meeting Scheduled
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                    <strong>Date & Time:</strong> {m?.date || 'Scheduled'} at {m?.time || '11:00 AM'} &nbsp;|&nbsp;
+                                    <strong>Mode:</strong> {m?.mode || 'Offline'} &nbsp;|&nbsp;
+                                    <strong>Venue:</strong> {m?.location || 'Principal Chamber'}
+                                  </div>
+                                  {m?.notes && (
+                                    <div style={{ fontSize: '0.78rem', color: '#93c5fd', fontStyle: 'italic', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '4px' }}>
+                                      Directives / Agenda: "{m.notes}"
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Close the Ticket Button */}
+                            <button
+                              onClick={() => {
+                                setSelectedIssueId(modalIssue.id);
+                                setShowResolveModal(true);
+                                setEscalationModalIssueId(null);
+                              }}
+                              className="btn btn-success"
+                              style={{
+                                width: '100%',
+                                padding: '12px 18px',
+                                fontSize: '0.9rem',
+                                fontWeight: '700',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <CheckCircle2 size={18} /> Close the Ticket
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <select 
-                          className="form-select" 
-                          style={{ fontSize: '0.82rem', padding: '8px 12px' }} 
-                          value={targetRoId} 
+                        <select
+                          className="form-select"
+                          style={{ fontSize: '0.82rem', padding: '8px 12px' }}
+                          value={targetRoId}
                           onChange={(e) => setTargetRoId(e.target.value)}
                         >
                           <option value="">-- Reassign RO Officer --</option>
@@ -2601,10 +5161,10 @@ export const AdminDashboard = () => {
                             <option key={ro.id} value={ro.id}>{ro.name}</option>
                           ))}
                         </select>
-                        <button 
-                          onClick={() => { setSelectedIssueId(modalIssue.id); handleReassign(targetRoId); }} 
-                          disabled={!targetRoId} 
-                          className="btn btn-secondary" 
+                        <button
+                          onClick={() => { setSelectedIssueId(modalIssue.id); handleReassign(targetRoId); }}
+                          disabled={!targetRoId}
+                          className="btn btn-secondary"
                           style={{ padding: '8px 16px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
                         >
                           Apply Reassignment
@@ -2622,6 +5182,348 @@ export const AdminDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* ========================================================= */}
+      {/* STUDENT REMOVAL SECURITY CONFIRMATION MODAL */}
+      {/* ========================================================= */}
+      {studentPendingDelete && (() => {
+        const currentMentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, studentPendingDelete.mentorId));
+        const activeTickets = db.issues.filter(i => i.studentId === studentPendingDelete.id && i.status !== 'Resolved').length;
+
+        return (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}>
+            <div style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '16px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+              overflow: 'hidden',
+              animation: 'fadeIn 0.2s ease-out'
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                padding: '18px 24px',
+                borderBottom: '1px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: 'rgba(239, 68, 68, 0.08)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '50%',
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#f87171'
+                  }}>
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      Remove Student Record
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Administrative account de-provisioning
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setStudentPendingDelete(null)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={{ padding: '22px 24px' }}>
+                <p style={{ margin: '0 0 16px 0', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Are you sure you want to remove this student from the institutional directory?
+                </p>
+
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <strong style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>{studentPendingDelete.name}</strong>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>{studentPendingDelete.email}</div>
+                    </div>
+                    <code style={{ fontSize: '0.82rem', padding: '3px 8px', borderRadius: '6px', background: 'rgba(59, 130, 246, 0.15)', color: '#93c5fd', fontWeight: 'bold' }}>
+                      {studentPendingDelete.id}
+                    </code>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px', fontSize: '0.78rem', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Branch: <strong style={{ color: 'var(--text-primary)' }}>{studentPendingDelete.branch || 'CSE'}</strong>
+                    </span>
+                    <span style={{ color: 'var(--text-muted)' }}>•</span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Semester: <strong style={{ color: 'var(--text-primary)' }}>{studentPendingDelete.sem || 5}</strong>
+                    </span>
+                    <span style={{ color: 'var(--text-muted)' }}>•</span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Mentor: <strong style={{ color: currentMentor ? '#c4b5fd' : 'var(--text-muted)' }}>{currentMentor ? currentMentor.name : 'Unassigned'}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{
+                  background: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  color: '#fbbf24',
+                  fontSize: '0.8rem',
+                  lineHeight: 1.4
+                }}>
+                  ⚠️ <strong>Notice:</strong> This action will permanently remove the student's access credentials and unassign them from their faculty mentor.
+                  {activeTickets > 0 && <span> Note that this student currently has <strong>{activeTickets} active tickets</strong>.</span>}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                background: 'rgba(0, 0, 0, 0.2)'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setStudentPendingDelete(null)}
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRemoveStudent}
+                  style={{
+                    padding: '8px 20px',
+                    fontSize: '0.85rem',
+                    fontWeight: '700',
+                    background: '#dc2626',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Trash2 size={15} />
+                  Confirm Remove Student
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================= */}
+      {/* FACULTY MENTOR REMOVAL SECURITY CONFIRMATION MODAL */}
+      {/* ========================================================= */}
+      {mentorPendingDelete && (() => {
+        const assignedMentees = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentorPendingDelete.id));
+        const activeMentorIssues = (db.issues || []).filter(i => isMatchingMentorId(i.mentorId, mentorPendingDelete.id) && i.status !== 'Resolved').length;
+
+        return (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}>
+            <div style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '16px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+              overflow: 'hidden',
+              animation: 'fadeIn 0.2s ease-out'
+            }}>
+              {/* Modal Header */}
+              <div style={{
+                padding: '18px 24px',
+                borderBottom: '1px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: 'rgba(239, 68, 68, 0.08)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '50%',
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#f87171'
+                  }}>
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      Remove Faculty Mentor
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Administrative account de-provisioning
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMentorPendingDelete(null)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={{ padding: '22px 24px' }}>
+                <p style={{ margin: '0 0 16px 0', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Are you sure you want to remove this faculty mentor from the mentorship portal?
+                </p>
+
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>{mentorPendingDelete.name}</strong>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>{mentorPendingDelete.email}</div>
+                    </div>
+                    <code style={{ fontSize: '0.82rem', padding: '3px 8px', borderRadius: '6px', background: 'rgba(139, 92, 246, 0.15)', color: '#c4b5fd', fontWeight: 'bold' }}>
+                      {mentorPendingDelete.id}
+                    </code>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '0.78rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Department: <strong style={{ color: 'var(--text-primary)' }}>{mentorPendingDelete.dept || 'CSE'}</strong>
+                    </span>
+                    <span style={{ color: 'var(--text-muted)' }}>•</span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Assigned Mentees: <strong style={{ color: assignedMentees.length > 0 ? '#fbbf24' : 'var(--text-primary)' }}>{assignedMentees.length} Students</strong>
+                    </span>
+                    {mentorPendingDelete.class && (
+                      <>
+                        <span style={{ color: 'var(--text-muted)' }}>•</span>
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          Batch/Class: <strong style={{ color: 'var(--text-primary)' }}>{mentorPendingDelete.class}</strong>
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{
+                  background: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                  color: '#fbbf24',
+                  fontSize: '0.8rem',
+                  lineHeight: 1.4
+                }}>
+                  ⚠️ <strong>Notice:</strong> This action will permanently remove this mentor's portal access.
+                  {assignedMentees.length > 0 ? (
+                    <span> <strong>{assignedMentees.length} assigned student(s)</strong> will be safely moved back to the unassigned student pool so you can reassign them to another mentor.</span>
+                  ) : (
+                    <span> No students are currently assigned to this mentor.</span>
+                  )}
+                  {activeMentorIssues > 0 && <span> There are currently <strong>{activeMentorIssues} open mentorship tickets</strong> associated with this faculty.</span>}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                background: 'rgba(0, 0, 0, 0.2)'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setMentorPendingDelete(null)}
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRemoveMentor}
+                  style={{
+                    padding: '8px 20px',
+                    fontSize: '0.85rem',
+                    fontWeight: '700',
+                    background: '#dc2626',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Trash2 size={15} />
+                  Confirm Remove Mentor
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

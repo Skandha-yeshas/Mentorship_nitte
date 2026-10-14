@@ -41,9 +41,9 @@ const logSystemEvent = async (text, userRole, userId) => {
 // 1. GET FULL APP STATE (For quick frontend loading)
 app.get('/api/db-state', async (req, res) => {
   try {
-    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem FROM students`);
-    const mentorsRes = await query(`SELECT id, name, email, dept, class FROM mentors`);
-    const rosRes = await query(`SELECT id, name, email, region FROM ros`);
+    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem, password FROM students`);
+    const mentorsRes = await query(`SELECT id, name, email, dept, class, password FROM mentors`);
+    const rosRes = await query(`SELECT id, name, email, region, password FROM ros`);
     const issuesRes = await query(`
       SELECT id, student_id AS "studentId", student_name AS "studentName", 
              category, description, priority, status, ro_id AS "roId", 
@@ -288,36 +288,166 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
         [studentId, name, email, mentorId, phone, branch, sem, generatedPassword]
       );
 
-      // Send automated onboarding credential email via Gmail SMTP
-      const emailHtml = `
-        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px;">NITTE Student Mentorship & Support System</h1>
-            <p style="margin: 6px 0 0 0; font-size: 0.9rem; color: #93c5fd;">Official Student Account Onboarding</p>
-          </div>
-          <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
-            <p style="font-size: 1rem; margin-top: 0;">Dear <strong>${name}</strong>,</p>
-            <p>Welcome! Your official student account has been created by the Administration for the NITTE Mentorship Portal.</p>
-            
-            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #2563eb; padding: 18px; border-radius: 6px; margin: 20px 0;">
-              <h3 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 1rem;">🔐 Your Login Credentials:</h3>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #2563eb; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Student USN / ID:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${studentId}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Registered Gmail:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
-            </div>
+      const portalBaseUrl = process.env.APP_URL || (req.headers.host ? `http://${req.headers.host}` : 'http://localhost:5173');
+      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}&pwd=${encodeURIComponent(generatedPassword)}`;
 
-            <p style="font-size: 0.9rem; color: #475569;">You can log in to the portal using either your <strong>Registered Gmail</strong> or <strong>Student USN</strong> along with the generated password shown above.</p>
-            
-            <div style="text-align: center; margin-top: 24px;">
-              <a href="http://localhost:5173" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;">Log In to Student Dashboard</a>
-            </div>
-          </div>
-          <div style="background-color: #f1f5f9; padding: 14px 24px; text-align: center; font-size: 0.78rem; color: #64748b; border-top: 1px solid #e2e8f0;">
-            This automated credential notification was sent by NITTE System Administration via ${GMAIL_ADDRESS}.
-          </div>
-        </div>
-      `;
+      // Send automated onboarding credential email via Gmail SMTP
+      const emailHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NITTE Student Account Credentials</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 32px 12px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
+          
+          <!-- Modern Gradient Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #091e42 0%, #1e3a8a 52%, #2563eb 100%); padding: 36px 32px 28px; text-align: center; color: #ffffff;">
+              <div style="display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 30px; padding: 5px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #bfdbfe; margin-bottom: 14px;">
+                🏛️ NITTE (DEEMED TO BE UNIVERSITY)
+              </div>
+              <h1 style="margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; line-height: 1.3;">
+                Student Mentorship Portal
+              </h1>
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #93c5fd; font-weight: 400;">
+                Official Account Activation & One-Click Login Access
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content Body -->
+          <tr>
+            <td style="padding: 32px 32px 24px;">
+              <p style="margin: 0 0 14px; font-size: 16px; color: #0f172a; line-height: 1.5;">
+                Dear <strong style="color: #1e3a8a;">${name}</strong>,
+              </p>
+              <p style="margin: 0 0 18px; font-size: 14px; color: #475569; line-height: 1.6;">
+                Welcome! Your official student account has been created and verified by College Administration. You are now officially enrolled in the <strong>NITTE Student Mentorship & Grievance Escalation System</strong>.
+              </p>
+
+              <!-- Academic Profile Snapshot Tag -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 22px;">
+                <tr>
+                  <td style="padding: 12px 18px; font-size: 13px; color: #334155;">
+                    <span style="display: inline-block; margin-right: 18px;"><strong>📚 Branch:</strong> ${branch}</span>
+                    <span style="display: inline-block; margin-right: 18px;"><strong>🎓 Semester:</strong> Sem ${sem}</span>
+                    <span style="display: inline-block;"><strong>🛡️ Role:</strong> Student (Mentee)</span>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Modern Credentials Box -->
+              <div style="background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #cbd5e1; border-top: 4px solid #2563eb; border-radius: 12px; padding: 20px; margin-bottom: 26px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">
+                  <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: #1e3a8a;">
+                    🔐 Official Login Credentials
+                  </h3>
+                  <span style="font-size: 11px; background: #ecfdf5; color: #059669; padding: 3px 8px; border-radius: 20px; font-weight: 700; border: 1px solid #a7f3d0;">
+                    ✓ Active
+                  </span>
+                </div>
+
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 13px; color: #1e293b; line-height: 1.8;">
+                  <tr>
+                    <td width="38%" style="color: #64748b; font-weight: 600; padding: 5px 0;">Student USN / ID:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 14px; font-weight: 700; background: #eff6ff; color: #1d4ed8; padding: 3px 8px; border-radius: 6px; border: 1px solid #bfdbfe;">
+                        ${studentId}
+                      </code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">Registered Gmail:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; color: #334155; background: #f1f5f9; padding: 3px 8px; border-radius: 6px;">
+                        ${email}
+                      </code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">Generated Password:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 15px; font-weight: 800; background: #fef2f2; color: #dc2626; padding: 4px 10px; border-radius: 6px; border: 1px solid #fecaca; letter-spacing: 0.5px;">
+                        ${generatedPassword}
+                      </code>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Direct 1-Click Login Button Section -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 24px 0 16px;">
+                <tr>
+                  <td align="center">
+                    <table role="presentation" cellspacing="0" cellpadding="0">
+                      <tr>
+                        <td align="center" style="border-radius: 10px; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); box-shadow: 0 4px 16px rgba(37, 99, 235, 0.35);">
+                          <a href="${directLoginUrl}" target="_blank" style="display: inline-block; padding: 14px 34px; font-size: 15px; font-weight: 700; color: #ffffff; text-decoration: none; border-radius: 10px; letter-spacing: 0.2px;">
+                            👉 Open Student Login Portal
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
+                      ⚡ Pre-fills your USN & password on the login page. Simply click "Sign In" to enter.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Fallback Direct URL Box -->
+              <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; margin-top: 18px; font-size: 12px; color: #475569;">
+                <p style="margin: 0 0 6px; font-weight: 600; color: #334155;">Direct Login Link (if button does not open):</p>
+                <a href="${directLoginUrl}" target="_blank" style="color: #2563eb; text-decoration: underline; word-break: break-all; font-family: monospace; font-size: 11px;">
+                  ${directLoginUrl}
+                </a>
+              </div>
+
+              <!-- Feature Highlights / Guidelines -->
+              <div style="margin-top: 26px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                <h4 style="margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: #64748b; font-weight: 700;">
+                  What you can do in your portal:
+                </h4>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 13px; color: #334155; line-height: 1.6;">
+                  <tr>
+                    <td style="padding: 4px 0;">🎯 <strong>Faculty Mentorship:</strong> View assigned faculty mentor contact details & schedule 1-on-1 counseling.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0;">🎫 <strong>Raise Issues:</strong> Submit confidential academic, infrastructure, or attendance tickets (up to 2 active per week).</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0;">🔒 <strong>Privacy:</strong> Your issues are only visible to your assigned mentor and designated college officers.</td>
+                  </tr>
+                </table>
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
+              <p style="margin: 0 0 4px; font-weight: 600; color: #334155;">
+                NITTE Mentorship & Academic Support Administration
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94a3b8;">
+                This automated credential notification was sent by NITTE System Administration via ${GMAIL_ADDRESS}.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 
       await sendGmailNotification({
         to: email,
@@ -325,7 +455,7 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
         fromName: 'NITTE Admin Desk',
         subject: `[NITTE PORTAL CREDENTIALS] Welcome ${name} - Student Onboarding (${studentId})`,
         html: emailHtml,
-        text: `Welcome ${name}! Your student account has been created. Student ID: ${studentId}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        text: `Welcome ${name}! Your student account has been created. Student ID: ${studentId}, Email: ${email}, Password: ${generatedPassword}. Log in directly at: ${directLoginUrl}`,
         eventType: 'BULK_STUDENT_ONBOARDING'
       });
 
@@ -364,6 +494,32 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
     failureCount,
     results
   });
+});
+
+// ADMIN SINGLE STUDENT REMOVAL ENDPOINT
+app.post('/api/admin/delete-student', async (req, res) => {
+  try {
+    const { studentId } = req.body;
+    if (!studentId) return res.status(400).json({ error: 'Student ID is required.' });
+    await query('DELETE FROM students WHERE id = $1', [studentId]);
+    res.json({ success: true, studentId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN SINGLE FACULTY MENTOR REMOVAL ENDPOINT
+app.post('/api/admin/delete-mentor', async (req, res) => {
+  try {
+    const { mentorId } = req.body;
+    if (!mentorId) return res.status(400).json({ error: 'Mentor ID is required.' });
+    await query('UPDATE students SET mentor_id = NULL WHERE mentor_id = $1', [mentorId]);
+    await query('DELETE FROM mentors WHERE id = $1', [mentorId]);
+    await logSystemEvent(`Admin removed faculty mentor ${mentorId}. Mentees unassigned.`, 'Admin', 'ADMIN');
+    res.json({ success: true, mentorId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ADMIN BULK FACULTY MENTORS ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
@@ -650,8 +806,20 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(404).json({ error: 'No account found with this Email or User ID.' });
     }
 
-    const user = userRes.rows[0];
-    if (user.password && user.password !== password.trim() && password !== 'Nitte@2026') {
+    // 1. Direct ID match first
+    let user = userRes.rows.find(u => u.id && u.id.toUpperCase() === loginIdentifier.toUpperCase());
+    
+    // 2. If multiple users share this email, find the one with matching password
+    if (!user) {
+      user = userRes.rows.find(u => u.password && (u.password === password.trim() || password.trim() === 'Nitte@2026'));
+    }
+
+    // 3. Fallback to first row for standard password failure
+    if (!user) {
+      user = userRes.rows[0];
+    }
+
+    if (user.password && user.password !== password.trim() && password.trim() !== 'Nitte@2026') {
       return res.status(401).json({ error: 'Incorrect password. Please check your credentials.' });
     }
 
@@ -954,9 +1122,20 @@ app.post('/api/meetings', async (req, res) => {
 
     await logSystemEvent(`RO ${roId} ${isReschedule ? 'rescheduled' : 'scheduled'} a meeting with Student ${studentName} for ${date} at ${time}`, 'RO', roId);
 
+    // Dynamically resolve student email from database
+    let resolvedStudentEmail = 'skandhayashas2906@gmail.com';
+    try {
+      const studentEmailQuery = await query(`SELECT email FROM students WHERE UPPER(id) = UPPER($1)`, [validStudentId]);
+      if (studentEmailQuery.rowCount > 0 && studentEmailQuery.rows[0].email) {
+        resolvedStudentEmail = studentEmailQuery.rows[0].email.trim();
+      }
+    } catch (e) { }
+
+    const targetRecipients = Array.from(new Set([resolvedStudentEmail, 'skandhayashas2906@gmail.com'])).filter(Boolean).join(', ');
+
     // Dispatch Gmail notification via skandhayashu2906@gmail.com
     await sendGmailNotification({
-      to: 'skandhayashas2906@gmail.com',
+      to: targetRecipients,
       replyTo: 'skandhayashu2906@gmail.com',
       fromName: `RO Officer (${roId})`,
       subject: `[MEETING ${isReschedule ? 'RESCHEDULED' : 'CONFIRMATION'} - ${issueId}] ${date} at ${time}`,

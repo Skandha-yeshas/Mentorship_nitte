@@ -17,8 +17,8 @@ let pollInterval = null;
 let isPolling = false;
 
 const getConfig = () => {
-  const user = (process.env.GMAIL_USER || GMAIL_ADDRESS).trim();
-  const password = (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
+  const user = (process.env.GMAIL_USER || GMAIL_ADDRESS || 'skandhayashu2906@gmail.com').trim();
+  const password = (process.env.GMAIL_APP_PASS || 'yffd wkvs ngqh mwse').replace(/[\s"']/g, '').trim();
 
   if (!user || !password) {
     return null;

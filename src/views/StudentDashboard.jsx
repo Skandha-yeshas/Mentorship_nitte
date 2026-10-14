@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
+import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl, isMatchingMentorId } from '../context/DatabaseContext';
 import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, MessageSquare, PhoneOff, Volume2, VolumeX } from 'lucide-react';
 import { WebRtcMeetingSession } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
@@ -7,7 +7,19 @@ import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 
 export const StudentDashboard = ({ studentId }) => {
-  const { db, submitIssue, submitFeedback, reopenIssue, resolveIssue, submitMentorFeedback, isDemoLimitBypassed, toggleDemoLimitBypass, updateMeetingStatus, saveMeetingRecording } = useContext(DatabaseContext);
+  const {
+    db,
+    submitIssue,
+    submitFeedback,
+    reopenIssue,
+    resolveIssue,
+    submitMentorFeedback,
+    isDemoLimitBypassed,
+    toggleDemoLimitBypass,
+    updateMeetingStatus,
+    saveMeetingRecording,
+    authenticatedUser
+  } = useContext(DatabaseContext);
 
   // Submission Self-Help Video Modal State
   const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
@@ -35,9 +47,18 @@ export const StudentDashboard = ({ studentId }) => {
   const [mfDifficulties, setMfDifficulties] = useState('');
   const [mfSuccess, setMfSuccess] = useState('');
 
-  // Fetch current student profile & assigned RO
-  const student = db.users.students.find(s => s.id === studentId) || db.users.students[0];
-  const myMentor = db.users.mentors.find(m => m.id === student.mentorId);
+  // Fetch current student profile & assigned RO (case-insensitive and authenticated user fallback)
+  const targetId = String(studentId || authenticatedUser?.id || '').trim().toLowerCase();
+  const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetId) ||
+    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetId) ||
+    authenticatedUser ||
+    (db.users?.students || [])[0];
+
+  const matchMentorHelper = typeof isMatchingMentorId === 'function'
+    ? isMatchingMentorId
+    : (a, b) => String(a || '').replace(/[^A-Z0-9]/gi, '').toLowerCase() === String(b || '').replace(/[^A-Z0-9]/gi, '').toLowerCase();
+
+  const myMentor = (db.users?.mentors || []).find(m => matchMentorHelper(m.id, student?.mentorId));
 
   // Determine active RO dynamically based on category selection
   const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
@@ -698,7 +719,7 @@ export const StudentDashboard = ({ studentId }) => {
 
     if (isFormLocked) {
       const nextTime = slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr || '7-day limit completion';
-      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens on ${nextTime}. (Turn on Demo Mode in header to bypass)`);
+      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens on ${nextTime}.`);
       return;
     }
 
@@ -942,28 +963,6 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
-        {/* DEMO MODE ACTIVE BANNER */}
-        {isDemoLimitBypassed && (
-          <div className="glass-card" style={{ borderLeft: '4px solid #10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '14px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifySelf: 'space-between', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#047857' }}>
-                <span style={{ fontSize: '1.25rem' }}>🔓</span>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                  <strong>Demo Mode Active:</strong> 7-Day Rate Limit is Bypassed. Unlimited issue submissions allowed for testing.
-                </span>
-              </div>
-              <button
-                onClick={toggleDemoLimitBypass}
-                style={{ backgroundColor: '#ffffff', color: '#047857', border: '1px solid #a7f3d0', padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}
-              >
-                Turn Limit ON
-              </button>
-            </div>
-          </div>
-        )}
-
-
-
         {/* SUCCESS MESSAGE */}
         {successMessage && (
           <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '16px' }}>
@@ -983,11 +982,6 @@ export const StudentDashboard = ({ studentId }) => {
                 <span style={{ fontSize: '0.8rem', color: isFormLocked ? '#b45309' : '#047857', backgroundColor: isFormLocked ? '#fef3c7' : '#d1fae5', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
                   {isFormLocked ? '🔒 Limit Reached (2/2 Used)' : `Weekly Limit: ${availableCount} / 2 Available`}
                 </span>
-                {isDemoLimitBypassed && (
-                  <span style={{ fontSize: '0.75rem', color: '#047857', backgroundColor: '#ecfdf5', padding: '4px 8px', borderRadius: '12px', fontWeight: 700, border: '1px solid #a7f3d0' }}>
-                    ⚡ Demo Mode ON
-                  </span>
-                )}
               </div>
             </h2>
 
@@ -1179,7 +1173,7 @@ export const StudentDashboard = ({ studentId }) => {
                     className="form-textarea"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder={isFormLocked ? "Weekly limit reached (2 / 2 used). Turn on Demo Mode in header to bypass." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
+                    placeholder={isFormLocked ? "Weekly limit reached (2 / 2 issue slots in progress)." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
                     required
                   />
                 </div>
@@ -1373,13 +1367,9 @@ export const StudentDashboard = ({ studentId }) => {
                   </div>
                 )}
 
-                {/* RO ASSIGNED MEETING DETAILS */}
+                {/* RO / ADMIN ASSIGNED MEETING DETAILS */}
                 {selectedIssue.status !== 'Resolved' && (
                   <div style={{ border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
-                    <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Calendar size={16} /> Meeting Scheduled by Relationship Officer
-                    </h4>
-
                     {(() => {
                       const rawMatches = (db.meetings || []).filter(m =>
                         (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
@@ -1399,17 +1389,23 @@ export const StudentDashboard = ({ studentId }) => {
                       );
                       if (matchingMeetings.length === 0) {
                         return (
-                          <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
-                            <p>No meeting has been scheduled by your Relationship Officer yet.</p>
-                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                              Your assigned RO will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
-                            </p>
-                          </div>
+                          <>
+                            <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <Calendar size={16} /> Meeting Scheduled by Relationship Officer
+                            </h4>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
+                              <p>No meeting has been scheduled yet.</p>
+                              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                Your assigned RO or Senior Administration will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
+                              </p>
+                            </div>
+                          </>
                         );
                       }
 
                       // Render latest meeting record for this issue
                       const meet = matchingMeetings[matchingMeetings.length - 1];
+                      const isAdminMeeting = Boolean(meet?.isAdminHearing || meet?.roId === 'ADMIN' || selectedIssue.adminMeetingScheduled);
                       const modeLower = (meet.mode || '').toLowerCase();
                       const locLower = (meet.location || '').toLowerCase();
                       const isOnline = !meet.mode || modeLower.includes('online') || locLower.includes('meet') || locLower.includes('zoom') || locLower.includes('video') || locLower.includes('portal');
@@ -1417,93 +1413,106 @@ export const StudentDashboard = ({ studentId }) => {
                       const isCompleted = (meet.status === 'Completed' || meet.status === 'Finished' || meet.status === 'Cancelled') && !isLive;
 
                       return (
-                        <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                              {meet.date} at {meet.time}
-                            </span>
-                            <span
-                              className={`badge ${isLive ? 'badge-in-progress' : (isCompleted ? 'badge-resolved' : 'badge-scheduled')}`}
-                              style={isLive ? { background: '#10b981', color: '#ffffff' } : {}}
-                            >
-                              {isLive ? 'In Progress' : (meet.status || 'Scheduled')}
-                            </span>
-                          </div>
-                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                            <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'In-App Online Video Call Portal' : 'RO Office Desk (Admin Block)')}
-                          </p>
-                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                            <strong>Mode:</strong> {meet.mode || 'Online Video Meeting'}
-                          </p>
-                          {meet.notes && (
-                            <p style={{ fontSize: '0.82rem', color: 'var(--nitte-blue)', marginTop: '8px', background: 'var(--nitte-blue-light)', border: '1px solid var(--nitte-blue-soft)', padding: '8px 12px', borderRadius: '6px' }}>
-                              <strong>RO Instructions for Student:</strong> {meet.notes}
+                        <>
+                          <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: isAdminMeeting ? '#dc2626' : 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Calendar size={16} /> {isAdminMeeting ? 'Official Administrative Hearing Scheduled by Administration Office' : 'Meeting Scheduled by Relationship Officer'}
+                          </h4>
+                          <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                              <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                                {meet.date} at {meet.time}
+                              </span>
+                              <span
+                                className={`badge ${isLive ? 'badge-in-progress' : (isCompleted ? 'badge-resolved' : 'badge-scheduled')}`}
+                                style={isLive ? { background: '#10b981', color: '#ffffff' } : {}}
+                              >
+                                {isLive ? 'In Progress' : (meet.status || 'Scheduled')}
+                              </span>
+                            </div>
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                              <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'In-App Online Video Call Portal' : 'Admin Chamber Desk')}
                             </p>
-                          )}
-
-                          {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
-                          {meet.discussionSummary && (
-                            <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
-                              <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                                <FileText size={15} /> Official Meeting Deliberations & Discussion Record:
-                              </div>
-                              <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{meet.discussionSummary}</p>
-                              {meet.actionItems && (
-                                <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                                  <strong>Agreed Action Items:</strong> {meet.actionItems}
-                                </p>
-                              )}
-                            </div>
-                          )}
-
-                          {/* ONLINE MEETING AUTO-RECORDING NOTICE & STUDENT JOIN BUTTON */}
-                          {isOnline && (
-                            <div style={{ marginTop: '10px', padding: '10px 12px', background: isLive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.08)', border: isLive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
-                              <div style={{ fontWeight: '700', color: isLive ? '#10b981' : 'var(--nitte-blue)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <Video size={15} /> {isLive ? 'Live Online Video Call Session (In-Progress)' : 'Online Video Call Session Scheduled'}
-                              </div>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.76rem', marginTop: '4px' }}>
-                                Your Relationship Officer conducts this session via encrypted online video call. As per university compliance, this session is <strong>automatically recorded and archived</strong> to your ticket record for official reference.
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                              <strong>Mode:</strong> {meet.mode || 'Online Video Meeting'}
+                            </p>
+                            {meet.notes && (
+                              <p style={{
+                                fontSize: '0.82rem',
+                                color: isAdminMeeting ? '#b91c1c' : 'var(--nitte-blue)',
+                                marginTop: '8px',
+                                background: isAdminMeeting ? 'rgba(239, 68, 68, 0.08)' : 'var(--nitte-blue-light)',
+                                border: isAdminMeeting ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid var(--nitte-blue-soft)',
+                                padding: '8px 12px',
+                                borderRadius: '6px'
+                              }}>
+                                <strong>{isAdminMeeting ? 'Administrative Directives for Mentee:' : 'RO Instructions for Student:'}</strong> {meet.notes}
                               </p>
-                              {!isCompleted && (
-                                <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                  {isLive ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const meetIssueId = meet.issueId || meet.issue_id || (selectedIssue ? selectedIssue.id : null);
-                                        handleStudentJoinMeeting(meetIssueId);
-                                      }}
-                                      className="btn btn-primary"
-                                      style={{
-                                        fontSize: '0.82rem',
-                                        padding: '8px 18px',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        background: '#10b981',
-                                        border: 'none',
-                                        fontWeight: 700,
-                                        boxShadow: '0 2px 10px rgba(16,185,129,0.4)',
-                                        cursor: 'pointer',
-                                        borderRadius: '6px'
-                                      }}
-                                    >
-                                      <Video size={14} /> Join Live RO Session (Dual Recording Active)
-                                    </button>
-                                  ) : (
-                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)' }}>
-                                      <Clock size={14} style={{ color: 'var(--text-secondary)' }} />
-                                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                        Scheduled for {meet.date} at {meet.time}. Meeting link will unlock automatically when RO starts the session.
-                                      </span>
-                                    </div>
-                                  )}
+                            )}
+
+                            {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
+                            {meet.discussionSummary && (
+                              <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
+                                <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                  <FileText size={15} /> Official Meeting Deliberations & Discussion Record:
                                 </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                                <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{meet.discussionSummary}</p>
+                                {meet.actionItems && (
+                                  <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                                    <strong>Agreed Action Items:</strong> {meet.actionItems}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* ONLINE MEETING AUTO-RECORDING NOTICE & STUDENT JOIN BUTTON */}
+                            {isOnline && (
+                              <div style={{ marginTop: '10px', padding: '10px 12px', background: isLive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.08)', border: isLive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
+                                <div style={{ fontWeight: '700', color: isLive ? '#10b981' : 'var(--nitte-blue)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <Video size={15} /> {isLive ? 'Live Online Video Call Session (In-Progress)' : 'Online Video Call Session Scheduled'}
+                                </div>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.76rem', marginTop: '4px' }}>
+                                  Your Relationship Officer conducts this session via encrypted online video call. As per university compliance, this session is <strong>automatically recorded and archived</strong> to your ticket record for official reference.
+                                </p>
+                                {!isCompleted && (
+                                  <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    {isLive ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const meetIssueId = meet.issueId || meet.issue_id || (selectedIssue ? selectedIssue.id : null);
+                                          handleStudentJoinMeeting(meetIssueId);
+                                        }}
+                                        className="btn btn-primary"
+                                        style={{
+                                          fontSize: '0.82rem',
+                                          padding: '8px 18px',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '6px',
+                                          background: '#10b981',
+                                          border: 'none',
+                                          fontWeight: 700,
+                                          boxShadow: '0 2px 10px rgba(16,185,129,0.4)',
+                                          cursor: 'pointer',
+                                          borderRadius: '6px'
+                                        }}
+                                      >
+                                        <Video size={14} /> Join Live RO Session (Dual Recording Active)
+                                      </button>
+                                    ) : (
+                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                        <Clock size={14} style={{ color: 'var(--text-secondary)' }} />
+                                        <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                          Scheduled for {meet.date} at {meet.time}. Meeting link will unlock automatically when RO starts the session.
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </>
                       );
                     })()}
                   </div>

@@ -5,7 +5,7 @@ export const LoginModal = ({ isOpen, onClose }) => {
   const { db, loginUser, logoutUser, authenticatedUser, registerStudent } = useContext(DatabaseContext);
 
   const [activeTab, setActiveTab] = useState('login'); // 'login' or 'signup'
-  
+
   // Login Form State
   const [role, setRole] = useState('Student');
   const [loginIdentifier, setLoginIdentifier] = useState('skandhayashas2906@gmail.com');
@@ -87,7 +87,7 @@ export const LoginModal = ({ isOpen, onClose }) => {
         setLoginIdentifier(res.student.email);
         setPassword(regPassword);
         setRole('Student');
-        
+
         setTimeout(() => {
           setActiveTab('login');
           setRegSuccess('');
