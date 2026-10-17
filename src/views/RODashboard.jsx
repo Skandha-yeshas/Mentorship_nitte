@@ -440,11 +440,20 @@ export const RODashboard = ({ roId }) => {
   // If reassigned to Offline, log minutes are NOT required to resolve (log minutes strictly belong to online sessions)
   const isDoneThroughOnline = Boolean(activeMeeting && activeMeeting.mode === 'Online');
 
-  // Check if RO has filed the official discussion minutes for this meeting
+  // Check if RO has filed the official discussion minutes for this meeting or issue
   const hasFiledDiscussionMinutes = Boolean(
-    activeMeeting && (
+    (activeMeeting && (
       (activeMeeting.discussionSummary && activeMeeting.discussionSummary.trim().length > 0) ||
       (activeMeeting.discussion_summary && activeMeeting.discussion_summary.trim().length > 0)
+    )) ||
+    (selectedIssue && (
+      (selectedIssue.discussionSummary && selectedIssue.discussionSummary.trim().length > 0) ||
+      (selectedIssue.discussion_summary && selectedIssue.discussion_summary.trim().length > 0) ||
+      (selectedIssue.discussionMinutes && selectedIssue.discussionMinutes.trim().length > 0)
+    )) ||
+    (db.meetings || []).some(m => 
+      (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue?.id || selectedIssue?.issue_id)?.toUpperCase() &&
+      ((m.discussionSummary && m.discussionSummary.trim().length > 0) || (m.discussion_summary && m.discussion_summary.trim().length > 0))
     )
   );
 
@@ -461,6 +470,11 @@ export const RODashboard = ({ roId }) => {
   };
 
   const handleOpenScheduleModal = () => {
+    if (!selectedIssue) return;
+    if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+      alert('🔒 Ticket Locked: You cannot schedule or reassign meetings for a resolved or escalated ticket.');
+      return;
+    }
     if (isReassignLimitReached) {
       alert('RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
       return;
@@ -491,6 +505,10 @@ export const RODashboard = ({ roId }) => {
 
   const handleLaunchOnlineMeeting = () => {
     if (!activeMeeting || !selectedIssue) return;
+    if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+      alert('🔒 Ticket Locked: Meeting cannot be launched because this ticket is resolved or escalated.');
+      return;
+    }
     const targetId = String(activeMeeting.issueId || activeMeeting.issue_id || selectedIssue.id).trim().toUpperCase();
     setActiveMeetingIssueId(targetId);
     isEndingMeetingRef.current = false;
@@ -503,6 +521,10 @@ export const RODashboard = ({ roId }) => {
 
   const handleConcludeOfflineMeeting = () => {
     if (!activeMeeting || !selectedIssue) return;
+    if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+      alert('🔒 Ticket Locked: Meeting cannot be concluded because this ticket is resolved or escalated.');
+      return;
+    }
     const currentMeetId = activeMeeting.id || activeMeeting.issueId;
     updateMeetingStatus(currentMeetId, 'Completed');
     setPostMeetingData({
@@ -643,6 +665,15 @@ export const RODashboard = ({ roId }) => {
   };
 
   const handleOpenResolveModal = () => {
+    if (!selectedIssue) return;
+    if (selectedIssue.status === 'Resolved') {
+      alert('🔒 Ticket Locked: This ticket is already marked as Resolved.');
+      return;
+    }
+    if (selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+      alert('🔒 Ticket Locked: This ticket is currently escalated to Administration. The RO cannot resolve an escalated ticket.');
+      return;
+    }
     if (isOnlineMeetingPendingMinutes) {
       alert(
         '🔒 Official Requirement:\n\n' +
@@ -671,6 +702,12 @@ export const RODashboard = ({ roId }) => {
     e.preventDefault();
     if (!resolutionNotes.trim() || !selectedIssueId) return;
 
+    if (selectedIssue && (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated)) {
+      alert('🔒 Ticket Locked: Ticket is already resolved or escalated.');
+      setShowResolveModal(false);
+      return;
+    }
+
     if (isOnlineMeetingPendingMinutes) {
       alert('🔒 Requirement: Please file the Log Discussion Minutes first before marking this issue as Resolved.');
       setShowResolveModal(false);
@@ -683,9 +720,72 @@ export const RODashboard = ({ roId }) => {
     setShowResolveModal(false);
   };
 
+  const handleOpenEscalateModal = () => {
+    if (!selectedIssue) return;
+
+    if (selectedIssue.status === 'Resolved') {
+      alert('🔒 Ticket Locked: You cannot escalate an already resolved ticket. The student may re-open the issue if further assistance is needed.');
+      return;
+    }
+
+    if (!hasFiledDiscussionMinutes) {
+      alert(
+        '🔒 Mandatory Institutional Requirement:\n\n' +
+        'Before escalating this issue to the Administration/Principal, the Relationship Officer MUST log the official Discussion Minutes.\n\n' +
+        'Please document your meeting deliberations, student interaction details, and action items first.\n\n' +
+        'Opening the Log Discussion Minutes form now...'
+      );
+      setPostMeetingData({
+        meetingId: activeMeeting?.id || activeMeeting?.issueId || `MEET-${selectedIssue.id}`,
+        issueId: selectedIssue.id,
+        studentName: selectedIssue.studentName || 'Student',
+        studentId: selectedIssue.studentId || '',
+        category: selectedIssue.category || 'General',
+        durationText: activeMeeting?.status === 'Completed' ? 'Concluded Session' : 'Preliminary Hearing / Assessment'
+      });
+      setDiscussionSummary(activeMeeting?.discussionSummary || selectedIssue?.discussionSummary || '');
+      setActionItems(activeMeeting?.actionItems || selectedIssue?.actionItems || '');
+      setMeetingOutcome('In-Progress');
+      setFollowUpNeeded(Boolean(activeMeeting?.followUpNeeded));
+      setShowMeetingFeedbackModal(true);
+      return;
+    }
+
+    setShowEscalateModal(true);
+  };
+
   const handleEscalateSubmit = async (e) => {
     e.preventDefault();
     if (!escalationReason.trim() || !selectedIssueId) return;
+
+    if (selectedIssue && selectedIssue.status === 'Resolved') {
+      alert('🔒 Ticket Locked: You cannot escalate an already resolved ticket. The student may re-open the issue if further assistance is needed.');
+      setShowEscalateModal(false);
+      return;
+    }
+
+    if (!hasFiledDiscussionMinutes) {
+      alert(
+        '🔒 Mandatory Institutional Requirement:\n\n' +
+        'Official Discussion Minutes must be logged before this issue can be escalated to Administration.\n\n' +
+        'Opening the Discussion Minutes form now...'
+      );
+      setShowEscalateModal(false);
+      setPostMeetingData({
+        meetingId: activeMeeting?.id || activeMeeting?.issueId || `MEET-${selectedIssue.id}`,
+        issueId: selectedIssue.id,
+        studentName: selectedIssue.studentName || 'Student',
+        studentId: selectedIssue.studentId || '',
+        category: selectedIssue.category || 'General',
+        durationText: activeMeeting?.status === 'Completed' ? 'Concluded Session' : 'Preliminary Hearing / Assessment'
+      });
+      setDiscussionSummary(activeMeeting?.discussionSummary || selectedIssue?.discussionSummary || '');
+      setActionItems(activeMeeting?.actionItems || selectedIssue?.actionItems || '');
+      setMeetingOutcome('In-Progress');
+      setFollowUpNeeded(Boolean(activeMeeting?.followUpNeeded));
+      setShowMeetingFeedbackModal(true);
+      return;
+    }
 
     const isReEscalate = selectedIssue?.status === 'Escalated' || selectedIssue?.status === 'Re-escalated' || Boolean(selectedIssue?.isReEscalated);
     setIsSubmittingEscalate(true);
@@ -705,6 +805,12 @@ export const RODashboard = ({ roId }) => {
   const handleScheduleSubmit = async (e) => {
     e.preventDefault();
     if (!meetDate || !meetTime || !selectedIssueId) return;
+
+    if (selectedIssue && (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated)) {
+      alert('🔒 Ticket Locked: You cannot schedule or modify meetings for a resolved or escalated ticket.');
+      setShowScheduleModal(false);
+      return;
+    }
 
     const currNow = new Date();
     const currTodayStr = getLocalDateString(currNow);
@@ -741,6 +847,11 @@ export const RODashboard = ({ roId }) => {
   };
 
   const handleOpenOnlineNotDoneModal = () => {
+    if (!selectedIssue) return;
+    if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+      alert('🔒 Ticket Locked: You cannot modify meetings for a resolved or escalated ticket.');
+      return;
+    }
     if (isReassignLimitReached) {
       alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
       return;
@@ -758,6 +869,11 @@ export const RODashboard = ({ roId }) => {
 
   const handleOfflineNotDoneSubmit = async (e) => {
     e.preventDefault();
+    if (selectedIssue && (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated)) {
+      alert('🔒 Ticket Locked: You cannot reschedule or modify meetings for a resolved or escalated ticket.');
+      setShowOnlineNotDoneModal(false);
+      return;
+    }
     if (!offlineReassignFeedback.trim()) {
       alert('⚠️ Required: Please provide feedback / reason why the online meeting could not be held.');
       return;
@@ -1469,11 +1585,17 @@ export const RODashboard = ({ roId }) => {
                       {isOnlineMeetingPendingMinutes ? '📋 Log Minutes & Resolve' : 'Mark as Resolved'}
                     </button>
                     <button
-                      onClick={() => setShowEscalateModal(true)}
+                      onClick={handleOpenEscalateModal}
                       className="btn btn-danger"
-                      style={{ flex: 1, minWidth: '140px' }}
+                      style={{
+                        flex: 1,
+                        minWidth: '140px',
+                        background: !hasFiledDiscussionMinutes ? 'linear-gradient(135deg, #e11d48 0%, #be123c 100%)' : undefined,
+                        border: !hasFiledDiscussionMinutes ? '1px dashed #fda4af' : undefined
+                      }}
+                      title={!hasFiledDiscussionMinutes ? 'Mandatory discussion minutes required before escalating' : 'Escalate issue to Administration'}
                     >
-                      Escalate to Admin
+                      {!hasFiledDiscussionMinutes ? '📋 Log Minutes to Escalate' : 'Escalate to Admin'}
                     </button>
                   </div>
                 </div>
@@ -1501,7 +1623,7 @@ export const RODashboard = ({ roId }) => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setShowEscalateModal(true)}
+                      onClick={handleOpenEscalateModal}
                       className="btn btn-danger"
                       style={{ fontSize: '0.8rem', padding: '5px 12px' }}
                     >

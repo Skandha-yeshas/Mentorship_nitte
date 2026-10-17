@@ -5055,121 +5055,150 @@ export const AdminDashboard = () => {
                     {/* Administrative Action Controls */}
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       <h4 style={{ fontSize: '0.85rem', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>Administrative Action Controls:</h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {!hasAdminMeetingForIssue(modalIssue) ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <button
-                              onClick={() => handleOpenAdminScheduleModal(modalIssue)}
-                              className="btn btn-primary"
-                              style={{
-                                width: '100%',
-                                padding: '12px 18px',
-                                fontSize: '0.9rem',
-                                fontWeight: '700',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px',
-                                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                boxShadow: '0 4px 14px rgba(59, 130, 246, 0.35)',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              <Calendar size={18} /> Setup Meeting with Student (1 Meeting Allowed)
-                            </button>
-                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-                              ⚠️ 1-Meeting Policy: Admin may schedule exactly 1 formal hearing with the mentee. After setting the meeting, this button disappears and unlocks "Close the Ticket".
-                            </span>
+                      {modalIssue.status === 'Resolved' ? (
+                        <div style={{
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          borderRadius: '8px',
+                          padding: '14px 18px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '12px'
+                        }}>
+                          <CheckCircle2 size={24} style={{ color: '#10b981', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontWeight: '800', color: '#10b981', fontSize: '0.92rem' }}>
+                              Ticket Officially Resolved & Closed by Senior Administration
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                              <strong>Resolution Findings:</strong> {modalIssue.resolutionNotes || 'Administrative resolution completed.'}
+                            </div>
+                            {modalIssue.resolvedAt && (
+                              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Resolved At: {new Date(modalIssue.resolvedAt).toLocaleString()}
+                              </div>
+                            )}
                           </div>
-                        ) : (
+                        </div>
+                      ) : (
+                        <>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {/* Scheduled Admin Hearing Summary Card */}
-                            {(() => {
-                              const m = getAdminMeetingForIssue(modalIssue);
-                              return (
-                                <div style={{
-                                  background: 'rgba(59, 130, 246, 0.1)',
-                                  border: '1px solid rgba(59, 130, 246, 0.35)',
-                                  borderRadius: '8px',
-                                  padding: '12px 16px',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: '6px'
-                                }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ color: '#60a5fa', fontWeight: '700', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <Calendar size={15} /> Administrative Hearing Scheduled (1/1 Meeting Used)
-                                    </span>
-                                    <span style={{ fontSize: '0.7rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
-                                      Meeting Scheduled
-                                    </span>
-                                  </div>
-                                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                                    <strong>Date & Time:</strong> {m?.date || 'Scheduled'} at {m?.time || '11:00 AM'} &nbsp;|&nbsp;
-                                    <strong>Mode:</strong> {m?.mode || 'Offline'} &nbsp;|&nbsp;
-                                    <strong>Venue:</strong> {m?.location || 'Principal Chamber'}
-                                  </div>
-                                  {m?.notes && (
-                                    <div style={{ fontSize: '0.78rem', color: '#93c5fd', fontStyle: 'italic', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '4px' }}>
-                                      Directives / Agenda: "{m.notes}"
+                            {!hasAdminMeetingForIssue(modalIssue) ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <button
+                                  onClick={() => handleOpenAdminScheduleModal(modalIssue)}
+                                  className="btn btn-primary"
+                                  style={{
+                                    width: '100%',
+                                    padding: '12px 18px',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '700',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    boxShadow: '0 4px 14px rgba(59, 130, 246, 0.35)',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <Calendar size={18} /> Setup Meeting with Student (1 Meeting Allowed)
+                                </button>
+                                <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                                  ⚠️ 1-Meeting Policy: Admin may schedule exactly 1 formal hearing with the mentee. After setting the meeting, this button disappears and unlocks "Close the Ticket".
+                                </span>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {/* Scheduled Admin Hearing Summary Card */}
+                                {(() => {
+                                  const m = getAdminMeetingForIssue(modalIssue);
+                                  return (
+                                    <div style={{
+                                      background: 'rgba(59, 130, 246, 0.1)',
+                                      border: '1px solid rgba(59, 130, 246, 0.35)',
+                                      borderRadius: '8px',
+                                      padding: '12px 16px',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '6px'
+                                    }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ color: '#60a5fa', fontWeight: '700', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                          <Calendar size={15} /> Administrative Hearing Scheduled (1/1 Meeting Used)
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                                          Meeting Scheduled
+                                        </span>
+                                      </div>
+                                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                        <strong>Date & Time:</strong> {m?.date || 'Scheduled'} at {m?.time || '11:00 AM'} &nbsp;|&nbsp;
+                                        <strong>Mode:</strong> {m?.mode || 'Offline'} &nbsp;|&nbsp;
+                                        <strong>Venue:</strong> {m?.location || 'Principal Chamber'}
+                                      </div>
+                                      {m?.notes && (
+                                        <div style={{ fontSize: '0.78rem', color: '#93c5fd', fontStyle: 'italic', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '4px' }}>
+                                          Directives / Agenda: "{m.notes}"
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
+                                  );
+                                })()}
 
-                            {/* Close the Ticket Button */}
-                            <button
-                              onClick={() => {
-                                setSelectedIssueId(modalIssue.id);
-                                setShowResolveModal(true);
-                                setEscalationModalIssueId(null);
-                              }}
-                              className="btn btn-success"
-                              style={{
-                                width: '100%',
-                                padding: '12px 18px',
-                                fontSize: '0.9rem',
-                                fontWeight: '700',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px',
-                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                                cursor: 'pointer'
-                              }}
+                                {/* Close the Ticket Button */}
+                                <button
+                                  onClick={() => {
+                                    setSelectedIssueId(modalIssue.id);
+                                    setShowResolveModal(true);
+                                    setEscalationModalIssueId(null);
+                                  }}
+                                  className="btn btn-success"
+                                  style={{
+                                    width: '100%',
+                                    padding: '12px 18px',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '700',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <CheckCircle2 size={18} /> Close the Ticket
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <select
+                              className="form-select"
+                              style={{ fontSize: '0.82rem', padding: '8px 12px' }}
+                              value={targetRoId}
+                              onChange={(e) => setTargetRoId(e.target.value)}
                             >
-                              <CheckCircle2 size={18} /> Close the Ticket
+                              <option value="">-- Reassign RO Officer --</option>
+                              {db.users.ros.filter(r => r.id !== modalIssue.roId).map(ro => (
+                                <option key={ro.id} value={ro.id}>{ro.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => { setSelectedIssueId(modalIssue.id); handleReassign(targetRoId); }}
+                              disabled={!targetRoId}
+                              className="btn btn-secondary"
+                              style={{ padding: '8px 16px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+                            >
+                              Apply Reassignment
                             </button>
                           </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <select
-                          className="form-select"
-                          style={{ fontSize: '0.82rem', padding: '8px 12px' }}
-                          value={targetRoId}
-                          onChange={(e) => setTargetRoId(e.target.value)}
-                        >
-                          <option value="">-- Reassign RO Officer --</option>
-                          {db.users.ros.filter(r => r.id !== modalIssue.roId).map(ro => (
-                            <option key={ro.id} value={ro.id}>{ro.name}</option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => { setSelectedIssueId(modalIssue.id); handleReassign(targetRoId); }}
-                          disabled={!targetRoId}
-                          className="btn btn-secondary"
-                          style={{ padding: '8px 16px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
-                        >
-                          Apply Reassignment
-                        </button>
-                      </div>
+                        </>
+                      )}
                     </div>
                   </div>
 

@@ -8,6 +8,27 @@ import {
 
 export const DatabaseContext = createContext();
 
+// 🔒 CANONICAL TICKET & MEETING STATUS STATE-MACHINE ENUMS
+export const TICKET_STATUS = {
+  SUBMITTED: 'Submitted',
+  ASSIGNED_TO_RO: 'Assigned to RO',
+  IN_PROGRESS: 'In-Progress',
+  MEETING_SCHEDULED: 'Meeting Scheduled',
+  MEETING_STARTED: 'Meeting Started',
+  REOPENED: 'Re-opened by Student',
+  ESCALATED: 'Escalated',
+  RE_ESCALATED: 'Re-escalated',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed'
+};
+
+export const MEETING_STATUS = {
+  CONFIRMED: 'Confirmed',
+  STARTED: 'Started',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled'
+};
+
 // Realistic issue categories representing the 49 possible categories
 const ISSUE_CATEGORIES = {
   Academic: [
@@ -646,11 +667,20 @@ export const DatabaseProvider = ({ children }) => {
                 mergedIssues = data.issues.map(di => {
                   const savedMatch = savedIssues.find(si => (si.id || si.issue_id)?.toUpperCase() === (di.id || di.issue_id)?.toUpperCase());
                   if (savedMatch) {
-                    const isLocallyEscalated = savedMatch.status === 'Escalated';
-                    const isLocallyResolved = savedMatch.status === 'Resolved';
+                    const isLocallyEscalated = savedMatch.status === 'Escalated' || savedMatch.status === 'Re-escalated' || Boolean(savedMatch.isReEscalated);
+                    const isLocallyResolved = savedMatch.status === 'Resolved' || savedMatch.status === 'Closed';
+                    const isLocallyMeetingStarted = savedMatch.status === 'Meeting Started';
+                    const isLocallyMeetingScheduled = savedMatch.status === 'Meeting Scheduled';
+                    const resolvedStatus = isLocallyResolved ? 'Resolved' : (
+                      isLocallyEscalated ? (savedMatch.status === 'Re-escalated' ? 'Re-escalated' : 'Escalated') : (
+                        isLocallyMeetingStarted ? 'Meeting Started' : (
+                          isLocallyMeetingScheduled ? 'Meeting Scheduled' : di.status
+                        )
+                      )
+                    );
                     return {
                       ...di,
-                      status: isLocallyEscalated ? 'Escalated' : (isLocallyResolved ? 'Resolved' : di.status),
+                      status: resolvedStatus,
                       escalationReason: savedMatch.escalationReason || di.escalationReason,
                       escalatedAt: savedMatch.escalatedAt || di.escalatedAt,
                       escalatedBy: savedMatch.escalatedBy || di.escalatedBy,
@@ -996,12 +1026,34 @@ export const DatabaseProvider = ({ children }) => {
                   }
                 }
               }
+              // Synchronize matching issue status safely across tabs
+              const updatedIssues = (event.data.updatedIssues && Array.isArray(event.data.updatedIssues))
+                ? event.data.updatedIssues
+                : (prev.issues || []).map(i => {
+                    const iId = String(i.id || i.issue_id || '').toUpperCase();
+                    const isTarget = iId === targetId;
+                    if (!isTarget) return i;
+                    if (i.status === 'Resolved' || i.status === 'Closed' || i.status === 'Escalated' || i.status === 'Re-escalated') {
+                      return i;
+                    }
+                    if (status === 'Started') {
+                      return { ...i, status: 'Meeting Started', meetingStartedAt: new Date().toISOString() };
+                    } else if (status === 'Completed' || status === 'Finished') {
+                      return { ...i, status: i.status === 'Meeting Started' ? 'In-Progress' : i.status, meetingCompletedAt: new Date().toISOString() };
+                    } else if (status === 'Cancelled') {
+                      return { ...i, status: i.status === 'Meeting Scheduled' ? 'In-Progress' : i.status };
+                    }
+                    return i;
+                  });
+
               try {
                 localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
+                localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
               } catch (e) { }
               return {
                 ...prev,
-                meetings: updated
+                meetings: updated,
+                issues: updatedIssues
               };
             });
           } else if (event.data && event.data.type === 'meeting_scheduled') {
@@ -1010,7 +1062,7 @@ export const DatabaseProvider = ({ children }) => {
               const updatedMeetings = [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), meeting];
               const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase() ? {
                 ...i,
-                status: 'Meeting Scheduled',
+                status: (i.status === 'Resolved' || i.status === 'Closed' || i.status === 'Escalated' || i.status === 'Re-escalated') ? i.status : 'Meeting Scheduled',
                 logs: log ? [...(i.logs || []), log] : (i.logs || [])
               } : i);
               try {
@@ -1258,6 +1310,19 @@ export const DatabaseProvider = ({ children }) => {
 
   const scheduleRoMeeting = async (issueId, studentId, roId, date, time, mode, location, notes, discussionMinutes, actionItems, reassignFeedback) => {
     const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase()) || {};
+
+    // 🔒 LOCKDOWN GUARD 1: Resolved tickets cannot have meetings scheduled or modified
+    if (issue.status === 'Resolved' || issue.status === 'Closed') {
+      alert('🔒 Locked Ticket: This grievance is already marked as Resolved. Meetings cannot be scheduled or reassigned.');
+      throw new Error('Ticket is already Resolved.');
+    }
+
+    // 🔒 LOCKDOWN GUARD 2: Escalated tickets belong to Administration
+    if (issue.status === 'Escalated' || issue.status === 'Re-escalated' || Boolean(issue.isReEscalated)) {
+      alert('🔒 Locked Ticket: This grievance is currently escalated to Administration. Relationship Officers cannot modify meetings for escalated tickets.');
+      throw new Error('Ticket is under Administrative oversight.');
+    }
+
     const validStudentId = studentId || issue.studentId || issue.student_id;
     const student = (db.users?.students || []).find(s => (s.id || s.student_id)?.toUpperCase() === validStudentId?.toUpperCase());
     const studentName = issue.studentName || issue.student_name || (student ? student.name : 'Student');
@@ -1962,22 +2027,66 @@ Office of Student Welfare & Academic Mentorship
         }
       }
 
+      let matchedIssueId = null;
+      if (found) {
+        const matched = updated.find(m =>
+          (m.id && String(m.id).toUpperCase() === targetId) ||
+          (m.issueId && String(m.issueId).toUpperCase() === targetId) ||
+          (m.issue_id && String(m.issue_id).toUpperCase() === targetId)
+        );
+        matchedIssueId = matched?.issueId || matched?.issue_id;
+      }
+
+      // Synchronize issue status safely with meeting lifecycle
+      const updatedIssues = (prev.issues || []).map(i => {
+        const iId = String(i.id || i.issue_id || '').toUpperCase();
+        const isTarget = iId === targetId || (matchedIssueId && iId === String(matchedIssueId).toUpperCase());
+        if (!isTarget) return i;
+
+        // Terminal or Escalated tickets are locked against meeting status side-effects
+        if (i.status === 'Resolved' || i.status === 'Closed' || i.status === 'Escalated' || i.status === 'Re-escalated') {
+          return i;
+        }
+
+        if (status === 'Started') {
+          return {
+            ...i,
+            status: 'Meeting Started',
+            meetingStartedAt: new Date().toISOString()
+          };
+        } else if (status === 'Completed' || status === 'Finished') {
+          return {
+            ...i,
+            status: i.status === 'Meeting Started' ? 'In-Progress' : i.status,
+            meetingCompletedAt: new Date().toISOString()
+          };
+        } else if (status === 'Cancelled') {
+          return {
+            ...i,
+            status: i.status === 'Meeting Scheduled' ? 'In-Progress' : i.status
+          };
+        }
+        return i;
+      });
+
       try {
         localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
+        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       // Broadcast across open tabs for zero-latency synchronization
       try {
         if (typeof window !== 'undefined' && window.BroadcastChannel) {
           const bc = new BroadcastChannel('nitte_meeting_sync');
-          bc.postMessage({ type: 'meeting_status', meetId, status, updatedMeetings: updated });
+          bc.postMessage({ type: 'meeting_status', meetId, status, updatedMeetings: updated, updatedIssues });
           bc.close();
         }
       } catch (e) { }
 
       return {
         ...prev,
-        meetings: updated
+        meetings: updated,
+        issues: updatedIssues
       };
     });
 
@@ -2040,10 +2149,12 @@ Office of Student Welfare & Academic Mentorship
 
     // 1. Update local meetings & ticket state
     setDb(prev => {
+      let foundMeet = false;
       const updatedMeetings = (prev.meetings || []).map(m => {
         const isTarget = m.id === meetId || m.issueId === meetId || m.issue_id === meetId ||
           (m.issueId && issueId && m.issueId.toUpperCase() === issueId.toUpperCase());
         if (!isTarget) return m;
+        foundMeet = true;
         return {
           ...m,
           status: 'Completed',
@@ -2055,12 +2166,34 @@ Office of Student Welfare & Academic Mentorship
         };
       });
 
+      if (!foundMeet && issueId) {
+        updatedMeetings.push({
+          id: meetId || `MEET-${issueId}`,
+          issueId,
+          issue_id: issueId,
+          roId,
+          status: 'Completed',
+          mode: 'Offline',
+          location: 'RO Office Desk 1 (Admin Block)',
+          discussionSummary: cleanDiscussion,
+          actionItems: cleanActions,
+          outcome: outcome || 'In-Progress',
+          followUpNeeded: Boolean(followUpNeeded),
+          notes: `Discussions: ${cleanDiscussion}`,
+          date: new Date().toISOString().split('T')[0],
+          time: '12:00'
+        });
+      }
+
       const logText = `[RO POST-MEETING DISCUSSION RECORD] Deliberations: "${cleanDiscussion}"${cleanActions ? ` | Action Items: "${cleanActions}"` : ''} (Outcome: ${outcome || 'Session Concluded'})`;
 
       const updatedIssues = (prev.issues || []).map(i => {
         if (i.id?.toUpperCase() !== issueId?.toUpperCase()) return i;
         return {
           ...i,
+          discussionSummary: cleanDiscussion,
+          discussionMinutes: cleanDiscussion,
+          actionItems: cleanActions,
           logs: [...(i.logs || []), { time: timestamp, text: logText }]
         };
       });
@@ -2167,13 +2300,27 @@ Office of Student Welfare & Academic Mentorship
   };
 
   const resolveIssue = async (issueId, roId, resolutionNotes) => {
+    const targetIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === String(issueId).toUpperCase());
+
+    // 🔒 LOCKDOWN GUARD 1: Already resolved
+    if (targetIssue && (targetIssue.status === 'Resolved' || targetIssue.status === 'Closed')) {
+      alert('🔒 Ticket is already marked as Resolved.');
+      return;
+    }
+
+    // 🔒 LOCKDOWN GUARD 2: Escalated tickets can only be resolved by Administration
+    if (targetIssue && (targetIssue.status === 'Escalated' || targetIssue.status === 'Re-escalated' || Boolean(targetIssue.isReEscalated))) {
+      alert('🔒 Permission Denied: This ticket is currently escalated to Administration. Only the Admin Office can resolve and close this ticket.');
+      throw new Error('Escalated tickets must be resolved by Administration.');
+    }
+
     const timestamp = new Date().toISOString();
     const timeFormatted = new Date().toLocaleString();
     const logMsg = `Marked as Resolved by RO (${roId}): ${resolutionNotes}`;
 
     // 1. Instantly update local React state so Student, RO, & Admin Dashboards update immediately
     setDb(prev => {
-      const updatedIssues = (prev.issues || []).map(i => i.id === issueId ? {
+      const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === String(issueId).toUpperCase() ? {
         ...i,
         status: 'Resolved',
         resolvedAt: timestamp,
@@ -2241,7 +2388,14 @@ Office of Student Welfare & Academic Mentorship
 
   const reopenIssue = async (issueId, studentId, reason) => {
     const timestamp = new Date().toLocaleString();
-    const targetIssue = (db.issues || []).find(i => i.id === issueId);
+    const cleanId = String(issueId || '').trim();
+    const targetIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase());
+
+    // 🔒 LOCKDOWN GUARD: Only resolved tickets can be re-opened
+    if (targetIssue && targetIssue.status !== 'Resolved' && targetIssue.status !== 'Closed') {
+      alert('🔒 Action Blocked: Only tickets that have been marked as Resolved can be re-opened.');
+      return;
+    }
 
     // Check total attempts in this category for this student
     const category = targetIssue?.category;
@@ -2261,7 +2415,7 @@ Office of Student Welfare & Academic Mentorship
     // Update local state immediately for instant UI feedback
     setDb(prev => ({
       ...prev,
-      issues: prev.issues.map(i => i.id === issueId ? {
+      issues: prev.issues.map(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase() ? {
         ...i,
         status: newStatus,
         resolvedAt: null,
@@ -2270,7 +2424,7 @@ Office of Student Welfare & Academic Mentorship
     }));
 
     try {
-      const res = await fetch(`/api/issues/${issueId}/reopen`, {
+      const res = await fetch(`/api/issues/${cleanId}/reopen`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ studentId, reason })
@@ -2300,6 +2454,32 @@ Office of Student Welfare & Academic Mentorship
           targetIssue = parsed.find(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase());
         }
       } catch (e) { }
+    }
+
+    // 🔒 LOCKDOWN GUARD: Cannot escalate a resolved ticket
+    if (targetIssue && (targetIssue.status === 'Resolved' || targetIssue.status === 'Closed')) {
+      alert('🔒 Action Blocked: Resolved tickets cannot be escalated. If the student is unsatisfied with the resolution, the student may re-open the ticket.');
+      throw new Error('Cannot escalate a resolved ticket.');
+    }
+
+    // 🔒 DISCUSSION MINUTES GUARD: Must have logged discussion minutes before escalating to Admin
+    const linkedMeeting = (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === cleanId.toUpperCase());
+    const hasMinutes = Boolean(
+      (targetIssue && (
+        (targetIssue.discussionSummary && targetIssue.discussionSummary.trim().length > 0) ||
+        (targetIssue.discussion_summary && targetIssue.discussion_summary.trim().length > 0) ||
+        (targetIssue.discussionMinutes && targetIssue.discussionMinutes.trim().length > 0)
+      )) ||
+      (linkedMeeting && (
+        (linkedMeeting.discussionSummary && linkedMeeting.discussionSummary.trim().length > 0) ||
+        (linkedMeeting.discussion_summary && linkedMeeting.discussion_summary.trim().length > 0)
+      )) ||
+      (cleanReason && cleanReason.includes('Escalated post-meeting deliberation:'))
+    );
+
+    if (!hasMinutes) {
+      alert('🔒 Policy Guard: Cannot escalate issue to Administration until official Discussion Minutes have been logged by the Relationship Officer.');
+      throw new Error('Discussion minutes must be logged before escalating to Admin.');
     }
 
     if (callerIsReEscalate === null && targetIssue) {
@@ -2332,13 +2512,22 @@ Office of Student Welfare & Academic Mentorship
         return i;
       });
 
+      // Conclude any active meeting so it doesn't linger in live state when escalated
+      const updatedMeetings = (prev.meetings || []).map(m =>
+        (m.issueId || m.issue_id)?.toUpperCase() === cleanId.toUpperCase() && m.status === 'Started'
+          ? { ...m, status: 'Completed', endedByRo: true, endedAt: timestamp }
+          : m
+      );
+
       try {
         localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
       } catch (e) { }
 
       return {
         ...prev,
-        issues: updatedIssues
+        issues: updatedIssues,
+        meetings: updatedMeetings
       };
     });
 
@@ -2402,7 +2591,13 @@ Office of Student Welfare & Academic Mentorship
     const cleanIssueId = String(issueId || '').trim();
     const issue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase()) || {};
 
-    // Check if an administrative meeting has already been set for this ticket (Strict 1-meeting limit)
+    // 🔒 LOCKDOWN GUARD 1: Resolved tickets cannot have administrative hearings scheduled
+    if (issue.status === 'Resolved' || issue.status === 'Closed') {
+      alert('🔒 Locked Ticket: This grievance is already resolved. Administrative hearings cannot be scheduled.');
+      throw new Error('Ticket is already Resolved.');
+    }
+
+    // 🔒 LOCKDOWN GUARD 2: Check if an administrative meeting has already been set for this ticket (Strict 1-meeting limit)
     const existingAdminMeet = (db.meetings || []).find(m =>
       (m.issueId || m.issue_id)?.toUpperCase() === cleanIssueId.toUpperCase() &&
       (m.isAdminHearing || m.roId === 'ADMIN' || m.scheduledBy === 'Administration Office')
@@ -2533,6 +2728,10 @@ Office of Student Welfare & Academic Mentorship
 
   const adminResolveIssue = async (issueId, resolutionNotes) => {
     const cleanId = String(issueId || '').trim();
+    const existing = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === cleanId.toUpperCase());
+    if (existing && (existing.status === 'Resolved' || existing.status === 'Closed')) {
+      return;
+    }
     const timestamp = new Date().toISOString();
     const timeFormatted = new Date().toLocaleString();
     const logMsg = `Admin Resolved & Closed: ${resolutionNotes}`;
