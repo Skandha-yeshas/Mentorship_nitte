@@ -1,6 +1,6 @@
 import React, { useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { LogOut, User, Shield, GraduationCap, UserCheck, Briefcase } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { NitteLogo } from './NitteLogo';
 
 export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
@@ -12,17 +12,6 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
       onOpenLoginPage();
     }
   };
-
-  // Get display name & role icon
-  const getRoleIcon = () => {
-    if (currentUser === 'Admin') return Shield;
-    if (currentUser === 'Student') return GraduationCap;
-    if (currentUser === 'Mentor') return UserCheck;
-    if (currentUser === 'RO') return Briefcase;
-    return User;
-  };
-
-  const RoleIcon = getRoleIcon();
 
   const getDisplayName = () => {
     if (authenticatedUser?.name) return authenticatedUser.name;
@@ -42,89 +31,99 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
     return currentUser;
   };
 
+  // Student specific profile details
+  const targetStudentId = String(selectedSubProfile || authenticatedUser?.id || '').trim().toLowerCase();
+  const currentStudent = currentUser === 'Student' ? (
+    (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetStudentId) ||
+    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetStudentId) ||
+    authenticatedUser ||
+    (db.users?.students || [])[0]
+  ) : null;
+
   return (
-    <header className="header-bar" style={{
-      background: '#ffffff',
-      borderBottom: '1px solid #e2e8f0',
-      padding: '10px 24px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
-      position: 'sticky',
-      top: 0,
-      zIndex: 50
-    }}>
-      {/* Left: University Branding */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-        <NitteLogo height={34} />
-        <div>
-          <h1 style={{ margin: 0, fontSize: '0.94rem', fontWeight: 800, color: '#1e3a8a', letterSpacing: '0.2px' }}>
-            NITTE (Deemed to be University)
-          </h1>
-          <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
-            Student Mentorship & Escalation Support Portal
-          </p>
-        </div>
-      </div>
-
-      {/* Right: Current Session & Logout Button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* User Identity Chip */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
-          padding: '6px 12px',
-          borderRadius: '20px'
-        }}>
-          <div style={{
-            width: '26px',
-            height: '26px',
-            borderRadius: '50%',
-            background: currentUser === 'Admin' ? '#ffe4e6' : currentUser === 'Student' ? '#eff6ff' : currentUser === 'Mentor' ? '#ecfdf5' : '#fffbeb',
-            color: currentUser === 'Admin' ? '#e11d48' : currentUser === 'Student' ? '#2563eb' : currentUser === 'Mentor' ? '#059669' : '#d97706',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <RoleIcon size={14} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0f172a', lineHeight: '1.2' }}>
-              {getDisplayName()}
-            </span>
-            <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-              {currentUser} Account
-            </span>
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-[0_1px_4px_rgba(0,0,0,0.03)]">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+        {/* Brand & University Seal */}
+        <div className="flex items-center gap-3.5">
+          <NitteLogo height={34} />
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="text-base sm:text-lg font-extrabold tracking-tight text-nitte-800 leading-tight">NITTE DU</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-nitte-50 text-nitte-800 font-semibold border border-nitte-200">Redressal Portal</span>
+            </div>
+            <span className="text-[12px] text-slate-500 font-medium leading-none mt-0.5">NMAM Institute of Technology • Smart Mentorship System</span>
           </div>
         </div>
 
-        {/* Prominent Log Out Button */}
-        <button
-          onClick={handleLogout}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            backgroundColor: '#fee2e2',
-            color: '#b91c1c',
-            border: '1px solid #fca5a5',
-            borderRadius: '8px',
-            padding: '7px 14px',
-            fontSize: '0.8rem',
-            fontWeight: 700,
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-            boxShadow: '0 1px 3px rgba(185, 28, 28, 0.08)'
-          }}
-          title="Sign out and return to Login Portal"
-        >
-          <LogOut size={14} />
-          <span>Log Out</span>
-        </button>
+        {/* Quick Search (Desktop) */}
+        <div className="hidden lg:flex items-center flex-1 max-w-sm mx-6">
+          <div className="relative w-full">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+            <input
+              className="w-full text-xs pl-9 pr-8 py-2 rounded-lg bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/30 focus:border-nitte-800 transition"
+              placeholder="Search grievance ID, mentor, circulars..."
+              type="text"
+            />
+            <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">⌘K</kbd>
+          </div>
+        </div>
+
+        {/* Profile Pill & Prominent Log Out */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 pl-1">
+            <div className="relative">
+              {/* Profile photo is EMPTY (clean silhouette placeholder) */}
+              <div className="w-10 h-10 rounded-full bg-slate-100 border-2 border-slate-200 flex items-center justify-center text-slate-400 shadow-sm">
+                <span className="material-symbols-outlined text-[22px]">person</span>
+              </div>
+              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-white"></span>
+            </div>
+            <div className="flex flex-col text-left">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-900 text-sm leading-none">{getDisplayName()}</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-nitte-100 text-nitte-800 font-bold border border-nitte-200">
+                  {currentUser === 'Student' && currentStudent?.sem ? `Sem ${currentStudent.sem} • ${currentStudent.branch}` : `${currentUser} Account`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                {currentUser === 'Student' && (
+                  <span className="text-[11px] font-mono text-slate-500 leading-none">
+                    USN: {currentStudent?.id || selectedSubProfile || ''}
+                  </span>
+                )}
+                <span className="inline-flex items-center text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                  UGC Verified
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-8 w-px bg-slate-200"></div>
+
+          {/* Prominent Log Out Button */}
+          <button
+            onClick={handleLogout}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#fee2e2',
+              color: '#b91c1c',
+              border: '1px solid #fca5a5',
+              borderRadius: '8px',
+              padding: '7px 14px',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              boxShadow: '0 1px 3px rgba(185, 28, 28, 0.08)'
+            }}
+            title="Sign out and return to Login Portal"
+          >
+            <LogOut size={14} />
+            <span>Log Out</span>
+          </button>
+        </div>
       </div>
     </header>
   );

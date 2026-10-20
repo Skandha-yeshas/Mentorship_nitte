@@ -64,13 +64,13 @@
   padding: 0;
 }
 
+html,
 body {
   font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  background-image:
-    radial-gradient(at 0% 0%, rgba(37, 99, 235, 0.035) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(99, 102, 241, 0.03) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.025) 0px, transparent 50%);
+  background-color: #f8faff;
+  background-image: radial-gradient(#cbd5e1 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  background-attachment: fixed;
   color: var(--text-primary);
   min-height: 100vh;
   line-height: 1.45;
@@ -90,11 +90,12 @@ textarea {
   font-family: inherit;
 }
 
-/* Base Layout Container - Compact & Clean */
+/* Base Layout Container - Full Viewport Continuous Dotted Canvas */
 .app-container {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  background: transparent;
 }
 
 .main-content {
@@ -102,8 +103,9 @@ textarea {
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
-  padding: 16px 20px;
+  padding: 20px 20px 32px 20px;
   animation: fadeIn 0.3s ease-out;
+  background: transparent;
 }
 
 /* Modern Card Utilities - Information Dense & Clean */
@@ -975,4 +977,35 @@ textarea {
   .grid-cols-4 {
     grid-template-columns: 1fr;
   }
+}
+
+/* Stitch UI Architectural Utilities */
+.bg-dot-pattern {
+  background-color: #f8faff;
+  background-image: radial-gradient(#cbd5e1 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.6), 0 0 15px rgba(16, 185, 129, 0.25); }
+  50% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.9), 0 0 25px rgba(16, 185, 129, 0.45); }
+}
+.active-speaker-ring {
+  animation: pulseGlow 2.5s infinite ease-in-out;
 }

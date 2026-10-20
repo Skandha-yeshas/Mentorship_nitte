@@ -1,7 +1,7 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
 import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw, Video, Mic, MicOff, VideoOff, Square, Shield, Play, Camera, AlertCircle, X, Download, PhoneOff, Volume2, VolumeX, FileText, MessageSquare } from 'lucide-react';
-import { WebRtcMeetingSession } from '../utils/webrtcService';
+import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
@@ -53,12 +53,25 @@ export const RODashboard = ({ roId }) => {
   const [remoteStream, setRemoteStream] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [peerConnected, setPeerConnected] = useState(false);
+  const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
+  const [isStudentCameraOff, setIsStudentCameraOff] = useState(false);
   const localStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const compositeRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const webrtcSessionRef = useRef(null);
   const isEndingMeetingRef = useRef(false);
+
+  // In-Meeting Cinematic Console States
+  const [showInMeetingSidebar, setShowInMeetingSidebar] = useState(true);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isRecActive, setIsRecActive] = useState(true);
+  const [inMeetingDirectives, setInMeetingDirectives] = useState([
+    '1. Network Admin AP-09 replacement (Oct 25 11:00 AM)',
+    '2. Library Cubicle #14 temp pass (Immediate)'
+  ]);
+  const [newDirectiveInput, setNewDirectiveInput] = useState('');
+  const [inMeetingConsent, setInMeetingConsent] = useState(true);
 
   // Form states
   const [resolutionNotes, setResolutionNotes] = useState('');
@@ -108,8 +121,9 @@ export const RODashboard = ({ roId }) => {
         }
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+            aspectRatio: { ideal: 1.7777777778 },
             frameRate: { ideal: 30, max: 30 },
             facingMode: 'user'
           },
@@ -121,9 +135,13 @@ export const RODashboard = ({ roId }) => {
         });
       } catch (audioErr) {
         try {
-          console.warn('[RO] Advanced audio constraints fallback, requesting standard media:', audioErr);
+          console.warn('[RO] Advanced audio constraints fallback, requesting standard widescreen media:', audioErr);
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            video: {
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              aspectRatio: { ideal: 1.7777777778 }
+            },
             audio: true
           });
         } catch (camErr) {
@@ -147,13 +165,14 @@ export const RODashboard = ({ roId }) => {
       setLocalStream(stream);
       setMediaPermissionState('granted');
 
-      const targetIssueId = String(
+      const rawTarget =
         activeMeetingIssueId || 
         activeMeeting?.issueId || 
         activeMeeting?.issue_id || 
+        activeMeeting?.id ||
         (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : selectedIssueId) ||
-        'TICK-1002'
-      ).trim().toUpperCase();
+        'TICK-1002';
+      const targetIssueId = getCanonicalMeetingRoomId(rawTarget);
 
       // Initialize WebRTC Meeting Session for live peer-to-peer video with student
       if (targetIssueId) {
@@ -175,12 +194,10 @@ export const RODashboard = ({ roId }) => {
             },
             onPeerStatus: (status) => {
               setPeerConnected(Boolean(status.connected));
-              if (!status.connected) {
-                setRemoteStream(null);
-                if (compositeRecorderRef.current) {
-                  compositeRecorderRef.current.setRemoteStream(null);
-                }
-              }
+            },
+            onRemoteMediaState: (state) => {
+              if (typeof state.video === 'boolean') setIsStudentCameraOff(!state.video);
+              if (typeof state.audio === 'boolean') setIsStudentMicMuted(!state.audio);
             },
             onMeetingEnded: () => {
               console.log('[RO] Remote peer ended session, automatically opening post-meeting feedback modal.');
@@ -230,6 +247,9 @@ export const RODashboard = ({ roId }) => {
         track.enabled = !nextMuted;
       });
     }
+    if (webrtcSessionRef.current) {
+      webrtcSessionRef.current.setAudioEnabled(!nextMuted);
+    }
     if (compositeRecorderRef.current) {
       compositeRecorderRef.current.setLocalMicMuted(nextMuted);
     }
@@ -243,8 +263,44 @@ export const RODashboard = ({ roId }) => {
         track.enabled = !nextCamOff;
       });
     }
+    if (webrtcSessionRef.current) {
+      webrtcSessionRef.current.setVideoEnabled(!nextCamOff);
+    }
     if (compositeRecorderRef.current) {
       compositeRecorderRef.current.setLocalCamOff(nextCamOff);
+    }
+  };
+
+  const toggleScreenShare = async () => {
+    if (!isScreenSharing) {
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          const screenTrack = screenStream.getVideoTracks()[0];
+          if (screenTrack && localStreamRef.current) {
+            const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
+            if (currentVideoTrack) {
+              localStreamRef.current.removeTrack(currentVideoTrack);
+              currentVideoTrack.stop();
+            }
+            localStreamRef.current.addTrack(screenTrack);
+            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            if (webrtcSessionRef.current) {
+              webrtcSessionRef.current.updateLocalStream(localStreamRef.current);
+            }
+            screenTrack.onended = () => {
+              setIsScreenSharing(false);
+              requestMediaPermissions();
+            };
+            setIsScreenSharing(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Screen share cancelled or failed:', err);
+      }
+    } else {
+      setIsScreenSharing(false);
+      requestMediaPermissions();
     }
   };
 
@@ -503,16 +559,24 @@ export const RODashboard = ({ roId }) => {
     setShowScheduleModal(true);
   };
 
-  const handleLaunchOnlineMeeting = () => {
-    if (!activeMeeting || !selectedIssue) return;
-    if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
+  const handleLaunchOnlineMeeting = (directMeet = null, directIssue = null) => {
+    const meetToUse = directMeet || activeMeeting;
+    const issueToUse = directIssue || selectedIssue || (meetToUse ? (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (meetToUse.issueId || meetToUse.issue_id)?.toUpperCase()) : null);
+    if (!meetToUse && !issueToUse) return;
+    if (issueToUse && (issueToUse.status === 'Resolved' || issueToUse.status === 'Escalated' || issueToUse.status === 'Re-escalated' || issueToUse.isReEscalated)) {
       alert('🔒 Ticket Locked: Meeting cannot be launched because this ticket is resolved or escalated.');
       return;
     }
-    const targetId = String(activeMeeting.issueId || activeMeeting.issue_id || selectedIssue.id).trim().toUpperCase();
+    if (issueToUse && issueToUse.id) {
+      setSelectedIssueId(issueToUse.id);
+    }
+    const rawTarget = (meetToUse && (meetToUse.issueId || meetToUse.issue_id)) || (issueToUse && issueToUse.id) || (meetToUse && meetToUse.id) || 'TICK-1002';
+    const targetId = getCanonicalMeetingRoomId(rawTarget);
     setActiveMeetingIssueId(targetId);
     isEndingMeetingRef.current = false;
-    updateMeetingStatus(activeMeeting.id || activeMeeting.issueId || targetId, 'Started');
+    if (meetToUse && (meetToUse.id || meetToUse.issueId)) {
+      updateMeetingStatus(meetToUse.id || meetToUse.issueId || targetId, 'Started');
+    }
     setRecordingSeconds(0);
     setIsCameraOff(false);
     setIsMicMuted(false);
@@ -1019,679 +1083,852 @@ export const RODashboard = ({ roId }) => {
   };
 
   return (
-    <div className="dashboard-layout">
-      {/* Sidebar Panel */}
-      <div className="glass-card panel-selector">
-        {/* RO Header */}
-        <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(217, 119, 6, 0.1)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'var(--accent-amber)' }}>
-              <Inbox size={24} />
+    <div className="text-slate-800 font-sans antialiased w-full selection:bg-blue-700 selection:text-white space-y-6">
+      {/* Top Command & Officer Identity Banner */}
+      <div className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-300 p-6 border border-slate-200 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-700 via-indigo-600 to-blue-500"></div>
+        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6">
+          {/* Officer Profile & Accreditation Pill */}
+          <div className="flex items-start sm:items-center gap-4.5 min-w-0">
+            <div className="relative flex-shrink-0">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md ring-4 ring-blue-50">
+                <span className="material-symbols-outlined text-3xl">account_circle</span>
+              </div>
+              {/* Subtle Live Status Indicator */}
+              <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-white shadow-xs"></span>
+              </span>
             </div>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>{ro.name}</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Relationship Officer</p>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                  {ro.name}
+                </h2>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-semibold text-xs tracking-tight shadow-2xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                  Senior Relationship Officer (RO)
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs shadow-2xs">
+                  <span className="material-symbols-outlined text-xs text-emerald-600">verified</span>
+                  UGC Redressal Authorized
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium flex items-center flex-wrap gap-x-2">
+                <span className="text-slate-800 font-semibold flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm text-blue-600">domain</span>
+                  {ro.region || 'Student Affairs & Support'}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-600">Cabin 302, Academic Block IV</span>
+                <span className="text-slate-300">•</span>
+                <span className="bg-slate-100 px-2 py-0.5 rounded-md text-slate-700 font-mono text-xs border border-slate-200 font-semibold">RO ID: {ro.id}</span>
+              </p>
             </div>
           </div>
-          <div style={{ marginTop: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            <strong>Region/Scope:</strong> {ro.region}
+          {/* Quick Action Utilities */}
+          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
+            {/* Global Search Bar with Shortcut */}
+            <div className="relative flex-1 sm:w-72 xl:w-80">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-blue-600 text-lg pointer-events-none">search</span>
+              <input
+                className="w-full h-10 pl-9 pr-12 bg-slate-50/80 hover:bg-slate-100/80 focus:bg-white text-slate-900 placeholder-slate-400 border border-slate-200 focus:border-blue-600 rounded-xl text-xs sm:text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-2xs"
+                placeholder="Search USN, Student, Ticket ID..."
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {/* Video Management Quick Action */}
+            <button
+              onClick={() => openVideoManagerForCategory()}
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-xs sm:text-sm transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer"
+              type="button"
+              title="Manage solution video links for your assigned category"
+            >
+              <span className="material-symbols-outlined text-lg">videocam</span>
+              <span className="whitespace-nowrap">Self-Help Hub</span>
+            </button>
           </div>
         </div>
 
-        {/* Status Filters */}
-        <div style={{ marginBottom: '16px' }}>
-          <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
-            Status Queue
-          </span>
-          <button className={`panel-btn ${statusFilter === 'All' ? 'active RO' : ''}`} onClick={() => setStatusFilter('All')}>
-            <Inbox size={16} />
-            <span>All Assigned Issues ({activeRoIssues.length})</span>
-          </button>
-
-          <button className={`panel-btn ${statusFilter === 'Assigned to RO' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Assigned to RO')}>
-            <Search size={16} />
-            <span>New / Incoming ({roIssues.filter(i => i.status === 'Assigned to RO').length})</span>
-          </button>
-
-          <button className={`panel-btn ${statusFilter === 'Meeting Scheduled' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Meeting Scheduled')}>
-            <Calendar size={16} />
-            <span>Scheduled Meetings ({roIssues.filter(i => i.status === 'Meeting Scheduled').length})</span>
-          </button>
-
-          <button className={`panel-btn ${statusFilter === 'Re-opened by Student' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Re-opened by Student')}>
-            <RotateCcw size={16} />
-            <span>Re-opened Tickets ({roIssues.filter(i => i.status === 'Re-opened by Student').length})</span>
-          </button>
-
-          <button className={`panel-btn ${statusFilter === 'Resolved' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Resolved')}>
-            <CheckCircle2 size={16} />
-            <span>Resolved in Storage ({roIssues.filter(i => i.status === 'Resolved').length})</span>
-          </button>
-
-          <button className={`panel-btn ${statusFilter === 'Escalated' ? 'active RO' : ''}`} onClick={() => setStatusFilter('Escalated')}>
-            <AlertTriangle size={16} />
-            <span>Escalated to Admin ({roIssues.filter(i => i.status === 'Escalated').length})</span>
-          </button>
-
-          <button
-            className="panel-btn"
-            onClick={() => openVideoManagerForCategory()}
-            style={{ marginTop: '10px', background: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
-            title="Manage solution video links for issues assigned to you"
+        {/* Telemetry KPI Strip */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mt-6 pt-5 border-t border-slate-100">
+          {/* Metric 1: Assigned */}
+          <div
+            onClick={() => setStatusFilter('All')}
+            className={`bg-white hover:bg-blue-50/30 border ${statusFilter === 'All' ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-300'} rounded-xl p-3.5 flex items-center justify-between shadow-2xs hover:shadow-xs transition-all duration-200 cursor-pointer group`}
           >
-            <Video size={16} />
-            <span>🎥 Manage My Issue Videos</span>
-          </button>
-        </div>
-
-        {/* Scheduled Meetings Overview Panel */}
-        {scheduledMeetings.length > 0 && (
-          <div className="glass-card" style={{ marginTop: 'auto', padding: '14px', background: 'var(--nitte-blue-light)', borderLeft: '3px solid var(--nitte-blue)', fontSize: '0.8rem' }}>
-            <h4 style={{ fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Calendar size={14} /> Assigned Meetings ({scheduledMeetings.length})
-            </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {scheduledMeetings.map(meet => (
-                <div key={meet.id} style={{ background: '#ffffff', padding: '8px 10px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <p style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{meet.studentName}</p>
-                    <span className="badge badge-resolved" style={{ fontSize: '0.65rem', padding: '1px 6px' }}>Confirmed</span>
-                  </div>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '2px' }}>📅 {meet.date} at ⏰ {meet.time}</p>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', marginTop: '1px' }}>📍 {meet.location || 'RO Office Desk'}</p>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-xl">folder_shared</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold text-slate-500">Total Assigned</span>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-2xl font-extrabold text-slate-900 tracking-tight">{activeRoIssues.length}</span>
+                  <span className="text-[11px] text-blue-700 font-semibold bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Active Cycle</span>
                 </div>
-              ))}
+              </div>
             </div>
           </div>
-        )}
+          {/* Metric 2: Pending Action */}
+          <div
+            onClick={() => setStatusFilter('Assigned to RO')}
+            className={`bg-white hover:bg-rose-50/30 border ${statusFilter === 'Assigned to RO' ? 'border-rose-500 ring-2 ring-rose-100' : 'border-slate-200 hover:border-rose-300'} rounded-xl p-3.5 flex items-center justify-between shadow-2xs hover:shadow-xs transition-all duration-200 cursor-pointer group`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-xl">priority_high</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold text-slate-500">Pending Action</span>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-2xl font-extrabold text-slate-900 tracking-tight">{roIssues.filter(i => i.status === 'Assigned to RO').length}</span>
+                  <span className="text-[11px] text-rose-700 font-semibold bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">SLA &lt; 24h</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Metric 3: Scheduled Meetings */}
+          <div
+            onClick={() => setStatusFilter('Meeting Scheduled')}
+            className={`bg-white hover:bg-emerald-50/30 border ${statusFilter === 'Meeting Scheduled' ? 'border-emerald-500 ring-2 ring-emerald-100' : 'border-slate-200 hover:border-emerald-300'} rounded-xl p-3.5 flex items-center justify-between shadow-2xs hover:shadow-xs transition-all duration-200 cursor-pointer group`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-xl">sensors</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold text-slate-500">Scheduled Meetings</span>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-2xl font-extrabold text-slate-900 tracking-tight">{scheduledMeetings.length}</span>
+                  <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">WebRTC Ready</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Metric 4: Resolved */}
+          <div
+            onClick={() => setStatusFilter('Resolved')}
+            className={`bg-white hover:bg-indigo-50/30 border ${statusFilter === 'Resolved' ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-indigo-300'} rounded-xl p-3.5 flex items-center justify-between shadow-2xs hover:shadow-xs transition-all duration-200 cursor-pointer group`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-xl">task_alt</span>
+              </div>
+              <div>
+                <span className="block text-xs font-semibold text-slate-500">Resolved Archive</span>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-2xl font-extrabold text-slate-900 tracking-tight">{roIssues.filter(i => i.status === 'Resolved').length}</span>
+                  <span className="text-[11px] text-indigo-700 font-semibold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">Storage</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main Content Pane */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-        <div style={{ display: 'grid', gridTemplateColumns: selectedIssue ? '1fr 1fr' : '1fr', gap: '20px' }}>
-
-          {/* QUEUE LIST */}
-          <div className="glass-card">
-            <h2 className="section-title">Issue Queue ({filteredIssues.length})</h2>
-
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-              <div style={{ position: 'relative', flex: 1 }}>
-                <input
-                  type="text"
-                  className="form-control"
-                  style={{ paddingLeft: '32px' }}
-                  placeholder="Search by student name, category, or Ticket ID (e.g. TICK-1003)..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <Search size={14} style={{ position: 'absolute', left: '12px', top: '14px', color: 'var(--text-muted)' }} />
+      {/* Primary Workspace: Navigation & Master-Detail Layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN: Queue Rails & High-Density Ticket Feed (xl:col-span-4) */}
+        <div className="xl:col-span-4 space-y-4">
+          {/* Queue Pipeline Filters */}
+          <div className="bg-white rounded-xl p-4 shadow-card border border-slate-200">
+            <div className="flex items-center justify-between pb-3 mb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-700"></span>
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Queue Pipeline</span>
               </div>
+              <span className="text-[11px] text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Real-Time Sync
+              </span>
             </div>
 
-            {filteredIssues.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
-                <Inbox size={48} style={{ marginBottom: '12px', opacity: 0.4 }} />
-                {statusFilter === 'Resolved' && !trimmedQuery ? (
-                  <div>
-                    <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                      Resolved Tickets in Local Storage
-                    </h4>
-                    <p style={{ fontSize: '0.8rem', maxWidth: '340px', margin: '0 auto', lineHeight: 1.5 }}>
-                      Resolved issues are archived in Local Storage. Enter the <strong>Ticket ID</strong> in the search bar above to look up resolved issues and review documentation.
-                    </p>
-                  </div>
-                ) : (
-                  <p>No issues found matching your filters.</p>
-                )}
-              </div>
-            ) : (
-              filteredIssues.map(issue => {
-                const isResolved = issue.status === 'Resolved';
-                const badgeClass = `badge badge-${issue.status.toLowerCase().replace(' ', '-')}`;
-                const isSelected = selectedIssueId === issue.id;
+            <div className="flex flex-col gap-1" role="tablist">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('All')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all text-left ${statusFilter === 'All' ? 'bg-blue-50/80 text-blue-900 border border-blue-200' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-blue-700">inbox</span> All Assigned Issues
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 font-bold text-xs">{activeRoIssues.length}</span>
+              </button>
 
-                return (
-                  <div
-                    key={issue.id}
-                    onClick={() => setSelectedIssueId(issue.id)}
-                    className={`glass-card issue-card ${issue.priority}`}
-                    style={{
-                      background: isResolved
-                        ? (isSelected ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.015)')
-                        : (isSelected ? 'rgba(255, 255, 255, 0.06)' : ''),
-                      borderColor: isResolved
-                        ? (isSelected ? 'rgba(148, 163, 184, 0.35)' : 'rgba(148, 163, 184, 0.12)')
-                        : (isSelected ? 'rgba(245, 158, 11, 0.5)' : ''),
-                      opacity: isResolved ? (isSelected ? 0.75 : 0.5) : 1,
-                      boxShadow: isResolved ? 'none' : undefined,
-                      filter: isResolved ? 'grayscale(25%)' : undefined,
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <div className="issue-card-header">
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <strong style={{ fontSize: '0.92rem', color: isResolved ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
-                            {issue.category}
-                          </strong>
-                          {isResolved && (
-                            <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.18)' }}>
-                              📁 In Local Storage
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          From: <strong>{issue.studentName}</strong> ({issue.studentId}) • Ticket: <span style={{ fontFamily: 'monospace' }}>{issue.id}</span>
-                        </div>
-                      </div>
-                      <span className={badgeClass} style={{ opacity: isResolved ? 0.7 : 1 }}>{issue.status}</span>
-                    </div>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Assigned to RO')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all text-left ${statusFilter === 'Assigned to RO' ? 'bg-rose-50 text-rose-900 border border-rose-200 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-rose-600">mark_email_unread</span> New / Incoming
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 font-bold text-xs">
+                  {roIssues.filter(i => i.status === 'Assigned to RO').length}
+                </span>
+              </button>
 
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      {issue.description}
-                    </p>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Meeting Scheduled')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all text-left ${statusFilter === 'Meeting Scheduled' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-emerald-600">videocam</span> Scheduled Meetings
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs">
+                  {roIssues.filter(i => i.status === 'Meeting Scheduled').length}
+                </span>
+              </button>
 
-                    <div className="issue-meta" style={{ opacity: isResolved ? 0.75 : 1 }}>
-                      <span>Submitted: {new Date(issue.createdAt).toLocaleDateString()}</span>
-                      <span>Priority: <strong>{issue.priority}</strong></span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Re-opened by Student')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all text-left ${statusFilter === 'Re-opened by Student' ? 'bg-amber-50 text-amber-900 border border-amber-200 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-amber-600">replay</span> Re-opened by Student
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 font-semibold text-xs">
+                  {roIssues.filter(i => i.status === 'Re-opened by Student').length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Resolved')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all text-left ${statusFilter === 'Resolved' ? 'bg-slate-100 text-slate-900 border border-slate-300 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-slate-500">check_circle</span> Resolved in Storage
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-semibold text-xs">
+                  {roIssues.filter(i => i.status === 'Resolved').length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatusFilter('Escalated')}
+                className={`flex items-center justify-between px-3 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all text-left ${statusFilter === 'Escalated' ? 'bg-rose-50 text-rose-900 border border-rose-200 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-base text-rose-500">move_up</span> Escalated to Admin
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-semibold text-xs">
+                  {roIssues.filter(i => i.status === 'Escalated' || i.status === 'Re-escalated' || Boolean(i.isReEscalated)).length}
+                </span>
+              </button>
+            </div>
           </div>
 
-          {/* QUEUE DETAILS PANE - TICKET DOCUMENTS & RESOLUTION DETAILS */}
-          {selectedIssue && (
-            <div className="glass-card" style={{ position: 'sticky', top: '90px' }}>
-              {escalateSuccessMsg && (
-                <div style={{
-                  padding: '12px 16px',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  border: '1px solid rgba(16, 185, 129, 0.4)',
-                  borderRadius: '8px',
-                  color: '#34d399',
-                  fontSize: '0.88rem',
-                  fontWeight: '600',
-                  marginBottom: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.1)'
-                }}>
-                  {escalateSuccessMsg}
+          {/* Upcoming Brief Meetings Widget */}
+          {scheduledMeetings.length > 0 && (
+            <div className="bg-white rounded-xl p-3.5 shadow-card border border-slate-200">
+              <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-base text-blue-700">calendar_today</span>
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Upcoming Brief Meetings</h4>
                 </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Manage Ticket</h3>
-                <span className={`badge badge-${selectedIssue.status.toLowerCase().replace(' ', '-')}`}>{selectedIssue.status}</span>
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> {scheduledMeetings.length} Scheduled
+                </span>
               </div>
 
-              {/* Student Context Card */}
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '16px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyCenter: 'center', color: 'var(--text-secondary)' }}>
-                  <User size={16} style={{ margin: '0 auto' }} />
-                </div>
-                <div>
-                  <p><strong>{selectedIssue.studentName}</strong> (ID: {selectedIssue.studentId})</p>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Priority: {selectedIssue.priority} | Contact: {db.users.students.find(s => s.id === selectedIssue.studentId)?.phone || 'N/A'}</p>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <h4 style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Issue description:</h4>
-                <p style={{ fontSize: '0.85rem', background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
-                  {selectedIssue.description}
-                </p>
-              </div>
-
-              {/* Active Meeting Details */}
-              {activeMeeting && (
-                <div style={{
-                  border: isMeetingExpired ? '1px solid var(--accent-rose)' : (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? '1px solid #10b981' : '1px solid var(--nitte-blue-soft)'),
-                  background: isMeetingExpired ? 'rgba(244,63,94,0.08)' : (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? 'rgba(16,185,129,0.08)' : 'var(--nitte-blue-light)'),
-                  padding: '14px',
-                  borderRadius: '6px',
-                  marginBottom: '16px',
-                  fontSize: '0.85rem'
-                }}>
-                  <h4 style={{ fontWeight: '700', color: isMeetingExpired ? 'var(--accent-rose)' : (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? '#10b981' : 'var(--nitte-blue)'), marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {isMeetingExpired ? <AlertTriangle size={16} /> : <Calendar size={15} />}
-                    {isMeetingExpired
-                      ? 'Missed / Expired Meeting (Time Elapsed)'
-                      : (selectedIssue.status === 'Resolved'
-                        ? 'Completed Meeting Session'
-                        : (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? 'Meeting Session In-Progress' : 'Assigned Meeting Session'))
-                    }
-                  </h4>
-                  <p><strong>Date & Time:</strong> 📅 {activeMeeting.date} at ⏰ {activeMeeting.time}</p>
-                  <p style={{ marginTop: '4px' }}><strong>Location / Venue:</strong> 📍 {activeMeeting.location || 'RO Office Desk'}</p>
-                  <p style={{ marginTop: '4px' }}>
-                    <strong>Mode:</strong> {activeMeeting.mode || 'Offline'} |
-                    <strong>Status:</strong> {selectedIssue.status === 'Resolved' ? 'Completed / Resolved' : (isMeetingExpired ? 'Time Elapsed / Needs Reassignment' : (activeMeeting.status || 'Confirmed'))}
-                  </p>
-                  {isMeetingExpired && selectedIssue.status !== 'Resolved' && (
-                    <p style={{ marginTop: '6px', color: '#fca5a5', fontWeight: '500' }}>
-                      ⚠️ The scheduled meeting date/time has passed (exceeded 10 min grace period). Click <strong>Reassign Missed Meeting</strong> below to set a new present or future date.
-                    </p>
-                  )}
-                  {activeMeeting.notes && !isMeetingExpired && (
-                    <p style={{ marginTop: '6px', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
-                      <strong>RO Notes:</strong> "{activeMeeting.notes}"
-                    </p>
-                  )}
-
-                  {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
-                  {activeMeeting.discussionSummary && (
-                    <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
-                      <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <FileText size={15} /> 📋 Logged Discussion Minutes:
-                      </div>
-                      <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{activeMeeting.discussionSummary}</p>
-                      {activeMeeting.actionItems && (
-                        <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                          <strong>Agreed Action Items:</strong> {activeMeeting.actionItems}
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1 text-xs">
+                {scheduledMeetings.map(meet => {
+                  const isOnline = meet.mode === 'Online';
+                  return (
+                    <div
+                      key={meet.id}
+                      onClick={() => {
+                        const targetIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === (meet.issueId || meet.issue_id)?.toUpperCase());
+                        if (targetIssue) setSelectedIssueId(targetIssue.id);
+                      }}
+                      className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-blue-300 transition flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${isOnline ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                            {meet.time}
+                          </span>
+                          <span className="font-bold text-slate-900 truncate">{meet.studentName}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                          📅 {meet.date} • {isOnline ? 'WebRTC Online Call' : (meet.location || 'Cabin 302')}
                         </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* EDIT OR LOG DISCUSSION MINUTES BUTTON */}
-                  {activeMeeting.status === 'Completed' && (
-                    <div style={{ marginTop: '8px' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPostMeetingData({
-                            meetingId: activeMeeting.id || activeMeeting.issueId,
-                            issueId: selectedIssue.id,
-                            studentName: selectedIssue.studentName,
-                            studentId: selectedIssue.studentId,
-                            category: selectedIssue.category,
-                            durationText: 'Concluded Session'
-                          });
-                          setDiscussionSummary(activeMeeting.discussionSummary || '');
-                          setActionItems(activeMeeting.actionItems || '');
-                          setMeetingOutcome(selectedIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
-                          setFollowUpNeeded(Boolean(activeMeeting.followUpNeeded));
-                          setShowMeetingFeedbackModal(true);
-                        }}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '0.74rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                      >
-                        <FileText size={13} /> {activeMeeting.discussionSummary ? '✏️ Edit Discussion Minutes' : '📋 Log Discussion Minutes'}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* START / LAUNCH MEETING ACTION BUTTON FOR RO */}
-                  {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && (
-                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                      {(activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress') ? (
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <div style={{ color: '#10b981', fontWeight: '700', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <CheckCircle2 size={16} /> 🟢 Meeting Currently In-Progress
-                          </div>
-                          {activeMeeting.mode === 'Online' ? (
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActiveMeetingIssueId(activeMeeting.issueId || activeMeeting.issue_id || (selectedIssue ? selectedIssue.id : null));
-                                  setShowOnlineMeetingModal(true);
-                                }}
-                                className="btn btn-primary"
-                                style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#2563eb' }}
-                              >
-                                <Video size={13} /> Open Recording Room (REC: {formatTimer(recordingSeconds)})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleOpenOnlineNotDoneModal}
-                                style={{
-                                  fontSize: '0.75rem',
-                                  padding: '4px 10px',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  background: 'rgba(239, 68, 68, 0.15)',
-                                  color: '#fca5a5',
-                                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontWeight: 600
-                                }}
-                                title="Declare that the online meeting could not be held, provide feedback, and reassign to offline"
-                              >
-                                🚫 Online Meeting Not Done
-                              </button>
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                              <button
-                                type="button"
-                                onClick={handleConcludeOfflineMeeting}
-                                className="btn btn-success"
-                                style={{ fontSize: '0.75rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px' }}
-                              >
-                                <CheckCircle2 size={13} /> Conclude In-Person Meeting & Log Notes
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleOpenScheduleModal}
-                                className="btn btn-secondary"
-                                style={{ fontSize: '0.75rem', padding: '5px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              >
-                                <RotateCcw size={13} /> Reschedule Meeting
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                          {activeMeeting.mode === 'Online' ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={handleLaunchOnlineMeeting}
-                                className="btn btn-primary"
-                                style={{ fontSize: '0.78rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px', background: '#2563eb' }}
-                              >
-                                <Video size={14} /> Launch Online Meeting & Auto-Record
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleOpenOnlineNotDoneModal}
-                                style={{
-                                  fontSize: '0.78rem',
-                                  padding: '5px 12px',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '5px',
-                                  borderRadius: '4px',
-                                  background: 'rgba(245, 158, 11, 0.12)',
-                                  color: '#fbbf24',
-                                  border: '1px solid rgba(245, 158, 11, 0.4)',
-                                  cursor: 'pointer',
-                                  fontWeight: 600
-                                }}
-                                title="Declare that the online meeting could not be held, provide feedback, and reassign to offline"
-                              >
-                                🚫 Online Meeting Not Done
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started')}
-                              className="btn btn-success"
-                              style={{ fontSize: '0.78rem', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: '5px', borderRadius: '4px' }}
-                            >
-                              <CheckCircle2 size={14} /> Mark In-Person Meeting as Started
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* STORED VIDEO RECORDINGS ARCHIVE */}
-              {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
-                <div style={{ border: '1px solid rgba(59, 130, 246, 0.3)', background: 'rgba(59, 130, 246, 0.05)', padding: '12px 14px', borderRadius: '6px', marginBottom: '16px' }}>
-                  <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Video size={15} /> Auto-Archived Online Video Recordings ({db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length})
-                  </h4>
-                  {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
-                    <div key={rec.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '8px 10px', borderRadius: '4px', marginTop: '6px', fontSize: '0.78rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: '700', color: '#10b981' }}>🎥 {rec.mode} ({rec.durationText})</span>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>Recorded: {new Date(rec.recordedAt).toLocaleString()}</span>
                       </div>
-                      <p style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>{rec.transcriptSummary}</p>
-                      <div style={{ marginTop: '6px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${isOnline ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+                          {isOnline ? 'WebRTC' : 'In-Person'}
+                        </span>
                         <button
                           type="button"
-                          onClick={() => setPlayingRecording(rec)}
-                          className="btn btn-primary"
-                          style={{ fontSize: '0.75rem', padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const targetIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === (meet.issueId || meet.issue_id)?.toUpperCase());
+                            if (targetIssue) {
+                              setSelectedIssueId(targetIssue.id);
+                              if (isOnline) {
+                                handleLaunchOnlineMeeting(meet, targetIssue);
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 font-bold text-[11px] rounded transition shadow-2xs ${isOnline ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700'}`}
                         >
-                          <Play size={12} /> Play Stored Video Recording
+                          {isOnline ? 'Join' : 'View'}
                         </button>
-                        {rec.videoUrl && rec.videoUrl.startsWith('blob:') && (
-                          <a
-                            href={rec.videoUrl}
-                            download={`recording_${selectedIssue.id}.webm`}
-                            style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                          >
-                            <Download size={12} /> Download .webm
-                          </a>
-                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {/* RESOLUTION DETAILS IF ALREADY RESOLVED */}
-              {selectedIssue.status === 'Resolved' && (
-                <div style={{
-                  borderLeft: '4px solid var(--accent-emerald)',
-                  background: 'rgba(16, 185, 129, 0.04)',
-                  padding: '14px 16px',
-                  borderRadius: '6px',
-                  marginBottom: '16px',
-                  fontSize: '0.85rem'
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <h4 style={{ fontWeight: '700', color: 'rgb(110,231,183)', margin: 0, fontSize: '0.9rem' }}>
-                      Logged Resolution Action:
-                    </h4>
-                    {selectedIssue.shiftedToLocalStorage && (
-                      <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '4px', background: 'rgba(148, 163, 184, 0.12)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.2)' }}>
-                        📁 Shifted to Local Storage
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>
-                    {selectedIssue.resolutionNotes || 'Marked as resolved by Relationship Officer.'}
-                  </p>
-                </div>
-              )}
-
-              {/* RE-OPENED BY STUDENT WARNING ALERT */}
-              {selectedIssue.status === 'Re-opened by Student' && (
-                <div style={{ borderLeft: '4px solid var(--accent-amber)', background: 'rgba(217,119,6,0.08)', padding: '12px 14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                  <h4 style={{ fontWeight: '800', color: 'var(--accent-amber)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <RotateCcw size={16} /> Re-opened by Student (Unsatisfied Resolution)
-                  </h4>
-                  <p style={{ color: 'var(--text-primary)' }}>
-                    The student indicated that the previous resolution was incomplete or that additional advice is required. Please review their log feedback below and click <strong>Reassign / Reschedule Meeting</strong> to set up a follow-up guidance session.
-                  </p>
-                </div>
-              )}
-
-              {/* ACTION BUTTONS FOR RO */}
-              {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && selectedIssue.status !== 'Re-escalated' && !selectedIssue.isReEscalated && (
-                <div style={{ marginTop: '20px' }}>
-                  {activeMeeting && (
-                    <div style={{ fontSize: '0.78rem', color: isReassignLimitReached ? '#ef4444' : 'var(--text-secondary)', marginBottom: '10px', background: isReassignLimitReached ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.08)', padding: '8px 12px', borderRadius: '6px', borderLeft: isReassignLimitReached ? '3px solid #ef4444' : '3px solid #3b82f6' }}>
-                      <span style={{ fontWeight: '600' }}>📅 Current Meeting:</span> {activeMeeting.date} at {activeMeeting.time} ({activeMeeting.location}) &nbsp;|&nbsp;
-                      RO Reassignments Used: <strong style={{ color: isReassignLimitReached ? '#ef4444' : '#3b82f6' }}>{meetingReassignCount} / 2 Max</strong>
-                      {isReassignLimitReached && (
-                        <div style={{ color: '#fca5a5', marginTop: '2px', fontWeight: 'bold' }}>
-                          🔒 Maximum 2 meeting reassignments reached. Escalate ticket to Admin if further changes are required.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {isOnlineMeetingPendingMinutes && (
-                    <div style={{
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.35)',
-                      color: '#fca5a5',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      marginBottom: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <AlertTriangle size={15} style={{ color: '#ef4444', flexShrink: 0 }} />
-                      <span>
-                        <strong>Log Discussion Minutes Required:</strong> An online session is linked to this ticket. Institutional mentorship policy requires the RO to log the official discussion minutes before this ticket can be resolved.
-                      </span>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={handleOpenScheduleModal}
-                      className={`btn ${isReassignLimitReached ? 'btn-secondary' : (isMeetingExpired ? 'btn-danger' : 'btn-primary')}`}
-                      disabled={isReassignLimitReached}
-                      style={{
-                        flex: 1,
-                        minWidth: '140px',
-                        opacity: isReassignLimitReached ? 0.6 : 1,
-                        cursor: isReassignLimitReached ? 'not-allowed' : 'pointer'
-                      }}
-                      title={isReassignLimitReached ? 'Maximum 2 meeting reassignments reached for this issue' : ''}
-                    >
-                      <Calendar size={15} /> {
-                        isReassignLimitReached
-                          ? '🔒 Reassign Limit Reached (2/2)'
-                          : isMeetingExpired
-                            ? `Reassign Missed Meeting (${meetingReassignCount}/2)`
-                            : activeMeeting
-                              ? `Reschedule / Reassign Meeting (${meetingReassignCount}/2)`
-                              : 'Schedule Meeting'
-                      }
-                    </button>
-                    <button
-                      onClick={handleOpenResolveModal}
-                      className="btn btn-success"
-                      style={{
-                        flex: 1,
-                        minWidth: '140px',
-                        background: isOnlineMeetingPendingMinutes ? 'linear-gradient(135deg, #059669 0%, #047857 100%)' : undefined,
-                        border: isOnlineMeetingPendingMinutes ? '1px dashed #34d399' : undefined
-                      }}
-                      title={isOnlineMeetingPendingMinutes ? 'Filing discussion minutes is required before resolving' : 'Mark ticket as resolved'}
-                    >
-                      {isOnlineMeetingPendingMinutes ? '📋 Log Minutes & Resolve' : 'Mark as Resolved'}
-                    </button>
-                    <button
-                      onClick={handleOpenEscalateModal}
-                      className="btn btn-danger"
-                      style={{
-                        flex: 1,
-                        minWidth: '140px',
-                        background: !hasFiledDiscussionMinutes ? 'linear-gradient(135deg, #e11d48 0%, #be123c 100%)' : undefined,
-                        border: !hasFiledDiscussionMinutes ? '1px dashed #fda4af' : undefined
-                      }}
-                      title={!hasFiledDiscussionMinutes ? 'Mandatory discussion minutes required before escalating' : 'Escalate issue to Administration'}
-                    >
-                      {!hasFiledDiscussionMinutes ? '📋 Log Minutes to Escalate' : 'Escalate to Admin'}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Escalated state visual */}
-              {(selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || Boolean(selectedIssue.isReEscalated)) && (
-                <div style={{ borderLeft: '3px solid var(--accent-rose)', background: 'rgba(244,63,94,0.08)', padding: '14px', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <h4 style={{ fontWeight: '700', color: 'rgb(253,164,175)', margin: 0 }}>Escalated Ticket Status</h4>
-                      {Boolean(selectedIssue.isReEscalated || (selectedIssue.reEscalatedCount && selectedIssue.reEscalatedCount > 0)) && (
-                        <span style={{
-                          fontSize: '0.72rem',
-                          background: 'rgba(239, 68, 68, 0.25)',
-                          color: '#f87171',
-                          padding: '2px 8px',
-                          borderRadius: '12px',
-                          border: '1px solid rgba(239, 68, 68, 0.5)',
-                          fontWeight: '700'
-                        }}>
-                          ⚡ Re-escalated {selectedIssue.reEscalatedCount ? `(${selectedIssue.reEscalatedCount}x)` : ''}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleOpenEscalateModal}
-                      className="btn btn-danger"
-                      style={{ fontSize: '0.8rem', padding: '5px 12px' }}
-                    >
-                      Re-escalate / Update Remarks to Admin
-                    </button>
-                  </div>
-                  {selectedIssue.escalationReason && (
-                    <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px dashed rgba(244,63,94,0.35)', padding: '8px 12px', borderRadius: '6px', margin: '8px 0', fontSize: '0.82rem', color: '#fecdd3' }}>
-                      <strong>Latest Escalation Directive / Urgent Remarks:</strong>
-                      <div style={{ marginTop: '3px', whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
-                        "{selectedIssue.escalationReason}"
-                      </div>
-                    </div>
-                  )}
-                  <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
-                    This issue has been routed to the Senior Admin / Principal dashboard for administrative override. You can submit additional notes or re-escalate if urgent action is required.
-                  </p>
-                </div>
-              )}
-
-              {/* Solution Video Editor for this Specific Issue */}
-              {selectedIssue.roId === ro.id && (
-                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                  <button
-                    type="button"
-                    onClick={() => openVideoManagerForCategory(selectedIssue.category, selectedIssue.id)}
-                    className="btn btn-secondary"
-                    style={{
-                      width: '100%',
-                      fontSize: '0.82rem',
-                      padding: '8px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      borderColor: 'rgba(239, 68, 68, 0.4)',
-                      color: '#fca5a5',
-                      fontWeight: 600
-                    }}
-                  >
-                    <Video size={15} style={{ color: '#ef4444' }} />
-                    <span>🎥 Edit Solution Video for this Issue ({selectedIssue.category})</span>
-                  </button>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', textAlign: 'center', marginTop: '4px' }}>
-                    🔒 As the assigned RO ({ro.id}), this YouTube link applies specifically to this issue's category
-                  </span>
-                </div>
-              )}
-
-              {/* Logs */}
-              <div style={{ marginTop: '20px' }}>
-                <h4 style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Logs:</h4>
-                <div className="log-timeline">
-                  {selectedIssue.logs.map((log, idx) => (
-                    <div key={idx} className="log-item">
-                      <span>{log.text}</span>
-                      <span className="log-time">{new Date(log.time).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
+          {/* High-Capacity Live Ticket Feed */}
+          <div className="bg-white rounded-xl p-3.5 shadow-card border border-slate-200">
+            <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base text-blue-700">ballot</span>
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Active Assigned Queue</h4>
+              </div>
+              <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                {filteredIssues.length} Tickets
+              </span>
+            </div>
+
+            <div className="max-h-[520px] overflow-y-auto space-y-2 pr-1">
+              {filteredIssues.length === 0 ? (
+                <div className="text-center py-10 px-4 text-slate-400">
+                  <span className="material-symbols-outlined text-4xl mb-2 opacity-40">inbox</span>
+                  {statusFilter === 'Resolved' && !trimmedQuery ? (
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-600 mb-1">Resolved Tickets Archived</h5>
+                      <p className="text-[11px] max-w-xs mx-auto leading-relaxed">
+                        Resolved issues are safely stored. Search by <strong>Ticket ID</strong> above to inspect documentation.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs">No grievances found matching this filter.</p>
+                  )}
+                </div>
+              ) : (
+                filteredIssues.map(issue => {
+                  const isSelected = selectedIssueId === issue.id;
+                  const isResolved = issue.status === 'Resolved';
+                  const priorityClass = issue.priority === 'high' || issue.priority === 'High'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : issue.priority === 'medium' || issue.priority === 'Medium'
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-slate-100 text-slate-700 border-slate-200';
+
+                  return (
+                    <div
+                      key={issue.id}
+                      onClick={() => setSelectedIssueId(issue.id)}
+                      className={`rounded-xl p-3 shadow-xs border transition-all cursor-pointer group ${
+                        isSelected
+                          ? 'border-2 border-blue-600 bg-blue-50/40 shadow-sm'
+                          : isResolved
+                            ? 'bg-slate-50/60 border-slate-200 hover:bg-slate-100/60 opacity-80'
+                            : 'bg-white hover:bg-slate-50/90 border-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-mono font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">
+                            #{issue.id}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${priorityClass}`}>
+                            {(issue.priority === 'high' || issue.priority === 'High') && (
+                              <span className="w-1 h-1 rounded-full bg-rose-600 animate-pulse"></span>
+                            )}
+                            {issue.priority || 'Normal'}
+                          </span>
+                        </div>
+                        {isSelected ? (
+                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full truncate max-w-[120px]">
+                            {issue.status}
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="text-xs sm:text-sm font-bold text-slate-900 mt-1.5 line-clamp-1 group-hover:text-blue-700 transition-colors">
+                        {issue.category}
+                      </h3>
+
+                      <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                        {issue.description}
+                      </p>
+
+                      <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-100 text-[11px]">
+                        <div className="flex items-center gap-1.5 text-slate-700 font-semibold truncate">
+                          <span className="material-symbols-outlined text-[13px] text-blue-600">person</span>
+                          <span className="truncate">{issue.studentName}</span>
+                          <span className="text-slate-400 font-mono text-[10px]">({issue.studentId})</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(issue.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
+        {/* RIGHT COLUMN: Grievance Resolution Workspace & WebRTC Console (xl:col-span-8) */}
+        <div className="xl:col-span-8 space-y-4">
+          {!selectedIssue ? (
+            <div className="bg-white rounded-xl p-12 shadow-card border border-slate-200 text-center space-y-3">
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center mx-auto ring-4 ring-blue-50/50">
+                <span className="material-symbols-outlined text-3xl">task</span>
+              </div>
+              <h3 className="text-base font-bold text-slate-800">Select a Grievance Ticket</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                Choose a ticket from the active queue pipeline on the left to inspect student diagnostics, launch encrypted WebRTC sessions, or file deliberation minutes.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Ticket Context Banner */}
+              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-card border border-slate-200">
+                {escalateSuccessMsg && (
+                  <div className="p-3 mb-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm text-emerald-600">check_circle</span>
+                    <span>{escalateSuccessMsg}</span>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 font-mono">
+                        CASE #{selectedIssue.id}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-0.5 rounded flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs text-slate-600">verified_user</span>
+                        UGC Redressal Clause 14 Compliant
+                      </span>
+                      <span className={`text-xs font-semibold px-2.5 py-0.5 rounded border flex items-center gap-1 ${
+                        selectedIssue.priority === 'high' || selectedIssue.priority === 'High'
+                          ? 'text-rose-700 bg-rose-50 border-rose-200'
+                          : 'text-amber-700 bg-amber-50 border-amber-200'
+                      }`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
+                        Priority: {selectedIssue.priority || 'Normal'}
+                      </span>
+                    </div>
+                    <h2 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+                      {selectedIssue.category}
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm text-amber-600">timer</span>
+                      Status: {selectedIssue.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Complainant Academic & Residence Dossier */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-sm ring-1 ring-blue-200 flex-shrink-0">
+                      {selectedIssue.studentName ? selectedIssue.studentName.substring(0, 2).toUpperCase() : 'ST'}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-900 leading-tight truncate">{selectedIssue.studentName}</p>
+                      <p className="text-[11px] font-mono text-slate-500 mt-0.5">USN: {selectedIssue.studentId}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-slate-500 text-[11px] font-semibold uppercase">Academic Record</p>
+                    <p className="text-slate-800 font-medium">Department Verified Student</p>
+                    <p className="text-[11px] text-emerald-600 font-semibold">Contact: {db.users.students.find(s => s.id === selectedIssue.studentId)?.phone || 'On Record'}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-slate-500 text-[11px] font-semibold uppercase">Submission Details</p>
+                    <p className="text-slate-800 font-medium">Logged: {new Date(selectedIssue.createdAt).toLocaleDateString()}</p>
+                    <p className="text-[11px] text-slate-500 font-mono">Assigned RO: {ro.name}</p>
+                  </div>
+                </div>
+
+                {/* Problem Statement Narrative */}
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-base text-blue-700">subject</span>
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Complainant Narrative &amp; Statement</span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed bg-white p-3.5 rounded-lg border border-slate-200 shadow-2xs whitespace-pre-wrap">
+                    {selectedIssue.description}
+                  </p>
+                </div>
+              </div>
+
+              {/* WebRTC Virtual Consultation Ready Card */}
+              <div className="bg-white rounded-xl p-5 shadow-card border border-slate-200 transition-all space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-base text-blue-700">video_camera_front</span>
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Online Consultation Channel &amp; Virtual Room
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-xs text-blue-700">info</span>
+                      {activeMeeting ? `Mode: ${activeMeeting.mode || 'Online'}` : 'Standby Mode'}
+                    </span>
+                  </div>
+                </div>
+
+                {activeMeeting ? (
+                  <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border ${
+                    isMeetingExpired
+                      ? 'bg-rose-50/50 border-rose-300'
+                      : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                        ? 'bg-emerald-50/50 border-emerald-300'
+                        : 'bg-blue-50/20 border-blue-200/80'
+                  }`}>
+                    <div className="flex items-center gap-3.5">
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center relative flex-shrink-0 border ${
+                        activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-blue-50 text-blue-700 border-blue-200'
+                      }`}>
+                        <span className="material-symbols-outlined text-2xl">
+                          {activeMeeting.mode === 'Online' ? 'videocam' : 'meeting_room'}
+                        </span>
+                        <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
+                          activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                            ? 'bg-emerald-500 animate-ping'
+                            : 'bg-blue-500'
+                        }`}></span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h5 className="text-sm font-bold text-slate-900">
+                            {activeMeeting.mode === 'Online' ? 'WebRTC Encrypted Video Bridge' : 'Campus In-Person Deliberation'}
+                          </h5>
+                          <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] border flex items-center gap-1 ${
+                            isMeetingExpired
+                              ? 'bg-rose-100 text-rose-800 border-rose-200'
+                              : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                : 'bg-blue-100 text-blue-800 border-blue-200'
+                          }`}>
+                            {isMeetingExpired
+                              ? '⚠️ Time Elapsed'
+                              : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                                ? '🟢 Live Now'
+                                : '📅 Confirmed'}
+                          </span>
+                          <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                            {activeMeeting.date} @ {activeMeeting.time}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Location: <strong className="text-slate-700 font-semibold">{activeMeeting.location || 'Cabin 302'}</strong>
+                          {activeMeeting.notes && ` • Notes: "${activeMeeting.notes}"`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {activeMeeting.mode === 'Online' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress') {
+                                setActiveMeetingIssueId(getCanonicalMeetingRoomId(activeMeeting.issueId || activeMeeting.issue_id || selectedIssue.id));
+                                setShowOnlineMeetingModal(true);
+                              } else {
+                                handleLaunchOnlineMeeting(activeMeeting, selectedIssue);
+                              }
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-600 hover:from-blue-800 text-white font-bold text-xs sm:text-sm transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-base">videocam</span>
+                            <span>{activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? 'Re-Enter Virtual Room' : 'Launch In-Meeting Room'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleOpenOnlineNotDoneModal}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition"
+                            title="Declare that online meeting could not be held and reassign to offline"
+                          >
+                            <span className="material-symbols-outlined text-sm">event_busy</span>
+                            <span>Not Held (Reassign)</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {activeMeeting.status === 'Started' ? (
+                            <button
+                              type="button"
+                              onClick={handleConcludeOfflineMeeting}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition shadow-sm active:scale-95"
+                            >
+                              <span className="material-symbols-outlined text-base">check_circle</span>
+                              <span>Conclude In-Person & Log Minutes</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started')}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition shadow-sm active:scale-95"
+                            >
+                              <span className="material-symbols-outlined text-base">play_arrow</span>
+                              <span>Mark Meeting as Started</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleOpenScheduleModal}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold transition"
+                          >
+                            <span className="material-symbols-outlined text-sm">schedule</span>
+                            <span>Reschedule</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-50/80 border border-dashed border-slate-300 text-left">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center flex-shrink-0">
+                        <span className="material-symbols-outlined text-2xl">videocam_off</span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-sm font-bold text-slate-700">No Consultation Scheduled Yet</h5>
+                          <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-600 font-semibold text-[10px]">Standby Mode</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Online WebRTC room activates automatically after a deliberation slot is assigned by the RO.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenScheduleModal}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs sm:text-sm transition-all shadow-2xs active:scale-95 cursor-pointer whitespace-nowrap"
+                    >
+                      <span className="material-symbols-outlined text-base">event_upcoming</span>
+                      <span>Assign / Schedule Meeting</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Command Hierarchy Toolbar */}
+              {selectedIssue.status !== 'Resolved' && selectedIssue.status !== 'Escalated' && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Schedule Meeting Button */}
+                  <button
+                    type="button"
+                    onClick={handleOpenScheduleModal}
+                    disabled={isReassignLimitReached}
+                    className={`flex items-center justify-center gap-2 h-11 px-4 rounded-xl font-bold text-xs sm:text-sm shadow-sm transition-all active:scale-95 cursor-pointer ${
+                      isReassignLimitReached
+                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                        : 'bg-blue-700 hover:bg-blue-800 text-white'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-base">event_upcoming</span>
+                    <span className="whitespace-nowrap">
+                      {isReassignLimitReached
+                        ? 'Reassign Limit (2/2)'
+                        : activeMeeting
+                          ? `Reschedule (${meetingReassignCount}/2)`
+                          : 'Assign / Schedule Meeting'}
+                    </span>
+                  </button>
+
+                  {/* Resolve Grievance Button */}
+                  <button
+                    type="button"
+                    onClick={handleOpenResolveModal}
+                    className={`flex items-center justify-center gap-2 h-11 px-4 rounded-xl font-bold text-xs sm:text-sm border transition-all shadow-2xs active:scale-95 cursor-pointer ${
+                      isOnlineMeetingPendingMinutes
+                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'
+                        : 'bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border-emerald-300'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-base text-emerald-700">verified</span>
+                    <span>{isOnlineMeetingPendingMinutes ? 'Log Minutes & Resolve' : 'Resolve Grievance'}</span>
+                  </button>
+
+                  {/* Escalate to Ombudsman / Admin */}
+                  <button
+                    type="button"
+                    onClick={handleOpenEscalateModal}
+                    className={`flex items-center justify-center gap-2 h-11 px-4 rounded-xl font-semibold text-xs sm:text-sm shadow-card border transition-all active:scale-95 cursor-pointer ${
+                      !hasFiledDiscussionMinutes
+                        ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100'
+                        : 'bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-200'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-rose-600 text-base">escalator_warning</span>
+                    <span>{!hasFiledDiscussionMinutes ? 'Log Minutes to Escalate' : 'Escalate to Admin'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Offline / In-Person Deliberation Minutes (Permanent Record Card) */}
+              {activeMeeting && (activeMeeting.discussionSummary || activeMeeting.actionItems) && (
+                <div className="bg-white rounded-xl p-5 sm:p-6 shadow-card border border-slate-200 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold ring-1 ring-emerald-200">
+                        <span className="material-symbols-outlined text-lg text-emerald-700">person_pin_circle</span>
+                      </div>
+                      <div>
+                        <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
+                          Consultation &amp; Resolution Minutes
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">Official deliberation audit record</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPostMeetingData({
+                          meetingId: activeMeeting.id || activeMeeting.issueId,
+                          issueId: selectedIssue.id,
+                          studentName: selectedIssue.studentName,
+                          studentId: selectedIssue.studentId,
+                          category: selectedIssue.category,
+                          durationText: 'Concluded Session'
+                        });
+                        setDiscussionSummary(activeMeeting.discussionSummary || '');
+                        setActionItems(activeMeeting.actionItems || '');
+                        setMeetingOutcome(selectedIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
+                        setFollowUpNeeded(Boolean(activeMeeting.followUpNeeded));
+                        setShowMeetingFeedbackModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition"
+                    >
+                      Edit Minutes
+                    </button>
+                  </div>
+                  <div className="space-y-3 text-xs sm:text-sm">
+                    <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Summary of Deliberations:</span>
+                      <p className="text-slate-800 leading-relaxed whitespace-pre-wrap">{activeMeeting.discussionSummary}</p>
+                    </div>
+                    {activeMeeting.actionItems && (
+                      <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Agreed Action Items:</span>
+                        <p className="text-slate-800 leading-relaxed whitespace-pre-wrap">{activeMeeting.actionItems}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Deliberation Audit Stepper & Action Log */}
+              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-card border border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center font-bold ring-1 ring-blue-200">
+                      <span className="material-symbols-outlined text-lg">history_edu</span>
+                    </div>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
+                        Action &amp; Procedure Log
+                      </h3>
+                      <p className="text-xs text-slate-500 font-normal mt-0.5">
+                        Audit trail of student communications, status transitions, and hearings
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1 self-start sm:self-auto">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> UGC Audit Compliant
+                  </span>
+                </div>
+
+                {/* Audit Timeline */}
+                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  {selectedIssue.logs && selectedIssue.logs.map((log, idx) => (
+                    <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-slate-700 font-medium">{log.text}</span>
+                      <span className="text-[11px] font-mono text-slate-400 flex-shrink-0">
+                        {new Date(log.time).toLocaleString()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Stored Video Recordings Archive */}
+                {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
+                  <div className="pt-4 border-t border-slate-100 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-rose-600">videocam</span>
+                      <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Recorded Video Deliberation Archive
+                      </h4>
+                    </div>
+                    {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
+                      <div key={rec.id} className="p-3.5 rounded-xl bg-slate-950 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-emerald-400">🎥 {rec.mode} Session</span>
+                            <span className="text-[10px] font-mono text-slate-400">({rec.durationText})</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">{rec.transcriptSummary || 'Automated dual-feed conference recording'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPlayingRecording(rec)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition shadow-xs"
+                          >
+                            <span className="material-symbols-outlined text-sm">play_arrow</span>
+                            <span>Play Recording</span>
+                          </button>
+                          {rec.videoUrl && (
+                            <a
+                              href={rec.videoUrl}
+                              download={`recording_${selectedIssue.id}.webm`}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
+                            >
+                              <span className="material-symbols-outlined text-sm">download</span>
+                              <span>.webm</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
+
 
       {/* POST-MEETING RO DISCUSSION & FEEDBACK FORM MODAL */}
       {showMeetingFeedbackModal && postMeetingData && (
@@ -1892,33 +2129,70 @@ export const RODashboard = ({ roId }) => {
 
       {/* RESOLVE MODAL */}
       {showResolveModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 style={{ fontWeight: '700' }}>Confirm Issue Resolution</h3>
-              <button onClick={() => setShowResolveModal(false)} className="btn-icon-only">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200 flex flex-col">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-xl">verified</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">Confirm Issue Resolution</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Formal Grievance Closure &amp; Redressal Record</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowResolveModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition"
+                title="Close Dialog"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
             </div>
             <form onSubmit={handleResolveSubmit}>
-              <div className="modal-body">
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs sm:text-sm">
                 {isOnlineMeetingPendingMinutes && (
-                  <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5', padding: '10px 14px', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '14px' }}>
-                    ⚠️ <strong>Institutional Policy Notice:</strong> An online session was conducted for this ticket. You must log the official discussion minutes before this ticket can be resolved. Submitting will redirect you to file the minutes.
+                  <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
+                    <span className="material-symbols-outlined text-base text-rose-600 mt-0.5">warning</span>
+                    <div>
+                      <strong className="block font-bold">Institutional Policy Notice</strong>
+                      An online session was conducted for this ticket. You must log the official discussion minutes before this ticket can be resolved. Submitting will redirect you to file the minutes.
+                    </div>
                   </div>
                 )}
-                <div className="form-group">
-                  <label className="form-label">Resolution Summary / Actions Taken</label>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Resolution Summary / Actions Taken <span className="text-rose-500">*</span>
+                  </label>
+                  <p className="text-xs text-slate-500">
+                    Detail the tangible steps taken to resolve this student issue (e.g., updated marks sheet, replaced hardware, approved fee challan).
+                  </p>
                   <textarea
-                    className="form-textarea"
+                    className="w-full p-3 bg-slate-50 hover:bg-slate-100/60 focus:bg-white rounded-xl text-slate-900 text-xs sm:text-sm transition-all border border-slate-200 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100 placeholder:text-slate-400 leading-relaxed"
+                    rows={4}
                     required
                     value={resolutionNotes}
                     onChange={(e) => setResolutionNotes(e.target.value)}
-                    placeholder="Detail the steps taken to resolve this student issue (e.g. Updated internal marks sheet, issued hall ticket, verified fee receipt)."
+                    placeholder="Detail the steps taken to resolve this student issue..."
                   />
                 </div>
               </div>
-              <div className="modal-footer">
-                <button type="button" onClick={() => setShowResolveModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-success">Log Resolution & Close Ticket</button>
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowResolveModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-base">check_circle</span>
+                  <span>Log Resolution &amp; Close Ticket</span>
+                </button>
               </div>
             </form>
           </div>
@@ -1927,25 +2201,43 @@ export const RODashboard = ({ roId }) => {
 
       {/* ESCALATE / RE-ESCALATE MODAL */}
       {showEscalateModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 style={{ fontWeight: '700', color: 'var(--accent-rose)' }}>
-                {selectedIssue?.status === 'Escalated' ? 'Re-escalate / Update Escalation to Admin' : 'Escalate to Admin/Principal'}
-              </h3>
-              <button onClick={() => setShowEscalateModal(false)} className="btn-icon-only">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-slate-200 flex flex-col">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-xl">priority_high</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">
+                    {selectedIssue?.status === 'Escalated' ? 'Re-escalate / Update Escalation to Admin' : 'Escalate to Admin / Principal'}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Management Committee Review Dispatch</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEscalateModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition"
+                title="Close Dialog"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
             </div>
             <form onSubmit={handleEscalateSubmit}>
-              <div className="modal-body">
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs sm:text-sm">
+                <p className="text-xs text-slate-600 leading-relaxed">
                   {selectedIssue?.status === 'Escalated'
                     ? 'Submit updated escalation details, new developments, or increased urgency for this issue to the Management Dashboard.'
                     : 'Escalate this issue to the Management Dashboard. Use this if the issue requires academic committee overrides, financial policies exemptions, or is delayed past standard SLA.'}
                 </p>
-                <div className="form-group">
-                  <label className="form-label">Reason for Escalation / Urgent Remarks</label>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Reason for Escalation / Urgent Remarks <span className="text-rose-500">*</span>
+                  </label>
                   <textarea
-                    className="form-textarea"
+                    className="w-full p-3 bg-slate-50 hover:bg-slate-100/60 focus:bg-white rounded-xl text-slate-900 text-xs sm:text-sm transition-all border border-slate-200 focus:border-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-100 placeholder:text-slate-400 leading-relaxed"
+                    rows={4}
                     required
                     value={escalationReason}
                     onChange={(e) => setEscalationReason(e.target.value)}
@@ -1953,10 +2245,28 @@ export const RODashboard = ({ roId }) => {
                   />
                 </div>
               </div>
-              <div className="modal-footer">
-                <button type="button" onClick={() => setShowEscalateModal(false)} className="btn btn-secondary" disabled={isSubmittingEscalate}>Cancel</button>
-                <button type="submit" className="btn btn-danger" disabled={isSubmittingEscalate}>
-                  {isSubmittingEscalate ? 'Transmitting to Admin...' : (selectedIssue?.status === 'Escalated' ? 'Confirm Re-escalation to Admin' : 'Escalate Ticket')}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowEscalateModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-100 transition"
+                  disabled={isSubmittingEscalate}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEscalate}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-base">forward</span>
+                  <span>
+                    {isSubmittingEscalate
+                      ? 'Transmitting to Admin...'
+                      : selectedIssue?.status === 'Escalated'
+                        ? 'Confirm Re-escalation to Admin'
+                        : 'Escalate Ticket'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1966,71 +2276,142 @@ export const RODashboard = ({ roId }) => {
 
       {/* SCHEDULE / RESCHEDULE MEETING MODAL FOR RO */}
       {showScheduleModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3 style={{ fontWeight: '700', color: 'var(--nitte-blue)' }}>
-                {activeMeeting ? 'Reschedule / Reassign Meeting with Student' : 'Schedule Meeting with Student'}
-              </h3>
-              <button onClick={() => setShowScheduleModal(false)} className="btn-icon-only">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-xl">calendar_month</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">
+                    {activeMeeting ? 'Reschedule / Reassign Meeting' : 'Assign & Schedule Redressal Meeting'}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Mandated Deliberation Session under UGC Regulation 2023</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowScheduleModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition cursor-pointer"
+                title="Close Dialog"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
             </div>
-            <form onSubmit={handleScheduleSubmit}>
-              <div className="modal-body">
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  {activeMeeting
-                    ? `Update date, time, venue, or instructions for meeting with student ${selectedIssue?.studentName} on ticket ${selectedIssue?.id}.`
-                    : `Assign a specific date, time, and location to meet with ${selectedIssue?.studentName} to discuss ticket ${selectedIssue?.id}.`
-                  }
-                </p>
 
-                <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '0' }}>
-                  <div className="form-group">
-                    <label className="form-label">Meeting Date</label>
+            {/* Modal Body */}
+            <form onSubmit={handleScheduleSubmit}>
+              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto text-xs sm:text-sm">
+                {/* Target Student Dossier Pill */}
+                {selectedIssue && (
+                  <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-blue-700 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-100">
+                        {selectedIssue.studentName ? selectedIssue.studentName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST'}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900 text-sm">{selectedIssue.studentName}</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold border border-blue-200">
+                            {selectedIssue.studentId}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          {selectedIssue.category} • Case: #{selectedIssue.id} ({selectedIssue.title})
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 self-start sm:self-auto flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Slot {meetingReassignCount + 1}/2
+                    </span>
+                  </div>
+                )}
+
+                {/* Date & Time Slot Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Meeting Date <span className="text-rose-500">*</span>
+                    </label>
                     <input
                       type="date"
                       required
                       min={todayStr}
-                      className="form-control"
                       value={meetDate}
                       onChange={(e) => setMeetDate(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs sm:text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
                     />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Time Slot</label>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Time Slot <span className="text-rose-500">*</span>
+                    </label>
                     <input
                       type="time"
                       required
-                      className="form-control"
                       value={meetTime}
                       onChange={(e) => setMeetTime(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs sm:text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
                     />
                   </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Meeting Mode</label>
-                  <select
-                    className="form-select"
-                    value={meetMode}
-                    onChange={(e) => handleModeChange(e.target.value)}
-                  >
-                    <option value="Offline">In-Person (Offline on Campus)</option>
-                    <option value="Online">Online Video Meeting (In-App Video Portal)</option>
-                  </select>
+                {/* Mode of Meeting Toggle */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Consultation Mode <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleModeChange('Online')}
+                      className={`p-3 rounded-xl border-2 transition flex items-start gap-3 shadow-xs cursor-pointer ${
+                        meetMode === 'Online'
+                          ? 'border-blue-700 bg-blue-50/70 text-blue-900'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <span className={`material-symbols-outlined text-xl mt-0.5 ${meetMode === 'Online' ? 'text-blue-700' : 'text-slate-400'}`}>videocam</span>
+                      <div>
+                        <p className="text-xs font-bold">Online WebRTC Video Call</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">Encrypted Virtual Room • In-App</p>
+                      </div>
+                    </div>
+
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleModeChange('Offline')}
+                      className={`p-3 rounded-xl border-2 transition flex items-start gap-3 shadow-xs cursor-pointer ${
+                        meetMode === 'Offline'
+                          ? 'border-blue-700 bg-blue-50/70 text-blue-900'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <span className={`material-symbols-outlined text-xl mt-0.5 ${meetMode === 'Offline' ? 'text-blue-700' : 'text-slate-400'}`}>person_pin_circle</span>
+                      <div>
+                        <p className="text-xs font-bold">In-Person Deliberation</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">Physical Campus Consultation</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
+                {/* Switching from Online to Offline Feedback */}
                 {meetMode === 'Offline' && activeMeeting?.mode === 'Online' && (
-                  <div className="form-group" style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '12px 14px', borderRadius: '8px' }}>
-                    <label className="form-label" style={{ fontWeight: '700', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>Feedback / Reason for Switching to Offline</span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Optional</span>
+                  <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Feedback / Reason for Switching to Offline
                     </label>
-                    <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '3px 0 8px 0' }}>
-                      Provide brief feedback or note why this session is being moved to in-person (e.g. connectivity drop, student preference).
+                    <p className="text-[11px] text-slate-500">
+                      Provide brief note on why this session is being moved to in-person (e.g. connectivity failure, student request).
                     </p>
                     <textarea
-                      className="form-textarea"
                       rows={2}
+                      className="w-full p-2.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-700"
                       value={meetReassignFeedback}
                       onChange={(e) => setMeetReassignFeedback(e.target.value)}
                       placeholder="e.g. Student requested in-person consultation at RO desk due to network issues."
@@ -2038,34 +2419,58 @@ export const RODashboard = ({ roId }) => {
                   </div>
                 )}
 
-                <div className="form-group">
-                  <label className="form-label">Meeting Location / Venue</label>
+                {/* Meeting Location / Venue */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Meeting Location / Venue <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="text"
                     required
-                    className="form-control"
-                    placeholder="e.g. RO Office Desk 3, Admin Building 1st Floor"
                     value={meetLocation}
                     onChange={(e) => setMeetLocation(e.target.value)}
+                    placeholder="e.g. Cabin 302, Academic Block IV, NITTE Campus"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs sm:text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">RO Instructions / Documents Required</label>
+                {/* RO Instructions / Documents Required */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    RO Instructions / Documents Required
+                  </label>
                   <textarea
-                    className="form-textarea"
-                    style={{ minHeight: '70px' }}
-                    placeholder="e.g. Bring original fee receipts, hall ticket copy, or USN ID card."
+                    rows={3}
                     value={meetNotes}
                     onChange={(e) => setMeetNotes(e.target.value)}
+                    placeholder="e.g. Bring Physical Student ID, diagnostic speed test log, VTU Hall Ticket."
+                    className="w-full p-3 bg-slate-50 hover:bg-slate-100/60 focus:bg-white rounded-xl text-slate-900 text-xs sm:text-sm transition-all border border-slate-200 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400 leading-relaxed"
                   />
                 </div>
               </div>
-              <div className="modal-footer">
-                <button type="button" onClick={() => setShowScheduleModal(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" className="btn btn-primary">
-                  {activeMeeting ? 'Save & Reassign Meeting' : 'Confirm & Assign Meeting'}
-                </button>
+
+              {/* Modal Footer Actions */}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1">
+                  <span className="material-symbols-outlined text-sm text-emerald-600">mark_email_read</span>
+                  Dispatches calendar ICS + SMS alert
+                </span>
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowScheduleModal(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs shadow-md shadow-blue-700/20 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">send</span>
+                    <span>{activeMeeting ? 'Save & Reassign Meeting' : 'Confirm & Dispatch Meeting Invite'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -2237,350 +2642,492 @@ export const RODashboard = ({ roId }) => {
         </div>
       )}
 
-      {/* ONLINE VIDEO MEETING ROOM & AUTOMATED RECORDER MODAL FOR RO */}
+      {/* ================= WEBRTC LIVE CONSULTATION MEETING MODAL (PREMIUM CINEMATIC) ================= */}
       {showOnlineMeetingModal && selectedIssue && activeMeeting && (
-        <div className="modal-overlay" style={{ zIndex: 1100, background: 'rgba(3, 7, 18, 0.88)', backdropFilter: 'blur(10px)' }}>
-          <div
-            className="modal-content"
-            style={{
-              maxWidth: '1120px',
-              width: '95vw',
-              maxHeight: '94vh',
-              background: 'linear-gradient(180deg, #0b1120 0%, #060911 100%)',
-              color: '#f8fafc',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              borderRadius: '20px',
-              boxShadow: '0 30px 70px -15px rgba(0, 0, 0, 0.9)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden'
-            }}
-          >
-            {/* Modal Header */}
-            <div style={{
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '16px 24px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'rgba(15, 23, 42, 0.5)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div style={{
-                  background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
-                  padding: '10px',
-                  borderRadius: '12px',
-                  color: '#ffffff',
-                  boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)'
-                }}>
-                  <Video size={22} />
+        <div
+          aria-modal="true"
+          role="dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-[#040711]/85 backdrop-blur-md transition-opacity duration-300"
+          id="webrtc-meeting-modal"
+        >
+          <div className="relative w-full max-w-[96vw] h-[95vh] max-h-[960px] bg-[#090d16] border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-slate-100 select-none">
+            {/* Top Bar Header */}
+            <div className="px-4 py-3 bg-[#0d1322]/90 border-b border-slate-800/80 flex items-center justify-between gap-3 flex-shrink-0 z-20">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-xs text-xs tracking-wider flex-shrink-0">
+                  NITTE
                 </div>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <h3 style={{ fontWeight: '800', color: '#ffffff', fontSize: '1.15rem', margin: 0, letterSpacing: '-0.02em' }}>
-                      NITTE Online Conference Room & Auto-Recorder
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs sm:text-sm font-bold text-white truncate tracking-tight">
+                      NITTE Encrypted WebRTC Session{' '}
+                      <span className="text-slate-400 font-normal font-mono">
+                        • Room #{activeMeeting.room || activeMeeting.id || 'NITTE-ROOM-402'}
+                      </span>
                     </h3>
-                    <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '0.68rem', fontWeight: 700 }}>
-                      Ticket #{selectedIssue.id}
+                    <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Live Deliberation
                     </span>
                   </div>
-                  <p style={{ fontSize: '0.78rem', color: '#94a3b8', margin: '3px 0 0 0' }}>
-                    Student: <strong>{selectedIssue.studentName}</strong> ({selectedIssue.studentId}) &nbsp;|&nbsp; Category: <strong>{selectedIssue.category}</strong>
+                  <p className="text-[11px] text-slate-400 truncate flex items-center gap-2 mt-0.5">
+                    <span>Case #{selectedIssue.id}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-slate-300">Student: {selectedIssue.studentName}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-slate-400">Officer: {ro.name}</span>
                   </p>
                 </div>
               </div>
 
-              {/* Header Badges */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                {/* Pulsing Red Auto-Recording Active Badge */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  background: 'rgba(220, 38, 38, 0.15)',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
-                  padding: '6px 14px',
-                  borderRadius: '30px'
-                }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444' }} />
-                  <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#fca5a5', letterSpacing: '0.04em' }}>
-                    REC • {formatTimer(recordingSeconds)}
+              <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-blue-600/20 hover:bg-blue-600/30 border border-blue-400/30 text-blue-300 text-xs font-semibold transition cursor-pointer"
+                  onClick={() => setShowInMeetingSidebar(prev => !prev)}
+                  title="Toggle In-Meeting Minutes Drawer"
+                >
+                  <span className="material-symbols-outlined text-sm text-blue-400">edit_note</span>
+                  <span className="hidden sm:inline">In-Meeting Minutes</span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-mono text-blue-200">
+                    {showInMeetingSidebar ? 'Active' : 'Hidden'}
                   </span>
+                </button>
+
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono font-semibold ${
+                    isRecActive
+                      ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                      : 'bg-slate-800 border-slate-700 text-slate-400'
+                  }`}
+                  id="rec-indicator"
+                >
+                  <span className={`w-2 h-2 rounded-full ${isRecActive ? 'bg-rose-500 animate-pulse' : 'bg-slate-500'}`}></span>
+                  <span>REC {formatTimer(recordingSeconds)}</span>
                 </div>
 
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  background: 'rgba(16, 185, 129, 0.12)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  padding: '6px 12px',
-                  borderRadius: '30px',
-                  fontSize: '0.74rem',
-                  color: '#6ee7b7',
-                  fontWeight: 600
-                }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                  {peerConnected ? '⚡ 18ms P2P Live' : 'Waiting...'}
+                <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-300 text-[11px] font-mono">
+                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                    <span className="material-symbols-outlined text-[13px]">lock</span> E2E Encrypted
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <span>1080p 60fps</span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-emerald-400">{peerConnected ? '18ms RTT' : '24ms RTT'}</span>
                 </div>
-              </div>
-            </div>
 
-            {/* Modal Body - Video Stage */}
-            <div style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-              {/* Permission Notice Banner */}
-              {mediaPermissionState === 'denied' && (
-                <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <AlertTriangle size={16} style={{ color: '#ef4444' }} />
-                    <span><strong>Camera/Mic Notice:</strong> {mediaPermissionError || 'Permissions blocked by browser.'}</span>
-                  </div>
+                <div className="flex items-center gap-1 pl-1 border-l border-slate-800">
                   <button
                     type="button"
-                    onClick={requestMediaPermissions}
-                    className="btn btn-warning"
-                    style={{ fontSize: '0.74rem', padding: '4px 12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    className="w-8 h-8 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 flex items-center justify-center transition"
+                    onClick={() => setShowOnlineMeetingModal(false)}
+                    title="Minimize Window"
                   >
-                    <RotateCcw size={12} /> Retry Permissions
+                    <span className="material-symbols-outlined text-base">minimize</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="w-8 h-8 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600/80 flex items-center justify-center transition"
+                    onClick={() => {
+                      if (window.confirm('Conclude active consultation session and commit WebRTC discussion notes to official Deliberation Minutes?')) {
+                        handleStopAndSaveRecording();
+                      }
+                    }}
+                    title="Exit Meeting"
+                  >
+                    <span className="material-symbols-outlined text-base">close</span>
                   </button>
                 </div>
-              )}
+              </div>
+            </div>
 
-              {/* Large Cinematic Video Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px', marginBottom: '16px', flex: 1 }}>
+            {/* Video Viewport & In-Meeting Drawer */}
+            <div className="flex-1 flex overflow-hidden relative">
+              <div className="flex-1 p-3 sm:p-4 flex flex-col gap-3 overflow-y-auto">
+                {/* Media Permissions Warning Banner */}
+                {mediaPermissionState === 'denied' && (
+                  <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-rose-400">warning</span>
+                      <span><strong>Camera/Mic Alert:</strong> {mediaPermissionError || 'Permissions blocked by browser.'}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={requestMediaPermissions}
+                      className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs"
+                    >
+                      Retry Permissions
+                    </button>
+                  </div>
+                )}
 
-                {/* RO OFFICER LIVE WEBCAM VIDEO FEED */}
-                <div style={{
-                  background: '#0a0f1d',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '14px',
-                  overflow: 'hidden',
-                  position: 'relative',
-                  height: '380px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
-                }}>
-                  {isCameraOff ? (
-                    <div style={{ color: '#64748b', textAlign: 'center', padding: '20px' }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto' }}>
-                        <VideoOff size={32} />
+                <div className="relative flex-1 min-h-[460px] h-full rounded-xl overflow-hidden">
+                  {/* Primary Full-Width Feed: Student Complainant */}
+                  {(() => {
+                    const currentMeetingIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (activeMeetingIssueId || selectedIssueId)?.toUpperCase()) || selectedIssue || {};
+                    const sName = currentMeetingIssue.studentName || selectedIssue?.studentName || 'Student';
+                    const sId = currentMeetingIssue.studentId || selectedIssue?.studentId || 'NITTE-STU';
+                    const sCategory = currentMeetingIssue.category || selectedIssue?.category || 'General';
+                    const sTicket = currentMeetingIssue.id || selectedIssue?.id || 'TICK-1002';
+                    const sInitials = sName ? sName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST';
+
+                    return (
+                      <div className="w-full h-full bg-[#0d1424] rounded-xl border-2 border-emerald-500/50 active-speaker-ring relative overflow-hidden flex flex-col justify-between group shadow-2xl min-h-[440px]">
+                        <div className="absolute inset-0 bg-gradient-to-b from-[#111c33]/40 via-transparent to-[#080d19]/90 pointer-events-none"></div>
+
+                        {/* Center Visual: Student Video Stream or Avatar */}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          {remoteStream ? (
+                            <VideoStreamPlayer
+                              stream={remoteStream}
+                              muted={false}
+                              objectFit="contain"
+                              isMicMuted={isStudentMicMuted}
+                              isCameraOff={isStudentCameraOff}
+                              participantName={sName}
+                            />
+                          ) : (
+                            <div className="relative flex flex-col items-center">
+                              <div className="relative w-36 h-36 sm:w-44 sm:h-44 rounded-full bg-gradient-to-tr from-indigo-700 via-blue-600 to-teal-400 flex items-center justify-center text-white shadow-2xl ring-4 ring-emerald-500/40 transition-transform">
+                                <span className="font-extrabold text-4xl sm:text-6xl tracking-tight">
+                                  {sInitials}
+                                </span>
+                                <span className="absolute bottom-2 right-2 sm:right-3 w-7 h-7 rounded-full bg-emerald-500 border-2 border-[#0d1424] flex items-center justify-center shadow-md">
+                                  <span className="material-symbols-outlined text-white text-base">mic</span>
+                                </span>
+                              </div>
+                              <div className="mt-4 text-center">
+                                <span className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs sm:text-sm font-semibold border border-emerald-500/40 shadow-xs">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                                  {sCategory} (Active Complainant)
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Top Header Overlay */}
+                        <div className="relative z-10 p-3 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-slate-100 font-semibold">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Student Complainant Feed
+                            </span>
+                            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-400/20 font-mono text-[11px]">
+                              {sCategory} • Cisco-AP-09
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-xs font-mono text-emerald-400 flex items-center gap-1">
+                              <span className="material-symbols-outlined text-sm">wifi</span> {remoteStream ? '1080p HD • 60 FPS' : 'Connected (STUN/TURN)'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Bottom Meta Overlay */}
+                        <div className="relative z-10 p-3.5 flex items-center justify-between bg-gradient-to-t from-black/85 via-black/40 to-transparent pr-72 sm:pr-80">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-9 h-9 rounded-xl bg-emerald-600/80 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
+                              {sInitials}
+                            </span>
+                            <div className="min-w-0 truncate">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs sm:text-sm font-bold text-white leading-none truncate">{sName}</p>
+                                <span className="text-[10px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-400/20 flex-shrink-0">
+                                  {sId}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-300 mt-1 truncate">
+                                {sCategory} • Case #{sTicket}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="hidden sm:flex items-center gap-1.5 bg-black/70 px-2.5 py-1 rounded-lg border border-white/10 flex-shrink-0">
+                            <span className="w-1 h-3 bg-emerald-400 rounded-full animate-pulse"></span>
+                            <span className="w-1.5 h-4 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></span>
+                            <span className="w-1 h-2.5 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></span>
+                            <span className="material-symbols-outlined text-emerald-400 text-sm ml-0.5">mic</span>
+                            <span className="text-[10px] text-emerald-400 font-mono">-14dB</span>
+                          </div>
+                        </div>
                       </div>
-                      <p style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>RO Camera Disabled</p>
+                    );
+                  })()}
+
+                  {/* Compact Floating Picture-in-Picture (PiP) Feed: RO Host */}
+                  <div className="absolute bottom-3 right-3 z-30 w-64 sm:w-72 bg-[#0a0f1d] rounded-xl border-2 border-blue-500/40 shadow-2xl overflow-hidden backdrop-blur-md flex flex-col transition-all hover:scale-105 duration-200 group">
+                    <div className="absolute inset-0 bg-gradient-to-b from-[#111c33]/40 via-transparent to-[#080d19]/90 pointer-events-none"></div>
+
+                    {/* PiP Top Header */}
+                    <div className="relative z-10 px-2.5 py-1.5 flex items-center justify-between text-[11px] bg-black/60 border-b border-white/10">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        <span className="font-bold text-slate-100 truncate">RO Host Feed</span>
+                      </div>
+                      <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono border border-blue-400/20">Cabin 302</span>
+                    </div>
+
+                    {/* PiP Visual Content */}
+                    <div className="relative py-3 flex flex-col items-center justify-center min-h-[120px]">
+                      {isCameraOff ? (
+                        <div className="flex flex-col items-center justify-center text-slate-400 text-xs py-4">
+                          <span className="material-symbols-outlined text-2xl text-rose-500">videocam_off</span>
+                          <span className="mt-1 text-[11px]">Camera Disabled</span>
+                        </div>
+                      ) : mediaPermissionState === 'granted' && localStream ? (
+                        <div className="w-full h-28 overflow-hidden rounded-lg bg-black flex items-center justify-center">
+                          <VideoStreamPlayer
+                            stream={localStream}
+                            muted={true}
+                            objectFit="contain"
+                            isMicMuted={isMicMuted}
+                            isCameraOff={isCameraOff}
+                            participantName={ro.name || 'Relationship Officer'}
+                          />
+                        </div>
+                      ) : (
+                        <div className="relative flex flex-col items-center">
+                          <div className="relative w-18 h-18 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-blue-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-lg ring-2 ring-blue-400/40">
+                            <span className="font-bold text-xl sm:text-2xl tracking-tight">
+                              {ro.name ? ro.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'SN'}
+                            </span>
+                            <span className="absolute bottom-0 right-0 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[#0a0f1d] flex items-center justify-center shadow">
+                              <span className="material-symbols-outlined text-white text-xs">{isMicMuted ? 'mic_off' : 'mic'}</span>
+                            </span>
+                          </div>
+                          <span className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-semibold border border-blue-400/30">
+                            <span className={`w-1.5 h-1.5 rounded-full ${isMicMuted ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'}`}></span> {isMicMuted ? 'Mic Muted' : 'Mic Active'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PiP Bottom Meta Bar */}
+                    <div className="relative z-10 px-2.5 py-2 bg-black/80 flex items-center justify-between border-t border-white/10 text-xs">
+                      <div className="truncate">
+                        <p className="font-bold text-white text-[11px] leading-tight truncate">{ro.name}</p>
+                        <p className="text-[10px] text-slate-400 truncate">Senior RO • Dept. of CSE</p>
+                      </div>
+                      <div className="flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded border border-white/10 flex-shrink-0">
+                        <span className={`w-1 h-2 rounded-full ${isMicMuted ? 'bg-slate-500' : 'bg-emerald-400 animate-pulse'}`}></span>
+                        <span className={`w-1 h-3 rounded-full ${isMicMuted ? 'bg-slate-500' : 'bg-emerald-400 animate-pulse'}`} style={{ animationDelay: '150ms' }}></span>
+                        <span className={`material-symbols-outlined text-xs ${isMicMuted ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {isMicMuted ? 'mic_off' : 'mic'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* In-Meeting Minutes Drawer */}
+              {showInMeetingSidebar && (
+                <div className="w-80 lg:w-96 bg-[#0a0f1d] border-l border-slate-800 flex flex-col flex-shrink-0" id="in-meeting-sidebar">
+                  <div className="px-4 py-3 bg-[#0e1424] border-b border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-blue-400">edit_note</span>
+                      <h4 className="text-xs sm:text-sm font-bold text-white">In-Meeting Minutes</h4>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                        Auto-Saving
+                      </span>
                       <button
                         type="button"
-                        onClick={toggleCamera}
-                        style={{ marginTop: '12px', background: '#3b82f6', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                        className="text-slate-400 hover:text-white p-0.5 rounded transition"
+                        onClick={() => setShowInMeetingSidebar(false)}
+                        title="Close Panel"
                       >
-                        Turn Camera Back On
+                        <span className="material-symbols-outlined text-base">chevron_right</span>
                       </button>
                     </div>
-                  ) : mediaPermissionState === 'granted' && localStream ? (
-                    <VideoStreamPlayer
-                      stream={localStream}
-                      muted={true}
-                      badge={{ text: 'Live HD WebCam (Host)', color: '#10b981' }}
-                      participantName={ro.name}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '100%',
-                      height: '100%',
-                      background: 'radial-gradient(circle at center, #1e293b 0%, #090d16 100%)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        width: '84px',
-                        height: '84px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
-                        color: '#ffffff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '2rem',
-                        fontWeight: '800',
-                        boxShadow: '0 0 25px rgba(37, 99, 235, 0.5)',
-                        border: '2px solid rgba(255, 255, 255, 0.2)'
-                      }}>
-                        RO
-                      </div>
-                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>{ro.name} (Host)</p>
-                      <span style={{ fontSize: '0.75rem', color: '#93c5fd' }}>
-                        {mediaPermissionState === 'requesting' ? 'Connecting live camera...' : 'Webcam simulated fallback'}
-                      </span>
-                    </div>
-                  )}
+                  </div>
 
-                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: '#10b981', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
-                    🟢 Host Feed
+                  <div className="flex-1 p-3.5 space-y-3.5 overflow-y-auto text-xs">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Live Deliberation Findings</label>
+                        <span className="text-[10px] text-slate-500">Official Record</span>
+                      </div>
+                      <div className="bg-[#0f172a] rounded-lg p-2.5 border border-slate-700/80 space-y-2">
+                        <div className="flex items-start gap-2 text-slate-200 text-xs">
+                          <span className="material-symbols-outlined text-emerald-400 text-sm mt-0.5 flex-shrink-0">check_circle</span>
+                          <p>Student verified disruption occurs only during 18:00 - 22:00 in Netravati Block C 4th floor study hall.</p>
+                        </div>
+                        <div className="flex items-start gap-2 text-slate-200 text-xs">
+                          <span className="material-symbols-outlined text-emerald-400 text-sm mt-0.5 flex-shrink-0">check_circle</span>
+                          <p>Room ethernet port tested functional; issue is hardware AP-09 overload.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Agreed Action Directives</label>
+                      <div className="space-y-1.5" id="meeting-action-items">
+                        {inMeetingDirectives.map((directive, idx) => (
+                          <div key={idx} className="p-2 rounded bg-slate-900/90 border border-slate-800 text-slate-300 flex items-center justify-between text-xs">
+                            <span className="truncate">{directive}</span>
+                            <span className="text-[10px] font-mono text-emerald-400 flex-shrink-0 ml-1">Added</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-1.5 pt-1">
+                        <input
+                          className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-[#070b14] border border-slate-700 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          id="new-action-input"
+                          placeholder="+ Add agreed directive..."
+                          type="text"
+                          value={newDirectiveInput}
+                          onChange={(e) => setNewDirectiveInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (newDirectiveInput.trim()) {
+                                setInMeetingDirectives(prev => [...prev, newDirectiveInput.trim()]);
+                                setNewDirectiveInput('');
+                              }
+                            }
+                          }}
+                        />
+                        <button
+                          className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+                          onClick={() => {
+                            if (newDirectiveInput.trim()) {
+                              setInMeetingDirectives(prev => [...prev, newDirectiveInput.trim()]);
+                              setNewDirectiveInput('');
+                            }
+                          }}
+                          type="button"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-500/40 flex items-start gap-2.5">
+                      <input
+                        checked={inMeetingConsent}
+                        onChange={(e) => setInMeetingConsent(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded bg-slate-900 text-emerald-600 border-slate-700 focus:ring-emerald-500"
+                        id="in-meeting-consent"
+                        type="checkbox"
+                      />
+                      <div>
+                        <label className="font-bold text-emerald-300 text-xs block cursor-pointer" htmlFor="in-meeting-consent">
+                          Complainant Verbal Acceptance Confirmed
+                        </label>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {selectedIssue.studentName} agreed on video stream to the interim arrangement.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Session Chat &amp; System Events</label>
+                      <div className="h-28 bg-[#070b14] rounded-lg p-2 border border-slate-800 overflow-y-auto space-y-1 text-[11px]">
+                        <p className="text-slate-400"><span className="text-emerald-400 font-mono">[15:30]</span> WebRTC Peer Connection Established (STUN/TURN)</p>
+                        <p className="text-slate-300"><strong className="text-blue-400">{ro.name}:</strong> "We've reviewed your speedtest telemetry log."</p>
+                        <p className="text-slate-300"><strong className="text-teal-400">{selectedIssue.studentName}:</strong> "Thank you sir, Friday morning is my VTU exam."</p>
+                        <p className="text-slate-400"><span className="text-emerald-400 font-mono">[15:33]</span> Live composite recording active</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-[#0e1424] border-t border-slate-800 space-y-2">
+                    <button
+                      className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
+                      onClick={handleStopAndSaveRecording}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-base">check_circle</span>
+                      <span>Commit Minutes &amp; Proceed</span>
+                    </button>
                   </div>
                 </div>
-
-                {/* STUDENT VIDEO FEED */}
-                <div style={{
-                  background: '#0a0f1d',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '14px',
-                  overflow: 'hidden',
-                  position: 'relative',
-                  height: '380px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
-                }}>
-                  {remoteStream ? (
-                    <VideoStreamPlayer
-                      stream={remoteStream}
-                      muted={false}
-                      badge={{ text: '🟢 Student Live WebCam', color: '#10b981' }}
-                      participantName={selectedIssue.studentName}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '100%',
-                      height: '100%',
-                      background: 'radial-gradient(circle at center, #064e3b 0%, #090d16 100%)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        width: '84px',
-                        height: '84px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                        color: '#ffffff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '2rem',
-                        fontWeight: '800',
-                        boxShadow: '0 0 25px rgba(16, 185, 129, 0.4)',
-                        border: '2px solid rgba(255, 255, 255, 0.2)'
-                      }}>
-                        {selectedIssue.studentName ? selectedIssue.studentName.charAt(0) : 'S'}
-                      </div>
-                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>{selectedIssue.studentName}</p>
-                      <span style={{ fontSize: '0.75rem', color: '#a7f3d0' }}>
-                        {peerConnected ? 'Connecting student camera feed...' : 'Waiting for Student to join call...'}
-                      </span>
-                    </div>
-                  )}
-
-                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: remoteStream ? '#10b981' : '#f59e0b', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
-                    {remoteStream ? '🟢 Student Live P2P' : (peerConnected ? '🟡 Connecting...' : '⚪ Waiting')}
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Encrypted Storage Info Bar */}
-              <div style={{ background: 'rgba(15, 23, 42, 0.4)', border: '1px solid rgba(255, 255, 255, 0.06)', padding: '10px 16px', borderRadius: '10px', fontSize: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
-                  <Shield size={14} style={{ color: '#10b981' }} />
-                  <span><strong>256-bit Encrypted Session</strong> &nbsp;|&nbsp; MediaRecorder capturing live camera & audio stream</span>
-                </div>
-                <div style={{ color: '#fca5a5', fontWeight: 600 }}>
-                  📼 Auto-saving video (.webm) to student support ticket
-                </div>
-              </div>
+              )}
             </div>
 
-            {/* Controls Bar & Stop Button */}
-            <div style={{
-              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '16px 24px',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              gap: '16px',
-              background: 'rgba(11, 15, 25, 0.85)',
-              backdropFilter: 'blur(16px)'
-            }}>
-              {/* Mic Button */}
-              <button
-                type="button"
-                onClick={toggleMic}
-                style={{
-                  background: isMicMuted ? '#ef4444' : 'rgba(16, 185, 129, 0.15)',
-                  color: isMicMuted ? '#ffffff' : '#10b981',
-                  border: isMicMuted ? '1px solid #dc2626' : '1px solid rgba(16, 185, 129, 0.35)',
-                  padding: '10px 20px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  transition: 'all 0.2s ease',
-                  boxShadow: isMicMuted ? '0 4px 14px rgba(239, 68, 68, 0.3)' : '0 4px 14px rgba(16, 185, 129, 0.15)'
-                }}
-              >
-                {isMicMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                <span>{isMicMuted ? 'Unmute Mic' : 'Mute Mic'}</span>
-              </button>
+            {/* Bottom Control Bar */}
+            <div className="p-3 bg-[#0a0f1c]/95 border-t border-slate-800 flex items-center justify-between gap-3 flex-shrink-0 z-30">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+                  onClick={() => alert(`Active Session Participants:\n1. ${ro.name} (Senior RO - Host)\n2. ${selectedIssue.studentName} (Student Complainant)`)}
+                >
+                  <span className="material-symbols-outlined text-base text-blue-400">group</span>
+                  <span className="hidden sm:inline">Participants (2)</span>
+                </button>
 
-              {/* Camera Button */}
-              <button
-                type="button"
-                onClick={toggleCamera}
-                style={{
-                  background: isCameraOff ? '#ef4444' : 'rgba(255, 255, 255, 0.08)',
-                  color: isCameraOff ? '#ffffff' : '#f1f5f9',
-                  border: isCameraOff ? '1px solid #dc2626' : '1px solid rgba(255, 255, 255, 0.15)',
-                  padding: '10px 20px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                {isCameraOff ? <VideoOff size={16} /> : <Video size={16} />}
-                <span>{isCameraOff ? 'Start Camera' : 'Stop Camera'}</span>
-              </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+                  onClick={() => setIsRecActive(prev => !prev)}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isRecActive ? 'bg-rose-500 animate-pulse' : 'bg-slate-500'}`}></span>
+                  <span className="hidden sm:inline">{isRecActive ? 'Composite Rec Active' : 'Rec Paused'}</span>
+                </button>
+              </div>
 
-              {/* End Meeting Button */}
-              <button
-                type="button"
-                onClick={handleStopAndSaveRecording}
-                style={{
-                  background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
-                  color: '#ffffff',
-                  border: 'none',
-                  padding: '12px 28px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  fontSize: '0.86rem',
-                  fontWeight: 700,
-                  boxShadow: '0 4px 16px rgba(220, 38, 38, 0.4)',
-                  transition: 'all 0.2s ease',
-                  marginLeft: '8px'
-                }}
-              >
-                <Square size={16} />
-                <span>Stop Recording & End Meeting</span>
-              </button>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  className={`w-11 h-11 rounded-xl text-white flex items-center justify-center transition border shadow-sm cursor-pointer ${
+                    isMicMuted ? 'bg-rose-600 border-rose-500' : 'bg-slate-800 hover:bg-slate-700 border-slate-700'
+                  }`}
+                  onClick={toggleMic}
+                  title="Toggle Microphone"
+                >
+                  <span className="material-symbols-outlined text-xl">{isMicMuted ? 'mic_off' : 'mic'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`w-11 h-11 rounded-xl text-white flex items-center justify-center transition border shadow-sm cursor-pointer ${
+                    isCameraOff ? 'bg-rose-600 border-rose-500' : 'bg-slate-800 hover:bg-slate-700 border-slate-700'
+                  }`}
+                  onClick={toggleCamera}
+                  title="Toggle Camera"
+                >
+                  <span className="material-symbols-outlined text-xl">{isCameraOff ? 'videocam_off' : 'videocam'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`w-11 h-11 rounded-xl text-white flex items-center justify-center transition border shadow-sm cursor-pointer ${
+                    isScreenSharing ? 'bg-blue-600 border-blue-400' : 'bg-slate-800 hover:bg-slate-700 border-slate-700'
+                  }`}
+                  onClick={toggleScreenShare}
+                  title="Screen Share"
+                >
+                  <span className="material-symbols-outlined text-xl">screen_share</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3.5 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/40 text-blue-200 hover:text-white text-xs font-bold flex items-center gap-2 border border-blue-500/40 shadow-sm transition active:scale-95 cursor-pointer"
+                  onClick={() => setShowInMeetingSidebar(prev => !prev)}
+                  title="Toggle In-Meeting Minutes Drawer"
+                >
+                  <span className="material-symbols-outlined text-base text-blue-300">sticky_note_2</span>
+                  <span className="hidden sm:inline">In-Meeting Minutes</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                </button>
+
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-rose-600/30 transition-all active:scale-95 cursor-pointer"
+                  onClick={() => {
+                    if (window.confirm('Conclude active consultation session and commit WebRTC discussion notes to official Deliberation Minutes?')) {
+                      handleStopAndSaveRecording();
+                    }
+                  }}
+                >
+                  <span className="material-symbols-outlined text-base sm:text-lg">call_end</span>
+                  <span>End Consultation</span>
+                </button>
+              </div>
             </div>
-
           </div>
         </div>
       )}

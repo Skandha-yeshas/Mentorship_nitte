@@ -125,6 +125,24 @@ function AppContent() {
     );
   }
 
+  // Admin Console - Dedicated Full-Width Dashboard with Unified Institutional Header
+  if (currentUser === 'Admin') {
+    return (
+      <div className="min-h-screen bg-[#f8fafc]">
+        <AdminDashboard
+          onLogout={() => {
+            logoutUser();
+            setIsLoginPageVisible(true);
+          }}
+        />
+        <LoginModal
+          isOpen={isLoginModalOpen}
+          onClose={() => setIsLoginModalOpen(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       <RoleSwitcher
@@ -142,9 +160,6 @@ function AppContent() {
         )}
         {currentUser === 'RO' && selectedSubProfile && (
           <RODashboard roId={selectedSubProfile} />
-        )}
-        {currentUser === 'Admin' && (
-          <AdminDashboard />
         )}
       </main>
 

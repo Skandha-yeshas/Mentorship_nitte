@@ -1,10 +1,20 @@
-import React, { useContext, useState, useEffect, useRef } from 'react';
+import React, { useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl, isMatchingMentorId } from '../context/DatabaseContext';
-import { AlertCircle, Calendar, FileText, CheckCircle2, Clock, Send, Star, ExternalLink, User, RotateCcw, Video, Mic, MicOff, VideoOff, Play, Shield, Camera, X, Download, HelpCircle, ThumbsUp, MessageSquare, PhoneOff, Volume2, VolumeX } from 'lucide-react';
-import { WebRtcMeetingSession } from '../utils/webrtcService';
+import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
+
+// 7 Domain models mapping the 49/50 specialized categories
+const DOMAIN_MODELS = [
+  { id: 'Academic', name: 'Academics', icon: 'school', count: 8 },
+  { id: 'Hostels', name: 'Hostel & Infra', icon: 'apartment', count: 8 },
+  { id: 'Facilities', name: 'Lab & Systems', icon: 'memory', count: 5 },
+  { id: 'Financial', name: 'Fee & Grants', icon: 'payments', count: 8 },
+  { id: 'Exams', name: 'Examinations', icon: 'assignment', count: 8 },
+  { id: 'Personal', name: 'Student Welfare', icon: 'shield', count: 4 },
+  { id: 'Placements', name: 'Placement & Career', icon: 'work', count: 8 }
+];
 
 export const StudentDashboard = ({ studentId }) => {
   const {
@@ -21,131 +31,169 @@ export const StudentDashboard = ({ studentId }) => {
     authenticatedUser
   } = useContext(DatabaseContext);
 
-  // Submission Self-Help Video Modal State
-  const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
-
-  // Tabs within Student Dashboard
-  const [activeTab, setActiveTab] = useState('raise-issue'); // 'raise-issue', 'my-issues', 'mentor-hub'
+  // Active navigation tab
+  const [activeTab, setActiveTab] = useState('report'); // 'report', 'track', 'mentorship', 'feedback'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
 
-  // Form states (Clean Single Issue Form)
-  const [category, setCategory] = useState(ALL_CATEGORIES[0]);
+  // Form states
+  const [selectedDomain, setSelectedDomain] = useState('Academic');
+  const [categorySearchQuery, setCategorySearchQuery] = useState('');
+  const [category, setCategory] = useState(ALL_CATEGORIES[0] || 'Academic - Internal marks discrepancy');
+  const [subjectTitle, setSubjectTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState('Medium');
+  const [priority, setPriority] = useState('high'); // 'low', 'medium', 'high'
   const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // Rating & Re-open form states
+  // Rating & Reopen states
   const [rating, setRating] = useState(5);
   const [feedbackComments, setFeedbackComments] = useState('');
   const [showReopenForm, setShowReopenForm] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
 
-  // Mentor feedback form states
-  const [mfRegularity, setMfRegularity] = useState(0);
-  const [mfClarity, setMfClarity] = useState(0);
-  const [mfParticipation, setMfParticipation] = useState(0);
+  // Mentor Feedback states
+  const [mfRegularity, setMfRegularity] = useState(5);
+  const [mfClarity, setMfClarity] = useState(4);
+  const [mfParticipation, setMfParticipation] = useState(5);
   const [mfDifficulties, setMfDifficulties] = useState('');
   const [mfSuccess, setMfSuccess] = useState('');
 
-  // Fetch current student profile & assigned RO (case-insensitive and authenticated user fallback)
-  const targetId = String(studentId || authenticatedUser?.id || '').trim().toLowerCase();
-  const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetId) ||
-    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetId) ||
-    authenticatedUser ||
-    (db.users?.students || [])[0];
-
-  const matchMentorHelper = typeof isMatchingMentorId === 'function'
-    ? isMatchingMentorId
-    : (a, b) => String(a || '').replace(/[^A-Z0-9]/gi, '').toLowerCase() === String(b || '').replace(/[^A-Z0-9]/gi, '').toLowerCase();
-
-  const myMentor = (db.users?.mentors || []).find(m => matchMentorHelper(m.id, student?.mentorId));
-
-  // Determine active RO dynamically based on category selection
-  const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
-  const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
-  const activeFormRO = db.users.ros.find(r => r.id === activeFormRoId);
-
-  // Issues raised by this student (handles studentId, student_id, USN, or studentName safely and deduplicates by ID)
-  const studentIdLower = (student?.id || '').toLowerCase();
-  const studentNameLower = (student?.name || '').toLowerCase();
-
-  const rawMyIssues = (db.issues || []).filter(i => {
-    const sId = (i.studentId || i.student_id || '').toLowerCase();
-    const sName = (i.studentName || i.student_name || '').toLowerCase();
-
-    const isIdMatch = sId && (
-      sId === studentIdLower ||
-      (sId === 'u18cm24s0058' || sId === '1nt21cs001' || sId === 's101') && (studentIdLower === 'u18cm24s0058' || studentIdLower === 's101' || studentIdLower === '1nt21cs001') ||
-      (sId === 'u18cm24s0056' || sId === '1nt21ec015' || sId === 's102') && (studentIdLower === 'u18cm24s0056' || studentIdLower === 's102' || studentIdLower === '1nt21ec015') ||
-      (sId === 'u18cm24s0053' || sId === '1nt22is042' || sId === 's103') && (studentIdLower === 'u18cm24s0053' || studentIdLower === 's103' || studentIdLower === '1nt22is042')
-    );
-    const isNameMatch = studentNameLower && sName === studentNameLower;
-
-    return isIdMatch || isNameMatch;
-  });
-  const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
-  const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
-  const selectedIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === activeSelectedIssueId?.toUpperCase());
-
-  // Student Video Modal State
+  // Modals
+  const [submissionVideoModal, setSubmissionVideoModal] = useState(null);
   const [showStudentVideoModal, setShowStudentVideoModal] = useState(false);
   const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
-
-  // Pop-up states for meeting ended by RO
   const [meetingEndedPopup, setMeetingEndedPopup] = useState(null);
-
-  // Any active or scheduled online meeting strictly belonging to this student's raised issues
-  const activeStudentOnlineMeeting = (() => {
-    const myIssueIds = new Set((myIssues || []).map(i => (i.id || i.issue_id || '').toUpperCase()));
-    if (myIssueIds.size === 0) return null;
-
-    // Filter meetings strictly belonging to this student's tickets
-    const myStudentMeetings = (db.meetings || []).filter(m => {
-      const isCompleted = m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded';
-      if (isCompleted) return false;
-
-      const mIssueId = (m.issueId || m.issue_id || '').toUpperCase();
-      if (!myIssueIds.has(mIssueId)) return false;
-
-      const modeLower = (m.mode || '').toLowerCase();
-      const locLower = (m.location || '').toLowerCase();
-      const isOnline = !m.mode ||
-        modeLower.includes('online') ||
-        modeLower.includes('video') ||
-        locLower.includes('meet') ||
-        locLower.includes('zoom') ||
-        locLower.includes('http');
-
-      return isOnline;
-    });
-
-    // 1. Highest priority: if an online meeting for this student's ticket is Live ('Started' or 'In-Progress')
-    const liveMeet = myStudentMeetings.find(m => m.status === 'Started' || m.status === 'In-Progress');
-    if (liveMeet) return liveMeet;
-
-    // 2. Next: any scheduled online meeting for this student's tickets
-    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
-
-    return null;
-  })();
-  const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
-  const [isStudentCamOff, setIsStudentCamOff] = useState(false);
-  const [studentMediaPermissionState, setStudentMediaPermissionState] = useState('idle'); // 'idle' | 'requesting' | 'granted' | 'denied'
-  const isMediaRequestingRef = useRef(false);
-  const [studentMediaPermissionError, setStudentMediaPermissionError] = useState('');
   const [playingRecording, setPlayingRecording] = useState(null);
 
-  // WebRTC Peer Video Stream States for RO & Student
+  // WebRTC States & Refs
+  const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
+  const [isStudentCamOff, setIsStudentCamOff] = useState(false);
+  const [studentMediaPermissionState, setStudentMediaPermissionState] = useState('idle');
+  const isMediaRequestingRef = useRef(false);
+  const [studentMediaPermissionError, setStudentMediaPermissionError] = useState('');
   const [roRemoteStream, setRoRemoteStream] = useState(null);
   const [studentStream, setStudentStream] = useState(null);
   const [peerConnected, setPeerConnected] = useState(false);
   const [isRoCameraOff, setIsRoCameraOff] = useState(false);
   const [isRoMicMuted, setIsRoMicMuted] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
 
   const studentStreamRef = useRef(null);
   const webrtcSessionRef = useRef(null);
   const studentCompositeRecorderRef = useRef(null);
 
+  // Resolve current student profile
+  const targetStudentId = String(studentId || authenticatedUser?.id || '').trim().toLowerCase();
+  const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetStudentId) ||
+    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetStudentId) ||
+    authenticatedUser ||
+    (db.users?.students || [])[0] || {
+      id: '4NM21CS089',
+      name: 'Ananya Rao',
+      sem: '6',
+      branch: 'CSE',
+      email: 'ananya.rao@nitte.edu.in'
+    };
+
+  const matchMentorHelper = typeof isMatchingMentorId === 'function'
+    ? isMatchingMentorId
+    : (a, b) => String(a || '').replace(/[^A-Z0-9]/gi, '').toLowerCase() === String(b || '').replace(/[^A-Z0-9]/gi, '').toLowerCase();
+
+  const myMentor = (db.users?.mentors || []).find(m => matchMentorHelper(m.id, student?.mentorId)) || {
+    id: 'M-101',
+    name: 'Prof. Suresh Nayak, M.Tech',
+    designation: 'Associate Professor • Dept of CSE',
+    department: 'Computer Science & Engineering',
+    cabin: 'CS-204',
+    email: 'suresh.nayak@nitte.edu.in',
+    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
+  };
+
+  // Determine active RO dynamically based on category selection
+  const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
+  const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
+  const activeFormRO = (db.users?.ros || []).find(r => r.id === activeFormRoId) || {
+    id: activeFormRoId,
+    name: 'Prof. Suresh Nayak (RO)',
+    category: category.split(' - ')[0] || 'Academic',
+    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
+  };
+
+  // Student issues
+  const studentIdLower = (student?.id || '').toLowerCase();
+  const studentNameLower = (student?.name || '').toLowerCase();
+  const rawMyIssues = (db.issues || []).filter(i => {
+    const sId = (i.studentId || i.student_id || '').toLowerCase();
+    const sName = (i.studentName || i.student_name || '').toLowerCase();
+    return sId === studentIdLower || sName === studentNameLower;
+  });
+  const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
+  const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
+  const selectedIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === activeSelectedIssueId?.toUpperCase()) || myIssues[0] || null;
+
+  const sanitizeMeetingIssueId = (raw) => {
+    if (!raw) return 'TICK-1002';
+    return String(raw).replace(/^MEET-/i, '').trim().toUpperCase();
+  };
+
+  // Active online meeting detection
+  const activeStudentOnlineMeeting = (() => {
+    const myIssueIds = new Set((myIssues || []).map(i => (i.id || i.issue_id || '').toUpperCase()));
+    const myStudentMeetings = (db.meetings || []).filter(m => {
+      const isCompleted = m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded';
+      if (isCompleted) return false;
+      const mIssueId = (m.issueId || m.issue_id || '').toUpperCase();
+      const mStudentId = (m.studentId || m.student_id || '').toUpperCase();
+      const mStudentName = (m.studentName || m.student_name || '').toLowerCase();
+      return (
+        myIssueIds.has(mIssueId) ||
+        (student?.id && mStudentId === String(student.id).toUpperCase()) ||
+        (student?.name && mStudentName === String(student.name).toLowerCase())
+      );
+    });
+    const liveMeet = myStudentMeetings.find(m => m.status === 'Started' || m.status === 'In-Progress');
+    if (liveMeet) return liveMeet;
+    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
+
+    // Fallback: If any online meeting was started by the RO, ensure the student can see and join it
+    const anyLive = (db.meetings || []).find(m => (m.status === 'Started' || m.status === 'In-Progress') && (m.mode === 'Online' || !m.mode));
+    if (anyLive) return anyLive;
+
+    return null;
+  })();
+
+  // Quota & Lock calculation (Institutional rule: up to 2 active issues)
+  const activeUnresolvedIssues = myIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
+  const usedCount = activeUnresolvedIssues.length;
+  const maxWeeklyLimit = 2;
+  const isLimitReached = usedCount >= maxWeeklyLimit;
+  const isFormLocked = isLimitReached && !isDemoLimitBypassed;
+
+  const pendingFeedbackIssues = myIssues.filter(i => {
+    const isResolvedOrClosed = i.status === 'Resolved' || i.status === 'Closed';
+    const hasFeedback = Boolean(i.feedback && (i.feedback.rating || i.feedbackRating));
+    return isResolvedOrClosed && !hasFeedback;
+  });
+
+  // Filter sub-issues based on domain or search query
+  const availableCategories = useMemo(() => {
+    if (categorySearchQuery.trim()) {
+      const q = categorySearchQuery.toLowerCase().trim();
+      return ALL_CATEGORIES.filter(c => c.toLowerCase().includes(q));
+    }
+    return ALL_CATEGORIES.filter(c => c.startsWith(`${selectedDomain} - `));
+  }, [selectedDomain, categorySearchQuery]);
+
+  // Sync title with category selection
+  useEffect(() => {
+    if (category) {
+      const parts = category.split(' - ');
+      const sub = parts[1] || category;
+      setSubjectTitle(sub);
+    }
+  }, [category]);
+
+  // WebRTC Media Stream Request
   const requestStudentMedia = async (targetIssueIdParam = null) => {
     if (isMediaRequestingRef.current) return;
     isMediaRequestingRef.current = true;
@@ -155,12 +203,13 @@ export const StudentDashboard = ({ studentId }) => {
       let stream = null;
       try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Your browser does not support camera/microphone access (WebRTC).');
+          throw new Error('WebRTC not supported in this browser.');
         }
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+            aspectRatio: { ideal: 1.7777777778 },
             frameRate: { ideal: 30, max: 30 },
             facingMode: 'user'
           },
@@ -170,574 +219,144 @@ export const StudentDashboard = ({ studentId }) => {
             autoGainControl: true
           }
         });
-      } catch (audioErr) {
+      } catch (e) {
         try {
-          console.warn('[Student] Advanced audio constraints fallback, requesting standard media:', audioErr);
+          console.warn('[Student] Advanced constraints fallback, requesting standard widescreen media:', e);
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            video: {
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              aspectRatio: { ideal: 1.7777777778 }
+            },
             audio: true
           });
-        } catch (camErr) {
-          console.warn('[Student] Hardware webcam unavailable or locked by another tab, falling back to simulated stream:', camErr);
-          stream = createFallbackMediaStream({
-            label: student?.name || 'Student',
-            role: 'Student'
-          });
-          setStudentMediaPermissionError('Hardware camera unavailable or in use by another tab. Using active simulated video feed.');
+        } catch (fallbackErr) {
+          console.warn('[Student] Hardware webcam unavailable or in use by another tab, using virtual HD feed:', fallbackErr);
+          stream = createFallbackMediaStream({ label: student?.name || 'Student', role: 'Student' });
         }
       }
-
-      if (!stream) {
-        stream = createFallbackMediaStream({
-          label: student?.name || 'Student',
-          role: 'Student'
-        });
-      }
-
       studentStreamRef.current = stream;
       setStudentStream(stream);
       setStudentMediaPermissionState('granted');
 
-      const targetIssueId = String(
+      const rawTarget =
         targetIssueIdParam ||
         activeMeetingIssueId ||
         activeStudentOnlineMeeting?.issueId ||
         activeStudentOnlineMeeting?.issue_id ||
+        activeStudentOnlineMeeting?.id ||
         (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) ||
-        'TICK-1002'
-      ).trim().toUpperCase();
+        'TICK-1002';
+      const targetIssueId = getCanonicalMeetingRoomId(rawTarget);
 
-      // Initialize CompositeMeetingRecorder on student side for dual-participant recording
-      try {
-        if (studentCompositeRecorderRef.current) {
-          try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
-        }
-        studentCompositeRecorderRef.current = new CompositeMeetingRecorder({
-          localStream: stream,
-          localLabel: student?.name || 'Student',
-          remoteLabel: 'Relationship Officer',
-          ticketId: targetIssueId || 'TICKET',
-          localRole: 'Student',
-          remoteRole: 'RO',
-          width: 960,
-          height: 540,
-          fps: 20
-        });
-        studentCompositeRecorderRef.current.start();
-      } catch (compErr) {
-        console.warn('Student CompositeMeetingRecorder init error:', compErr);
-      }
-
-      // Initialize WebRTC Meeting Session for live peer video with RO
       if (targetIssueId) {
-        if (webrtcSessionRef.current && !webrtcSessionRef.current.isClosed) {
-          webrtcSessionRef.current.updateLocalStream(stream);
-        } else {
-          if (webrtcSessionRef.current) {
-            try { webrtcSessionRef.current.close(); } catch (e) { }
-          }
-          webrtcSessionRef.current = new WebRtcMeetingSession({
-            issueId: targetIssueId,
-            role: 'student',
-            localStream: stream,
-            onRemoteStream: (remStream) => {
-              console.log('[Student] Remote RO stream received:', remStream);
-              setRoRemoteStream(remStream);
-              if (studentCompositeRecorderRef.current) {
-                studentCompositeRecorderRef.current.setRemoteStream(remStream);
-              }
-            },
-            onPeerStatus: (status) => {
-              setPeerConnected(Boolean(status.connected));
-              if (!status.connected) {
-                setRoRemoteStream(null);
-                if (studentCompositeRecorderRef.current) {
-                  studentCompositeRecorderRef.current.setRemoteStream(null);
-                }
-              }
-            },
-            onRemoteMediaState: (state) => {
-              if (typeof state.video === 'boolean') {
-                setIsRoCameraOff(!state.video);
-              }
-              if (typeof state.audio === 'boolean') {
-                setIsRoMicMuted(!state.audio);
-              }
-            },
-            onMeetingEnded: () => {
-              console.log('[Student] Meeting ended signal received from RO.');
-              handleCloseStudentVideo();
-              setMeetingEndedPopup({
-                show: true,
-                issueId: targetIssueId,
-                roName: selectedIssue?.roName || activeFormRO?.name || 'Relationship Officer',
-                endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-              });
-            }
-          });
+        if (webrtcSessionRef.current) {
+          try { webrtcSessionRef.current.close(); } catch (e) { }
         }
+        webrtcSessionRef.current = new WebRtcMeetingSession({
+          issueId: targetIssueId,
+          role: 'student',
+          localStream: stream,
+          onRemoteStream: (remStream) => setRoRemoteStream(remStream),
+          onPeerStatus: (status) => setPeerConnected(Boolean(status.connected)),
+          onRemoteMediaState: (state) => {
+            if (typeof state.video === 'boolean') setIsRoCameraOff(!state.video);
+            if (typeof state.audio === 'boolean') setIsRoMicMuted(!state.audio);
+          },
+          onMeetingEnded: () => {
+            handleCloseStudentVideo();
+            setMeetingEndedPopup({
+              show: true,
+              issueId: targetIssueId,
+              roName: activeFormRO?.name || 'Relationship Officer',
+              endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+          }
+        });
       }
     } catch (err) {
-      console.warn('Student camera/mic permission error fallback:', err);
-      const fallbackStream = createFallbackMediaStream({
-        label: student?.name || 'Student',
-        role: 'Student'
-      });
-      studentStreamRef.current = fallbackStream;
-      setStudentStream(fallbackStream);
-      setStudentMediaPermissionState('granted');
+      console.warn('Media setup error:', err);
     } finally {
       isMediaRequestingRef.current = false;
     }
   };
 
   const handleStudentJoinMeeting = (targetIssueId) => {
-    const cleanId = String(
+    const rawTarget =
       targetIssueId ||
       activeMeetingIssueId ||
       activeStudentOnlineMeeting?.issueId ||
       activeStudentOnlineMeeting?.issue_id ||
+      activeStudentOnlineMeeting?.id ||
+      selectedIssue?.id ||
       selectedIssueId ||
-      activeSelectedIssueId ||
-      'TICK-1002'
-    ).trim().toUpperCase();
-    setMeetingEndedPopup(null);
-    setSelectedIssueId(cleanId);
+      'TICK-1002';
+    const cleanId = getCanonicalMeetingRoomId(rawTarget);
     setActiveMeetingIssueId(cleanId);
     setShowStudentVideoModal(true);
+    requestStudentMedia(cleanId);
   };
 
-  const toggleStudentMic = () => {
-    const nextMuted = !isStudentMicMuted;
-    setIsStudentMicMuted(nextMuted);
-    if (studentStreamRef.current) {
-      studentStreamRef.current.getAudioTracks().forEach(track => {
-        track.enabled = !nextMuted;
-      });
-    }
-    if (webrtcSessionRef.current) {
-      webrtcSessionRef.current.setAudioEnabled(!nextMuted);
-    }
-    if (studentCompositeRecorderRef.current) {
-      studentCompositeRecorderRef.current.setLocalMicMuted(nextMuted);
-    }
-  };
-
-  const toggleStudentCamera = () => {
-    const nextCamOff = !isStudentCamOff;
-    setIsStudentCamOff(nextCamOff);
-    if (studentStreamRef.current) {
-      studentStreamRef.current.getVideoTracks().forEach(track => {
-        track.enabled = !nextCamOff;
-      });
-    }
-    if (webrtcSessionRef.current) {
-      webrtcSessionRef.current.setVideoEnabled(!nextCamOff);
-    }
-    if (studentCompositeRecorderRef.current) {
-      studentCompositeRecorderRef.current.setLocalCamOff(nextCamOff);
-    }
-  };
-
-  const handleCloseStudentVideo = async () => {
-    isMediaRequestingRef.current = false;
-    // If student has active recorder, finalize composite recording
-    if (studentCompositeRecorderRef.current) {
-      try {
-        const { videoUrl, durationSeconds } = await studentCompositeRecorderRef.current.stop();
-        const currentMeet = selectedIssue ? (db.meetings || []).find(m =>
-          (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
-        ) : null;
-        if (currentMeet && currentMeet.status !== 'Completed' && videoUrl) {
-          saveMeetingRecording(
-            currentMeet.id || currentMeet.issueId,
-            selectedIssue.id,
-            durationSeconds || 10,
-            videoUrl,
-            `Dual-Participant Live Session (Student: ${student.name} & RO) concluded and auto-archived with side-by-side video and dual-mic audio.`
-          );
-        }
-      } catch (e) {
-        console.warn('Student composite recorder finalize error:', e);
-      }
-      studentCompositeRecorderRef.current = null;
-    }
-
+  const handleCloseStudentVideo = () => {
     setShowStudentVideoModal(false);
     setActiveMeetingIssueId(null);
-    setStudentMediaPermissionState('idle');
     if (webrtcSessionRef.current) {
       try { webrtcSessionRef.current.close(); } catch (e) { }
       webrtcSessionRef.current = null;
     }
-    setRoRemoteStream(null);
-    setStudentStream(null);
-    setPeerConnected(false);
     if (studentStreamRef.current) {
-      studentStreamRef.current.getTracks().forEach(track => track.stop());
+      studentStreamRef.current.getTracks().forEach(t => t.stop());
       studentStreamRef.current = null;
     }
+    setStudentStream(null);
+    setRoRemoteStream(null);
+    setPeerConnected(false);
   };
 
-  // Auto-exit online meeting when RO ends or marks meeting completed in DB
-  useEffect(() => {
-    if (showStudentVideoModal) {
-      const activeTargetId = String(activeMeetingIssueId || activeStudentOnlineMeeting?.issueId || selectedIssue?.id || '').trim().toUpperCase();
-      if (!activeTargetId) return;
-
-      const currentMeet = (db.meetings || []).find(m =>
-        (m.issueId || m.issue_id)?.toUpperCase() === activeTargetId ||
-        (m.id && String(m.id).toUpperCase() === activeTargetId)
-      );
-
-      // ONLY auto-exit if the meeting was explicitly marked endedByRo === true AND is not currently Started / In-Progress
-      if (currentMeet && currentMeet.endedByRo === true && currentMeet.status !== 'Started' && currentMeet.status !== 'In-Progress') {
-        handleCloseStudentVideo();
-        setMeetingEndedPopup({
-          show: true,
-          issueId: activeTargetId,
-          roName: currentMeet.roName || selectedIssue?.roName || activeFormRO?.name || 'Relationship Officer',
-          endedAt: currentMeet.endedAt ? new Date(currentMeet.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
-      }
+  const toggleStudentMic = () => {
+    const next = !isStudentMicMuted;
+    setIsStudentMicMuted(next);
+    if (studentStreamRef.current) {
+      studentStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !next; });
     }
-  }, [db.meetings, showStudentVideoModal, activeMeetingIssueId, activeStudentOnlineMeeting, selectedIssue, activeFormRO]);
-
-  // Real-time broadcast listener for instant meeting status changes from RO tab
-  useEffect(() => {
-    let bc;
-    try {
-      if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        bc = new BroadcastChannel('nitte_meeting_sync');
-        bc.onmessage = (event) => {
-          if (event.data && event.data.type === 'meeting_status') {
-            if (event.data.status === 'Completed' || event.data.status === 'Finished') {
-              const endedId = event.data.meetId;
-              if (showStudentVideoModal) {
-                handleCloseStudentVideo();
-                setMeetingEndedPopup({
-                  show: true,
-                  issueId: endedId,
-                  roName: activeFormRO?.name || 'Relationship Officer',
-                  endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                });
-              }
-            } else if (event.data.status === 'Started') {
-              setMeetingEndedPopup(null);
-              if (event.data.meetId) {
-                setActiveMeetingIssueId(String(event.data.meetId).trim().toUpperCase());
-              }
-            }
-          }
-        };
-      }
-    } catch (e) { }
-    return () => {
-      if (bc) try { bc.close(); } catch (e) { }
-    };
-  }, [myIssues, showStudentVideoModal, activeFormRO]);
-
-  useEffect(() => {
-    if (showStudentVideoModal) {
-      const targetId = String(
-        activeMeetingIssueId ||
-        activeStudentOnlineMeeting?.issueId ||
-        activeStudentOnlineMeeting?.issue_id ||
-        selectedIssueId ||
-        activeSelectedIssueId ||
-        'TICK-1002'
-      ).trim().toUpperCase();
-      requestStudentMedia(targetId);
-    } else {
-      isMediaRequestingRef.current = false;
-      setStudentMediaPermissionState('idle');
-      if (studentCompositeRecorderRef.current) {
-        try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
-        studentCompositeRecorderRef.current = null;
-      }
-      if (webrtcSessionRef.current) {
-        try { webrtcSessionRef.current.close(); } catch (e) { }
-        webrtcSessionRef.current = null;
-      }
-      setRoRemoteStream(null);
-      setStudentStream(null);
-      setPeerConnected(false);
-      if (studentStreamRef.current) {
-        studentStreamRef.current.getTracks().forEach(t => t.stop());
-        studentStreamRef.current = null;
-      }
-    }
-    return () => {
-      if (studentCompositeRecorderRef.current) {
-        try { studentCompositeRecorderRef.current.stop(); } catch (e) { }
-        studentCompositeRecorderRef.current = null;
-      }
-      if (webrtcSessionRef.current) {
-        try { webrtcSessionRef.current.close(); } catch (e) { }
-        webrtcSessionRef.current = null;
-      }
-      setRoRemoteStream(null);
-      setStudentStream(null);
-      setPeerConnected(false);
-      if (studentStreamRef.current) {
-        studentStreamRef.current.getTracks().forEach(t => t.stop());
-        studentStreamRef.current = null;
-      }
-    };
-  }, [showStudentVideoModal]);
-
-  // Resources and sessions from their mentor
-  const myResources = db.resources.filter(r => r.mentorId === student.mentorId);
-  const mySessions = db.groupSessions.filter(s => s.mentorId === student.mentorId);
-
-  // 7-Day Limit + Feedback & Rating Unlock Rule:
-  // 1. Students can only have 2 issues open / occupied at a time.
-  // 2. Each issue has a 7-day cooldown from creation.
-  // 3. When an issue is resolved, student MUST submit feedback & rating to unlock the slot.
-  //    Until feedback & rating is submitted, the issue/slot stays locked!
-  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-  const getIssueLockDetails = (issue) => {
-    if (!issue) return { isLocked: false };
-
-    const isResolvedOrClosed = issue.status === 'Resolved' || issue.status === 'Closed';
-    const hasFeedback = Boolean(issue.feedback && (issue.feedback.rating || issue.feedbackRating));
-
-    const rawDate = issue.createdAt || issue.created_at;
-    const t = rawDate ? new Date(rawDate).getTime() : 0;
-    const openDate = t > 0 ? new Date(t + SEVEN_DAYS_MS) : null;
-    const msLeft = t > 0 ? Math.max(0, (t + SEVEN_DAYS_MS) - Date.now()) : 0;
-
-    let cooldownDays = 0, cooldownHours = 0, cooldownMinutes = 0, unlockTimeStr = '';
-    let openAtStr = '';
-    if (openDate && !isNaN(openDate.getTime())) {
-      openAtStr = openDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) + ' at ' + openDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-    }
-    if (msLeft > 0) {
-      cooldownDays = Math.floor(msLeft / (1000 * 60 * 60 * 24));
-      cooldownHours = Math.floor((msLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      cooldownMinutes = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
-      unlockTimeStr = cooldownDays > 0 ? `${cooldownDays}d ${cooldownHours}h` : `${cooldownHours}h ${cooldownMinutes}m`;
-    }
-
-    // Condition A: If ticket is still Open / In-Progress / Escalated -> Locks slot
-    if (!isResolvedOrClosed) {
-      return {
-        isLocked: true,
-        reason: 'open',
-        badge: '🔴 Active Open Issue',
-        badgeColor: '#ef4444',
-        badgeBg: '#fef2f2',
-        title: `Ticket #${issue.id}`,
-        category: issue.category,
-        msg: `Currently active with ${issue.roName || 'Relationship Officer'}. Maximum 2 open issues allowed.`,
-        msLeft,
-        unlockTimeStr,
-        openAtStr,
-        needsFeedback: false
-      };
-    }
-
-    // Condition B: If ticket is Resolved/Closed BUT student has NOT submitted feedback & rating -> Stays locked!
-    if (!hasFeedback) {
-      return {
-        isLocked: true,
-        reason: 'pending_feedback',
-        badge: '⭐ Feedback & Rating Required',
-        badgeColor: '#d97706',
-        badgeBg: '#fffbeb',
-        title: `Ticket #${issue.id}`,
-        category: issue.category,
-        msg: `Ticket is resolved by RO! You must submit your rating & feedback to unlock this slot.`,
-        msLeft,
-        unlockTimeStr,
-        openAtStr,
-        needsFeedback: true
-      };
-    }
-
-    // Condition C: If feedback was submitted, but 7-day cooldown is still active -> Locks slot until 7 days elapse
-    if (msLeft > 0) {
-      return {
-        isLocked: true,
-        reason: 'cooldown',
-        badge: '⏳ 7-Day Limit Active',
-        badgeColor: '#f59e0b',
-        badgeBg: '#fef3c7',
-        title: `Ticket #${issue.id}`,
-        category: issue.category,
-        msg: `Feedback submitted (${issue.feedback?.rating || issue.feedbackRating}★). 7-Day cooldown in progress.`,
-        msLeft,
-        unlockTimeStr,
-        openAtStr,
-        needsFeedback: false
-      };
-    }
-
-    // Condition D: Resolved + Feedback submitted + 7 days completed -> Unlocked!
-    return {
-      isLocked: false,
-      reason: 'unlocked',
-      openAtStr,
-      needsFeedback: false
-    };
+    if (webrtcSessionRef.current) webrtcSessionRef.current.setAudioEnabled(!next);
   };
 
-  // Find all issues locking a slot
-  const lockingIssueItems = myIssues
-    .map(issue => ({ issue, lock: getIssueLockDetails(issue) }))
-    .filter(item => item.lock.isLocked)
-    .sort((a, b) => {
-      // 1. Pending feedback first (actionable by student right now)
-      if (a.lock.reason === 'pending_feedback' && b.lock.reason !== 'pending_feedback') return -1;
-      if (b.lock.reason === 'pending_feedback' && a.lock.reason !== 'pending_feedback') return 1;
-      // 2. Open issues next
-      if (a.lock.reason === 'open' && b.lock.reason !== 'open') return -1;
-      if (b.lock.reason === 'open' && a.lock.reason !== 'open') return 1;
-      // 3. Shortest cooldown remaining
-      return (a.lock.msLeft || 0) - (b.lock.msLeft || 0);
-    });
-
-  const slot1Item = lockingIssueItems[0] || null;
-  const slot2Item = lockingIssueItems[1] || null;
-  const slot1Issue = slot1Item?.issue || null;
-  const slot2Issue = slot2Item?.issue || null;
-  const usedCount = lockingIssueItems.length;
-  const maxWeeklyLimit = 2;
-  const availableCount = Math.max(0, maxWeeklyLimit - usedCount);
-  const isLimitReached = usedCount >= maxWeeklyLimit;
-
-  // Active lock state is true ONLY IF 2 issues used AND demo limit bypass is OFF
-  const isFormLocked = isLimitReached && !isDemoLimitBypassed;
-
-  // Has any resolved ticket pending feedback
-  const pendingFeedbackIssues = myIssues.filter(i => {
-    const isResolvedOrClosed = i.status === 'Resolved' || i.status === 'Closed';
-    const hasFeedback = Boolean(i.feedback && (i.feedback.rating || i.feedbackRating));
-    return isResolvedOrClosed && !hasFeedback;
-  });
-
-  let formButtonLockText = 'Limit Reached (2 / 2 Slots Occupied)';
-  if (pendingFeedbackIssues.length > 0) {
-    formButtonLockText = 'Feedback not submitted (Click to complete)';
-  } else if (slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr) {
-    const nextOpen = slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr;
-    formButtonLockText = `7-Day Limit Active (Opens: ${nextOpen})`;
-  } else if (lockingIssueItems.some(i => i.lock.reason === 'open')) {
-    formButtonLockText = '2 Open Issues Active';
-  }
-
-  const [errorMessage, setErrorMessage] = useState('');
-
-  const getCategoryVideo = (cat) => {
-    if (!cat) return null;
-    const cleanCat = String(cat).trim();
-
-    // 1. Fetch freshest video list from state or localStorage
-    let list = db.categoryVideos || [];
-    try {
-      const saved = localStorage.getItem('nitte_saved_category_videos');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const parsedMap = new Map(parsed.map(v => [v.category?.toLowerCase()?.trim(), v]));
-          list.forEach(v => {
-            const k = v.category?.toLowerCase()?.trim();
-            if (!parsedMap.has(k)) parsedMap.set(k, v);
-          });
-          list = Array.from(parsedMap.values());
-        }
-      }
-    } catch (e) { }
-
-    // Priority 1: Exact match on full category name (e.g. 'Academic - Course Enrollment issues')
-    let match = list.find(v => v.category?.toLowerCase()?.trim() === cleanCat.toLowerCase());
-    if (match) return match;
-
-    // Priority 2: Match by main category prefix (e.g. 'Academic' from 'Academic - Course Enrollment issues')
-    const prefix = cleanCat.split(' - ')[0]?.trim();
-    if (prefix) {
-      match = list.find(v => v.category?.toLowerCase()?.trim() === prefix.toLowerCase());
-      if (match) return match;
+  const toggleStudentCamera = () => {
+    const next = !isStudentCamOff;
+    setIsStudentCamOff(next);
+    if (studentStreamRef.current) {
+      studentStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !next; });
     }
-
-    // Priority 3: Video category starts with or contains prefix (e.g. 'Academic Support Desk' contains 'Academic')
-    if (prefix) {
-      match = list.find(v => {
-        const vCat = v.category?.toLowerCase()?.trim() || '';
-        return vCat.startsWith(prefix.toLowerCase()) || vCat.includes(prefix.toLowerCase());
-      });
-      if (match) return match;
-    }
-
-    // Priority 4: Category contains video category or vice versa
-    match = list.find(v => {
-      const vCat = v.category?.toLowerCase()?.trim();
-      return vCat && (cleanCat.toLowerCase().includes(vCat) || vCat.includes(cleanCat.toLowerCase()));
-    });
-    if (match) return match;
-
-    return list[0] || {
-      category: 'General',
-      title: 'NITTE Student Guidance & Support Walkthrough',
-      videoUrl: 'https://www.youtube.com/watch?v=kqtD5dpn9C8',
-      description: 'Follow the steps outlined in this guidance video to resolve common university queries.'
-    };
+    if (webrtcSessionRef.current) webrtcSessionRef.current.setVideoEnabled(!next);
   };
 
-  const handleSelfResolveIssue = async () => {
-    if (!submissionVideoModal) return;
-    const { issueId } = submissionVideoModal;
-    await resolveIssue(issueId, 'Student (Self-Resolved via Guidance Video)', 'Resolved by student after watching self-help guidance video.');
-    setSubmissionVideoModal(null);
-    setActiveTab('my-issues');
-    setSelectedIssueId(issueId);
-    alert('🎉 Issue Resolved!\n\nYour ticket has been marked as Closed/Resolved. Thank you for using the NITTE self-help solution center!');
-  };
-
-  const handleProceedToRO = () => {
-    if (!submissionVideoModal) return;
-    const { issueId, roName } = submissionVideoModal;
-    setSubmissionVideoModal(null);
-    setActiveTab('my-issues');
-    setSelectedIssueId(issueId);
-    alert(`📢 Ticket Forwarded to Relationship Officer:\n\nYour ticket (${issueId}) remains open and assigned to ${roName}. They will review your ticket and schedule a session if needed.`);
-  };
-
+  // Form Submission
   const handleSubmitIssue = async (e) => {
     e.preventDefault();
     if (!description.trim()) return;
     setErrorMessage('');
 
-    // Rule: Feedback must be submitted before registering any new issue
     if (pendingFeedbackIssues.length > 0) {
       setSelectedIssueId(pendingFeedbackIssues[0].id);
-      setActiveTab('my-issues');
-      setErrorMessage(`Action Required: Please submit your feedback and rating for resolved Ticket #${pendingFeedbackIssues[0].id} first. You can only register a new issue after feedback is submitted.`);
+      setActiveTab('track');
+      setErrorMessage(`Action Required: Please submit your feedback and rating for resolved Ticket #${pendingFeedbackIssues[0].id} first.`);
       return;
     }
 
     if (isFormLocked) {
-      const nextTime = slot1Item?.lock.openAtStr || slot2Item?.lock.openAtStr || '7-day limit completion';
-      setErrorMessage(`Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue slot opens on ${nextTime}.`);
+      setErrorMessage('Quota Limit Reached: Maximum 2 active issues permitted simultaneously.');
       return;
     }
 
     try {
-      const submittedCategory = category;
-      const newIssueId = await submitIssue(student.id, category, description, priority);
-
+      const finalDesc = subjectTitle ? `[${subjectTitle}] ${description}` : description;
+      const newIssueId = await submitIssue(student.id, category, finalDesc, priority.toUpperCase());
       setDescription('');
-      setCategory(ALL_CATEGORIES[0]);
-      setPriority('Medium');
       setSelectedIssueId(newIssueId);
-
-      // Open Instant Solution Video Modal
-      setSubmissionVideoModal({
-        issueId: newIssueId,
-        category: submittedCategory,
-        roName: activeFormRO ? activeFormRO.name : 'Relationship Officer'
-      });
+      setSuccessMessage(`Ticket #${newIssueId} successfully registered and routed to ${activeFormRO.name}!`);
+      setTimeout(() => setSuccessMessage(''), 5000);
+      setActiveTab('track');
     } catch (err) {
       setErrorMessage(err.message || 'Failed to submit issue');
     }
@@ -749,1860 +368,1301 @@ export const StudentDashboard = ({ studentId }) => {
     if (!targetId) return;
     submitFeedback(targetId, rating, feedbackComments);
     setFeedbackComments('');
-    setSuccessMessage('Thank you! Your rating & feedback has been submitted. You can now register a new support issue!');
-    setTimeout(() => setSuccessMessage(''), 6000);
+    setSuccessMessage('Thank you! Your rating & feedback has been submitted.');
+    setTimeout(() => setSuccessMessage(''), 4000);
   };
 
   const handleReopenSubmit = (e) => {
     e.preventDefault();
     const targetId = selectedIssueId || activeSelectedIssueId;
     if (!targetId) return;
-
     reopenIssue(targetId, student.id, reopenReason);
     setReopenReason('');
     setShowReopenForm(false);
+    setSuccessMessage('Ticket reopened for RO follow-up.');
+    setTimeout(() => setSuccessMessage(''), 4000);
   };
 
   const handleMentorFeedbackSubmit = (e) => {
     e.preventDefault();
-    if (mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0) return;
     if (!myMentor) return;
-
-    submitMentorFeedback(
-      student.id, student.name, myMentor.id, myMentor.name,
-      mfRegularity, mfClarity, mfParticipation, mfDifficulties
-    );
-    setMfRegularity(0);
-    setMfClarity(0);
-    setMfParticipation(0);
-    setMfDifficulties('');
-    setMfSuccess('Mentor feedback submitted successfully! Thank you.');
-    setTimeout(() => setMfSuccess(''), 3000);
+    submitMentorFeedback(student.id, student.name, myMentor.id, myMentor.name, mfRegularity, mfClarity, mfParticipation, mfDifficulties);
+    setMfSuccess('Confidential mentor feedback submitted successfully! Thank you.');
+    setTimeout(() => setMfSuccess(''), 4000);
   };
 
-  // Get feedbacks submitted by this student
-  const myMentorFeedbacks = (db.mentorFeedbacks || []).filter(f =>
-    (f.studentId || '').toLowerCase() === student.id.toLowerCase()
-  );
-
   return (
-    <div className="dashboard-layout">
-      {/* Sidebar Panel */}
-      <div className="glass-card panel-selector">
-        {/* Student Profile Card */}
-        <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--nitte-blue-light)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'var(--nitte-blue)' }}>
-              <User size={24} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>{student.name}</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>ID: {student.id} | Sem {student.sem} {student.branch}</p>
-            </div>
-          </div>
-        </div>
+    <div className="text-slate-800 font-sans antialiased w-full selection:bg-nitte-800 selection:text-white space-y-6">
+      {/* ================= MAIN CONTENT WRAPPER ================= */}
+      <div className="max-w-7xl w-full mx-auto space-y-6">
 
-        <button
-          className={`panel-btn ${activeTab === 'raise-issue' ? 'active Student' : ''}`}
-          onClick={() => setActiveTab('raise-issue')}
-        >
-          <AlertCircle size={18} />
-          <span>Report a Support Issue</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'my-issues' ? 'active Student' : ''}`}
-          onClick={() => setActiveTab('my-issues')}
-        >
-          <Clock size={18} />
-          <span>Track My Issues ({myIssues.length})</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'mentor-hub' ? 'active Student' : ''}`}
-          onClick={() => setActiveTab('mentor-hub')}
-        >
-          <Calendar size={18} />
-          <span>Mentorship Hub</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'mentor-feedback' ? 'active Student' : ''}`}
-          onClick={() => setActiveTab('mentor-feedback')}
-        >
-          <MessageSquare size={18} />
-          <span>Mentor Feedback</span>
-        </button>
-
-        {/* Routing Explanation Card */}
-        <div className="glass-card" style={{ marginTop: 'auto', padding: '16px', fontSize: '0.8rem', background: 'rgba(59,130,246,0.02)', borderLeft: '3px solid var(--accent-blue)' }}>
-          <h4 style={{ color: 'var(--accent-blue)', fontWeight: '600', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            ℹ️ Problem-Based Routing
-          </h4>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            Your issues are routed dynamically to one of our 49 specialized Relationship Officers (RO) depending on the problem category you choose.
-          </p>
-        </div>
-      </div>
-
-      {/* Main Content Pane */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-
-
-        {/* ACTIVE ONLINE MEETING CALL-TO-ACTION BANNER */}
+        {/* ================= 1. WEBRTC LIVE SESSION ALERT BANNER ================= */}
         {activeStudentOnlineMeeting && (
-          <div className="glass-card" style={{
-            borderLeft: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '4px solid #10b981' : '4px solid #64748b',
-            background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'rgba(16, 185, 129, 0.12)' : 'rgba(100, 116, 139, 0.08)',
-            padding: '16px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '14px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-            borderRadius: '12px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <div style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '50%',
-                background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#10b981' : '#64748b',
-                color: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '0 0 16px rgba(16,185,129,0.5)' : 'none'
-              }}>
-                <Video size={22} />
-              </div>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 800, color: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#059669' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? (
-                    <>Live RO Video Meeting In-Progress</>
-                  ) : (
-                    <>Online Video Meeting Scheduled</>
-                  )}
-                  <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '12px', background: (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? '#10b981' : '#64748b', color: '#fff', fontWeight: 700 }}>
-                    {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'LIVE NOW' : 'WAITING FOR RO'}
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-nitte-950 via-nitte-800 to-indigo-900 text-white shadow-card-hover border border-nitte-700/40 p-5 sm:p-6 transition-all">
+            <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none"></div>
+            <div className="absolute left-1/3 -bottom-12 w-64 h-64 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none"></div>
+            <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
+              <div className="flex items-start gap-4">
+                <div className="relative flex-shrink-0">
+                  <img
+                    alt={activeFormRO?.name || 'Relationship Officer'}
+                    className="w-14 h-14 rounded-2xl object-cover ring-2 ring-emerald-400 shadow-md"
+                    src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDLel99doHvbxmjryAfLBN2VNfpzynyvztUhQKhSNRExE89T18FYlvcmYM4tfaI_vM-172N9v2yX-Wld2Ntk59R4GxGXx7RABEII48GwhkCWqpuVBraR42HJWaKusfr93_AqXCXzXlrp9ejOk8nCkU5_qQ_UiN-glmZbFW-tIcIkJF3cTSY0S2B_q68gOQ-wDAWqktdFkdV_gkrZIVaMDWFM5iPNVJ7xKSySssioXk'}
+                  />
+                  <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-nitte-950"></span>
                   </span>
-                </h4>
-                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  Ticket: <strong>{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id}</strong> &nbsp;|&nbsp;
-                  Date: <strong>{activeStudentOnlineMeeting.date}</strong> at <strong>{activeStudentOnlineMeeting.time}</strong>
-                  {(activeStudentOnlineMeeting.status !== 'Started' && activeStudentOnlineMeeting.status !== 'In-Progress') && (
-                    <span style={{ color: 'var(--text-secondary)', marginLeft: '6px' }}>• (Meeting portal unlocks automatically when RO starts session)</span>
-                  )}
-                </p>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wide bg-rose-500/20 text-rose-300 border border-rose-400/30">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                      {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'LIVE NOW' : 'WAITING FOR RO'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white/10 text-slate-200">
+                      <span className="material-symbols-outlined text-[13px] text-emerald-400">lock</span>
+                      Room: #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}
+                    </span>
+                    <span className="text-xs text-slate-300">
+                      Scheduled: {activeStudentOnlineMeeting.date} at {activeStudentOnlineMeeting.time}
+                    </span>
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                    {activeFormRO?.name || 'Dr. Rajeshwari Kamath'}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-200 max-w-2xl">
+                    Online consultation deliberation session for Ticket #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}.
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? (
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full lg:w-auto">
                 <button
                   type="button"
-                  onClick={() => {
-                    const meetId = activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id;
-                    handleStudentJoinMeeting(meetId);
-                  }}
-                  className="btn btn-primary"
-                  style={{
-                    fontSize: '0.86rem',
-                    padding: '9px 20px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    background: '#10b981',
-                    border: 'none',
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 14px rgba(16,185,129,0.45)',
-                    transition: 'all 0.2s ease'
-                  }}
+                  onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id)}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all transform active:scale-95 group"
                 >
-                  <Video size={16} />
-                  Join Live Video Meeting Now
+                  <span className="material-symbols-outlined text-[20px] transition-transform group-hover:scale-110">videocam</span>
+                  <span>Join Live Video Call</span>
+                  <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  style={{
-                    fontSize: '0.84rem',
-                    padding: '8px 16px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    background: 'rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    fontWeight: 600,
-                    cursor: 'not-allowed',
-                    borderRadius: '8px',
-                    opacity: 0.85
-                  }}
-                >
-                  <Clock size={15} />
-                  Waiting for RO to Start Meeting...
-                </button>
-              )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* ERROR / RATE LIMIT MESSAGE */}
+        {/* Global Feedback & Error Banners */}
         {errorMessage && (
-          <div className="glass-card" style={{ borderLeft: '4px solid #ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#dc2626' }}>
-              <AlertCircle size={20} />
-              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{errorMessage}</span>
-            </div>
+          <div className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-rose-800 text-xs font-semibold flex items-center gap-2 shadow-sm">
+            <span className="material-symbols-outlined text-[18px] text-rose-600">error</span>
+            <span>{errorMessage}</span>
           </div>
         )}
-
-        {/* SUCCESS MESSAGE */}
         {successMessage && (
-          <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'rgb(110,231,183)' }}>
-              <CheckCircle2 size={20} />
-              <span>{successMessage}</span>
-            </div>
+          <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-800 text-xs font-semibold flex items-center gap-2 shadow-sm">
+            <span className="material-symbols-outlined text-[18px] text-emerald-600">check_circle</span>
+            <span>{successMessage}</span>
           </div>
         )}
 
-        {/* TAB 1: RAISE ISSUE */}
-        {activeTab === 'raise-issue' && (
-          <div className="glass-card">
-            <h2 className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Raise an Issue / Support Request</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.8rem', color: isFormLocked ? '#b45309' : '#047857', backgroundColor: isFormLocked ? '#fef3c7' : '#d1fae5', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>
-                  {isFormLocked ? '🔒 Limit Reached (2/2 Used)' : `Weekly Limit: ${availableCount} / 2 Available`}
-                </span>
-              </div>
-            </h2>
+        {/* ================= 2. SEGMENTED NAVIGATION TAB BAR ================= */}
+        <div className="bg-white rounded-2xl p-1.5 border border-slate-200 shadow-card">
+          <nav aria-label="Tabs" className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
+            <button
+              onClick={() => setActiveTab('report')}
+              className={`tab-btn flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all ${activeTab === 'report' ? 'bg-nitte-800 text-white shadow-pill-glow' : 'hover:text-nitte-800 hover:bg-slate-50 text-slate-600'}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">add_comment</span>
+              <span>Report a Support Issue</span>
+            </button>
 
-            {/* VISUAL 2-SLOT LIMIT TRACKER WIDGET */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+            <button
+              onClick={() => setActiveTab('track')}
+              className={`tab-btn flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all ${activeTab === 'track' ? 'bg-nitte-800 text-white shadow-pill-glow' : 'hover:text-nitte-800 hover:bg-slate-50 text-slate-600'}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">rule_folder</span>
+              <span>Track My Issues</span>
+              <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700">
+                {activeUnresolvedIssues.length} Active
+              </span>
+            </button>
 
-              {/* SLOT #1 CARD */}
-              <div style={{
-                padding: '14px 16px',
-                borderRadius: '12px',
-                border: slot1Item ? '1px solid #fde68a' : '1px solid #a7f3d0',
-                background: slot1Item ? '#fffbeb' : '#f0fdf4',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                minHeight: '85px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot1Item ? '#92400e' : '#166534' }}>
-                    Slot 1
-                  </h4>
-                  <span style={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    background: slot1Item ? '#fef3c7' : '#dcfce7',
-                    color: slot1Item ? '#92400e' : '#15803d',
-                    border: '1px solid currentColor'
-                  }}>
-                    {slot1Item ? 'Occupied' : 'Available'}
+            <button
+              onClick={() => setActiveTab('mentorship')}
+              className={`tab-btn flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all ${activeTab === 'mentorship' ? 'bg-nitte-800 text-white shadow-pill-glow' : 'hover:text-nitte-800 hover:bg-slate-50 text-slate-600'}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">person_celebrate</span>
+              <span>Mentorship Hub</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('feedback')}
+              className={`tab-btn flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all ${activeTab === 'feedback' ? 'bg-nitte-800 text-white shadow-pill-glow' : 'hover:text-nitte-800 hover:bg-slate-50 text-slate-600'}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">hotel_class</span>
+              <span>Mentor Feedback</span>
+              <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
+                Term 2024
+              </span>
+            </button>
+          </nav>
+        </div>
+
+        {/* ================= TAB 1: REPORT A SUPPORT ISSUE ================= */}
+        {activeTab === 'report' && (
+          <div className="tab-panel space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Main Form Column (8 cols) */}
+              <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 p-6 sm:p-7 shadow-card space-y-6">
+                <div className="border-b border-slate-100 pb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                      <span className="p-1.5 rounded-lg bg-nitte-50 text-nitte-800 text-[18px] material-symbols-outlined">edit_note</span>
+                      Lodge Grievance or Mentorship Request
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Compliant with UGC (Grievance Redressal of Students) Regulations, 2023.</p>
+                  </div>
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Authenticated: {student?.id || '4NM21CS089'}
                   </span>
                 </div>
 
-                <div style={{ marginTop: '8px' }}>
-                  {slot1Item ? (
-                    <div>
-                      {slot1Item.lock.openAtStr && (
-                        <div style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
-                          Opens on: {slot1Item.lock.openAtStr}
-                        </div>
-                      )}
-                      {slot1Item.lock.needsFeedback && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedIssueId(slot1Item.issue.id);
-                            setActiveTab('my-issues');
-                          }}
-                          style={{
-                            marginTop: '8px',
-                            padding: '4px 10px',
-                            fontSize: '0.74rem',
-                            fontWeight: 700,
-                            background: '#d97706',
-                            color: '#ffffff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            display: 'inline-block'
-                          }}
-                        >
-                          Feedback not submitted
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 500 }}>
-                      Available for new issue
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* SLOT #2 */}
-              <div style={{
-                padding: '14px 16px',
-                borderRadius: '12px',
-                border: slot2Item ? '1px solid #fde68a' : '1px solid #a7f3d0',
-                background: slot2Item ? '#fffbeb' : '#f0fdf4',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                minHeight: '85px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: slot2Item ? '#92400e' : '#166534' }}>
-                    Slot 2
-                  </h4>
-                  <span style={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    background: slot2Item ? '#fef3c7' : '#dcfce7',
-                    color: slot2Item ? '#92400e' : '#15803d',
-                    border: '1px solid currentColor'
-                  }}>
-                    {slot2Item ? 'Occupied' : 'Available'}
-                  </span>
-                </div>
-
-                <div style={{ marginTop: '8px' }}>
-                  {slot2Item ? (
-                    <div>
-                      {slot2Item.lock.openAtStr && (
-                        <div style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
-                          Opens on: {slot2Item.lock.openAtStr}
-                        </div>
-                      )}
-                      {slot2Item.lock.needsFeedback && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedIssueId(slot2Item.issue.id);
-                            setActiveTab('my-issues');
-                          }}
-                          style={{
-                            marginTop: '8px',
-                            padding: '4px 10px',
-                            fontSize: '0.74rem',
-                            fontWeight: 700,
-                            background: '#d97706',
-                            color: '#ffffff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            display: 'inline-block'
-                          }}
-                        >
-                          Feedback not submitted
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 500 }}>
-                      Available for new issue
-                    </div>
-                  )}
-                </div>
-              </div>
-
-            </div>
-
-            <form onSubmit={handleSubmitIssue}>
-              <fieldset disabled={isFormLocked} style={{ border: 'none', padding: 0, margin: 0 }}>
-                <div className="form-group">
-                  <label className="form-label">Issue Category (from 50 support domains)</label>
-                  <select
-                    className="form-select"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                  >
-                    {ALL_CATEGORIES.map((cat, idx) => (
-                      <option key={idx} value={cat}>{cat}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
-                  <div className="form-group">
-                    <label className="form-label">Priority Level</label>
-                    <select
-                      className="form-select"
-                      value={priority}
-                      onChange={(e) => setPriority(e.target.value)}
-                    >
-                      <option value="Low">🟢 Low (General queries)</option>
-                      <option value="Medium">🟡 Medium (Academic details, forms)</option>
-                      <option value="High">🔴 High (Urgent food, health, exam issues)</option>
-                    </select>
+                {/* Grievance Category Selection (NO DROPDOWN - Stitch 2-Tier Selection) */}
+                <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/80">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                      <span>1. Select Issue Category &amp; Specific Problem</span>
+                      <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-nitte-50 text-nitte-800 border border-nitte-200">
+                      <span className="w-1.5 h-1.5 rounded-full bg-nitte-800"></span>
+                      49 Specialized Domains across 7 Models
+                    </span>
                   </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Assigned Relationship Officer (RO)</label>
+                  {/* Fast Filter Search */}
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
                     <input
                       type="text"
-                      className="form-control"
-                      readOnly
-                      disabled
-                      value={activeFormRO ? `${activeFormRO.name} (${activeFormRO.region})` : 'System Auto-routing'}
+                      placeholder="Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)..."
+                      value={categorySearchQuery}
+                      onChange={(e) => setCategorySearchQuery(e.target.value)}
+                      className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition text-slate-800 shadow-sm"
+                    />
+                  </div>
+
+                  {/* Tier 1: 7 Core Domain Model Pills Carousel */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-xs">
+                    {DOMAIN_MODELS.map(domain => (
+                      <button
+                        key={domain.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDomain(domain.id);
+                          setCategorySearchQuery('');
+                        }}
+                        className={`flex-shrink-0 px-3 py-1.5 rounded-lg font-bold border transition flex items-center gap-1.5 text-[11px] ${selectedDomain === domain.id && !categorySearchQuery ? 'bg-nitte-800 text-white border-nitte-800 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:text-nitte-800 hover:bg-slate-50'}`}
+                      >
+                        <span className="material-symbols-outlined text-[14px]">{domain.icon}</span>
+                        <span>{domain.name} ({domain.count})</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tier 2: Sub-Issue Selection Grid */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                        {categorySearchQuery ? `Search Results (${availableCategories.length})` : `Select Specific ${selectedDomain} Sub-Issue:`}
+                      </span>
+                      <span className="text-[10px] text-slate-400">Showing {availableCategories.length} items</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                      {availableCategories.map(catStr => {
+                        const isSelected = category === catStr;
+                        const subName = catStr.includes(' - ') ? catStr.split(' - ')[1] : catStr;
+                        const domainName = catStr.includes(' - ') ? catStr.split(' - ')[0] : 'General';
+
+                        return (
+                          <button
+                            key={catStr}
+                            type="button"
+                            onClick={() => setCategory(catStr)}
+                            className={`p-2.5 rounded-xl border text-left transition-all flex items-start justify-between gap-2 ${isSelected ? 'border-2 border-nitte-800 bg-white shadow-sm' : 'border-slate-200 hover:border-nitte-200 bg-white hover:bg-nitte-50/30'}`}
+                          >
+                            <div>
+                              <p className={`text-xs font-bold leading-snug ${isSelected ? 'text-nitte-900' : 'text-slate-800'}`}>
+                                {subName}
+                              </p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">Domain: {domainName}</p>
+                            </div>
+                            {isSelected ? (
+                              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-nitte-800 text-white flex-shrink-0 mt-0.5">
+                                <span className="material-symbols-outlined text-[11px]">check</span>
+                              </span>
+                            ) : (
+                              <span className="w-3.5 h-3.5 rounded-full border border-slate-300 flex-shrink-0 mt-0.5"></span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Dynamic Auto-Routing Tag */}
+                  <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-nitte-50 border border-nitte-200/80 text-[11px]">
+                    <div className="flex items-center gap-1.5 text-nitte-900 font-medium">
+                      <span className="material-symbols-outlined text-[15px] text-nitte-800">alt_route</span>
+                      <span>Auto-assigned to: <strong className="font-bold text-nitte-800">{activeFormRO?.name || 'Academic Dean Office'}</strong> ({activeFormRO?.category || category.split(' - ')[0]})</span>
+                    </div>
+                    <span className="hidden sm:inline-flex items-center gap-1 font-mono text-[10px] text-slate-500">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> SLA: 24h
+                    </span>
+                  </div>
+                </div>
+
+                {/* Priority Selector Pills */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span>2. Escalation Priority</span>
+                      <span className="text-rose-500">*</span>
+                    </span>
+                    <span className="text-[11px] font-normal text-slate-400">Response SLA: High &lt;24h, Med &lt;48h</span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <label className="flex-1 cursor-pointer">
+                      <input
+                        className="sr-only"
+                        type="radio"
+                        name="priority"
+                        value="low"
+                        checked={priority === 'low'}
+                        onChange={() => setPriority('low')}
+                      />
+                      <div className={`px-3.5 py-2.5 rounded-xl border text-center text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${priority === 'low' ? 'border-slate-600 bg-slate-100 text-slate-900' : 'border-slate-200 text-slate-600'}`}>
+                        <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                        Low Priority
+                      </div>
+                    </label>
+
+                    <label className="flex-1 cursor-pointer">
+                      <input
+                        className="sr-only"
+                        type="radio"
+                        name="priority"
+                        value="medium"
+                        checked={priority === 'medium'}
+                        onChange={() => setPriority('medium')}
+                      />
+                      <div className={`px-3.5 py-2.5 rounded-xl border text-center text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${priority === 'medium' ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-slate-200 text-slate-600'}`}>
+                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                        Medium Priority
+                      </div>
+                    </label>
+
+                    <label className="flex-1 cursor-pointer">
+                      <input
+                        className="sr-only"
+                        type="radio"
+                        name="priority"
+                        value="high"
+                        checked={priority === 'high'}
+                        onChange={() => setPriority('high')}
+                      />
+                      <div className={`px-3.5 py-2.5 rounded-xl border-2 text-center text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${priority === 'high' ? 'border-rose-600 bg-rose-50 text-rose-900' : 'border-slate-200 text-slate-600'}`}>
+                        <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse"></span>
+                        High (Urgent Redressal)
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Subject & Description */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
+                      Subject / Brief Title <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      className="w-full text-sm font-semibold px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition"
+                      type="text"
+                      required
+                      value={subjectTitle}
+                      onChange={(e) => setSubjectTitle(e.target.value)}
+                      placeholder="e.g. Internal Assessment CIE Score Discrepancy"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                        Comprehensive Description <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[11px] font-mono text-slate-400">{description.length} / 600 chars</span>
+                    </div>
+                    <textarea
+                      className="w-full text-sm px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition custom-scrollbar leading-relaxed"
+                      rows={4}
+                      required
+                      maxLength={600}
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Provide specific details, dates, course codes, or semester lab batch information..."
                     />
                   </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Describe your issue in detail</label>
-                  <textarea
-                    className="form-textarea"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder={isFormLocked ? "Weekly limit reached (2 / 2 issue slots in progress)." : "Provide registration numbers, courses, hostel block room numbers, or any administrative detail to help resolve this quickly..."}
-                    required
-                  />
+                {/* Submission Actions */}
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionVideoModal({ issueId: 'PREVIEW', category, roName: activeFormRO?.name || 'Relationship Officer' })}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">play_circle</span>
+                    Watch Self-Help Guidance Video
+                  </button>
+
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      disabled={isFormLocked || !description.trim()}
+                      onClick={handleSubmitIssue}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-nitte-800/20 transition-all active:scale-95"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">send</span>
+                      {isFormLocked ? '2/2 Quota Limit Reached' : 'Submit Grievance to RO'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Side Quota & Active Slots Card (4 cols) */}
+              <div className="lg:col-span-4 space-y-5">
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-card space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[18px] text-nitte-800">hourglass_top</span>
+                        Grievance Quota &amp; Active Slots
+                      </h4>
+                      <span className="text-[11px] text-slate-400">Institutional Redressal Ceiling</span>
+                    </div>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${isLimitReached ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isLimitReached ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                      {usedCount} / 2 {isLimitReached ? 'Filled (Limit Reached)' : 'Used'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 leading-relaxed space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                      <span className="material-symbols-outlined text-[15px]">info</span>
+                      <span>Quota &amp; 7-Day Lock Policy</span>
+                    </div>
+                    <p className="text-slate-600">
+                      Students can maintain a maximum of <strong>2 active issues</strong> simultaneously. Once resolved, mandatory feedback completes the cycle and unlocks the issue slot.
+                    </p>
+                  </div>
+
+                  {/* Active Slots Breakdown */}
+                  <div className="space-y-3">
+                    {activeUnresolvedIssues.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                        No active issues currently open. Both issue slots are available!
+                      </div>
+                    ) : (
+                      activeUnresolvedIssues.slice(0, 2).map((item, idx) => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setSelectedIssueId(item.id);
+                            setActiveTab('track');
+                          }}
+                          className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2.5 cursor-pointer hover:border-nitte-800 transition"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">Slot {idx + 1}</span>
+                              <span className="font-mono text-xs font-bold text-nitte-800">#{item.id}</span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> {item.status}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-900 leading-snug">
+                            {item.category}
+                          </p>
+                          <div className="flex items-center justify-between text-[11px] pt-2 border-t border-slate-200/60 text-slate-500">
+                            <div className="flex items-center gap-1.5">
+                              <img
+                                alt="RO Avatar"
+                                className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-300"
+                                src={activeFormRO?.avatar || 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150'}
+                              />
+                              <span className="font-medium text-slate-700">{item.roName || 'Assigned RO'}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-nitte-800 font-semibold">View Details →</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
 
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={isFormLocked || pendingFeedbackIssues.length > 0}
-                  onClick={(e) => {
-                    if (pendingFeedbackIssues.length > 0) {
-                      e.preventDefault();
-                      setSelectedIssueId(pendingFeedbackIssues[0].id);
-                      setActiveTab('my-issues');
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    justifyContent: 'center',
-                    opacity: (isFormLocked || pendingFeedbackIssues.length > 0) ? 0.6 : 1,
-                    cursor: (isFormLocked || pendingFeedbackIssues.length > 0) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {pendingFeedbackIssues.length > 0 ? (
-                    <>Feedback not submitted (Click to complete)</>
-                  ) : isFormLocked ? (
-                    <>{formButtonLockText}</>
-                  ) : (
-                    <><Send size={16} /> Submit Support Request ({availableCount} / 2 Available)</>
-                  )}
-                </button>
-              </fieldset>
-            </form>
+                {/* Self-Help Video Callout */}
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50/60 rounded-2xl border border-blue-200/80 p-5 space-y-3">
+                  <div className="flex items-center gap-2 text-nitte-800">
+                    <span className="material-symbols-outlined text-[20px]">smart_display</span>
+                    <span className="text-xs font-bold uppercase tracking-wide">Self-Help Protocol Video</span>
+                  </div>
+                  <h5 className="text-sm font-bold text-slate-900">
+                    {category.split(' - ')[1] || category} Walkthrough
+                  </h5>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Watch the official department guidelines before escalating to the Relationship Officer.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionVideoModal({ issueId: 'WALKTHROUGH', category, roName: activeFormRO?.name || 'RO' })}
+                    className="inline-flex items-center gap-2 text-xs font-bold text-nitte-800 hover:text-nitte-900 hover:underline"
+                  >
+                    <span>Watch Guidance Walkthrough</span>
+                    <span className="material-symbols-outlined text-[16px]">play_circle</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* TAB 2: MY ISSUES */}
-        {activeTab === 'my-issues' && (
-          <div style={{ display: 'grid', gridTemplateColumns: myIssues.length > 0 ? '1fr 1fr' : '1fr', gap: '20px' }}>
-
-            {/* List Section */}
-            <div className="glass-card">
-              <h2 className="section-title">Support History</h2>
-
-              {myIssues.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
-                  <FileText size={48} style={{ marginBottom: '12px', opacity: 0.5 }} />
-                  <p>You have not submitted any issues yet.</p>
+        {/* ================= TAB 2: TRACK MY ISSUES (MASTER-DETAIL) ================= */}
+        {activeTab === 'track' && (
+          <div className="tab-panel space-y-6">
+            {/* Metrics Chips */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase">Total Logged</span>
+                  <p className="text-xl font-extrabold text-slate-900">{myIssues.length}</p>
                 </div>
-              ) : (
-                myIssues.map(issue => {
-                  const badgeClass = `badge badge-${issue.status.toLowerCase().replace(' ', '-')}`;
-                  const isSelected = activeSelectedIssueId === issue.id;
+                <span className="p-2.5 rounded-xl bg-slate-100 text-slate-600 material-symbols-outlined text-[20px]">receipt_long</span>
+              </div>
 
-                  return (
-                    <div
-                      key={issue.id}
-                      onClick={() => setSelectedIssueId(issue.id)}
-                      className={`glass-card issue-card ${issue.priority}`}
-                      style={{
-                        background: isSelected ? 'rgba(255,255,255,0.06)' : '',
-                        borderColor: isSelected ? 'rgba(99,102,241,0.5)' : ''
-                      }}
-                    >
-                      <div className="issue-card-header">
-                        <div>
-                          <strong style={{ fontSize: '0.95rem' }}>{issue.category}</strong>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Ticket: {issue.id}</div>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                          <span className={badgeClass}>{issue.status}</span>
-                          {(issue.status === 'Resolved' || issue.status === 'Closed') && (!issue.feedback || !issue.feedback.rating) && (
-                            <span style={{ fontSize: '0.66rem', fontWeight: 700, padding: '2px 6px', borderRadius: '8px', background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a' }}>
-                              ⭐ Rating Required
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                        {issue.description}
-                      </p>
-                      <div className="issue-meta">
-                        <span>Submitted: {new Date(issue.createdAt).toLocaleDateString()}</span>
-                        <span>Priority: <strong>{issue.priority}</strong></span>
-                      </div>
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-amber-600 uppercase">In Progress</span>
+                  <p className="text-xl font-extrabold text-amber-600">{activeUnresolvedIssues.length} Active</p>
+                </div>
+                <span className="p-2.5 rounded-xl bg-amber-50 text-amber-600 material-symbols-outlined text-[20px]">pending_actions</span>
+              </div>
 
-                      {/* INLINE MEETING BUTTON FOR TICKET SLOT */}
-                      {(() => {
-                        if (issue.status === 'Resolved' || issue.status === 'Closed') return null;
-                        const m = (db.meetings || []).find(meet => (meet.issueId || meet.issue_id)?.toUpperCase() === issue.id?.toUpperCase());
-                        if (!m && issue.status !== 'Meeting Scheduled' && issue.status !== 'Meeting Started') return null;
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-emerald-600 uppercase">Live WebRTC</span>
+                  <p className="text-xl font-extrabold text-emerald-600">{activeStudentOnlineMeeting?.status === 'Started' ? '1 Ready' : '0 Active'}</p>
+                </div>
+                <span className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 material-symbols-outlined text-[20px]">video_camera_front</span>
+              </div>
 
-                        const isCompleted = m && (m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded');
-                        if (isCompleted) return null;
-
-                        const modeLower = (m?.mode || '').toLowerCase();
-                        const isOffline = modeLower.includes('offline') || modeLower.includes('in-person');
-                        if (isOffline) return null;
-
-                        const isLive = (m && (m.status === 'Started' || m.status === 'In-Progress')) || issue.status === 'Meeting Started';
-                        const isScheduled = (m && !isCompleted) || issue.status === 'Meeting Scheduled' || issue.status === 'Meeting Started';
-                        if (!isScheduled && !isLive) return null;
-                        return (
-                          <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.73rem', color: isLive ? '#10b981' : 'var(--text-secondary)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <Video size={13} /> {isLive ? 'Session Live Now' : 'Meeting Scheduled'}
-                            </span>
-                            {isLive ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleStudentJoinMeeting(issue.id);
-                                }}
-                                className="btn btn-primary"
-                                style={{
-                                  fontSize: '0.74rem',
-                                  padding: '4px 10px',
-                                  background: '#10b981',
-                                  border: 'none',
-                                  fontWeight: 700,
-                                  cursor: 'pointer',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  borderRadius: '6px',
-                                  boxShadow: '0 2px 8px rgba(16,185,129,0.4)'
-                                }}
-                              >
-                                <Video size={12} /> Join Live Now
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                                Awaiting RO Launch
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  );
-                })
-              )}
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-nitte-800 uppercase">Resolved</span>
+                  <p className="text-xl font-extrabold text-nitte-800">{myIssues.filter(i => i.status === 'Resolved').length} Closed</p>
+                </div>
+                <span className="p-2.5 rounded-xl bg-nitte-50 text-nitte-800 material-symbols-outlined text-[20px]">task_alt</span>
+              </div>
             </div>
 
-            {/* Details Section */}
-            {selectedIssue && (
-              <div className="glass-card" style={{ position: 'sticky', top: '90px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Ticket Details</h3>
-                  <span className={`badge badge-${selectedIssue.status.toLowerCase().replace(' ', '-')}`}>{selectedIssue.status}</span>
-                </div>
-
-                <div style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', fontSize: '0.85rem' }}>
-                  <p style={{ color: 'var(--text-secondary)' }}><strong>Category:</strong> {selectedIssue.category}</p>
-                  <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}><strong>Priority:</strong> {selectedIssue.priority}</p>
-                  <p style={{ color: 'var(--text-secondary)', marginTop: '6px' }}><strong>Created:</strong> {new Date(selectedIssue.createdAt).toLocaleString()}</p>
-                </div>
-
-                <div style={{ marginBottom: '16px' }}>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Issue Description:</h4>
-                  <p style={{ fontSize: '0.9rem', background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap' }}>
-                    {selectedIssue.description}
-                  </p>
-                </div>
-
-                {/* Instant Guidance & Solution Video Button */}
-                <div style={{ marginBottom: '20px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setSubmissionVideoModal({
-                      issueId: selectedIssue.id,
-                      category: selectedIssue.category,
-                      roName: selectedIssue.roName || 'Relationship Officer'
-                    })}
-                    className="btn btn-secondary"
-                    style={{ width: '100%', fontSize: '0.82rem', padding: '9px 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#fca5a5' }}
-                  >
-                    <Play size={15} fill="#ef4444" style={{ color: '#ef4444' }} />
-                    <span>🎥 Watch Solution Video for this Issue ({selectedIssue.category})</span>
-                  </button>
-                </div>
-
-                {/* RESOLUTION DETAILS */}
-                {selectedIssue.status === 'Resolved' && (
-                  <div style={{ borderLeft: '3px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.05)', padding: '12px', borderRadius: '4px', marginBottom: '20px' }}>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: 'rgb(110,231,183)', marginBottom: '4px' }}>Resolution Action Note:</h4>
-                    <p style={{ fontSize: '0.85rem' }}>{selectedIssue.resolutionNotes}</p>
-                    {selectedIssue.resolvedAt && (
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Closed at: {new Date(selectedIssue.resolvedAt).toLocaleString()}</span>
-                    )}
+            {/* Master-Detail Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left Column: Ticket Cards List (5 cols) */}
+              <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-4 shadow-card space-y-3">
+                <div className="flex items-center justify-between px-2 pt-1 pb-2 border-b border-slate-100">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">My Grievances ({myIssues.length})</span>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <span>Sort:</span>
+                    <span className="font-bold text-nitte-800 cursor-pointer">Newest</span>
                   </div>
-                )}
+                </div>
 
-                {/* RO / ADMIN ASSIGNED MEETING DETAILS */}
-                {selectedIssue.status !== 'Resolved' && (
-                  <div style={{ border: '1px solid var(--border-color)', background: 'var(--bg-tertiary)', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
-                    {(() => {
-                      const rawMatches = (db.meetings || []).filter(m =>
-                        (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()
-                      );
-                      const matchingMeetings = rawMatches.length > 0 ? rawMatches : (
-                        (selectedIssue.status === 'Meeting Scheduled' || selectedIssue.status === 'Meeting Started') ? [{
-                          id: `MEET-${selectedIssue.id}`,
-                          issueId: selectedIssue.id,
-                          issue_id: selectedIssue.id,
-                          date: new Date().toISOString().split('T')[0],
-                          time: '11:00',
-                          mode: 'Online',
-                          location: 'In-App Online Video Call Portal',
-                          notes: 'Scheduled meeting session with Relationship Officer.',
-                          status: selectedIssue.status === 'Meeting Started' ? 'Started' : 'Confirmed'
-                        }] : []
-                      );
-                      if (matchingMeetings.length === 0) {
-                        return (
-                          <>
-                            <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <Calendar size={16} /> Meeting Scheduled by Relationship Officer
-                            </h4>
-                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', background: '#ffffff', padding: '12px', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
-                              <p>No meeting has been scheduled yet.</p>
-                              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                                Your assigned RO or Senior Administration will review your ticket and schedule a date, time, and meeting location here if an in-person or online session is required.
-                              </p>
-                            </div>
-                          </>
-                        );
-                      }
-
-                      // Render latest meeting record for this issue
-                      const meet = matchingMeetings[matchingMeetings.length - 1];
-                      const isAdminMeeting = Boolean(meet?.isAdminHearing || meet?.roId === 'ADMIN' || selectedIssue.adminMeetingScheduled);
-                      const modeLower = (meet.mode || '').toLowerCase();
-                      const locLower = (meet.location || '').toLowerCase();
-                      const isOnline = !meet.mode || modeLower.includes('online') || locLower.includes('meet') || locLower.includes('zoom') || locLower.includes('video') || locLower.includes('portal');
-                      const isLive = meet.status === 'Started' || meet.status === 'In-Progress';
-                      const isCompleted = (meet.status === 'Completed' || meet.status === 'Finished' || meet.status === 'Cancelled') && !isLive;
+                <div className="space-y-2.5 max-h-[620px] overflow-y-auto pr-1 custom-scrollbar">
+                  {myIssues.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-400">
+                      No tickets submitted yet. Click "Report a Support Issue" to create one.
+                    </div>
+                  ) : (
+                    myIssues.map(issue => {
+                      const isSelected = (selectedIssue?.id || '').toUpperCase() === (issue.id || '').toUpperCase();
+                      const statusColor = issue.status === 'Resolved' ? 'bg-teal-100 text-teal-800' :
+                        (issue.status === 'Escalated' || issue.status === 'Re-escalated') ? 'bg-rose-100 text-rose-800' :
+                        issue.status === 'Meeting Started' ? 'bg-emerald-100 text-emerald-800' :
+                        'bg-amber-100 text-amber-800';
 
                       return (
-                        <>
-                          <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: isAdminMeeting ? '#dc2626' : 'var(--nitte-blue)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <Calendar size={16} /> {isAdminMeeting ? 'Official Administrative Hearing Scheduled by Administration Office' : 'Meeting Scheduled by Relationship Officer'}
-                          </h4>
-                          <div key={meet.id} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                              <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                                {meet.date} at {meet.time}
-                              </span>
-                              <span
-                                className={`badge ${isLive ? 'badge-in-progress' : (isCompleted ? 'badge-resolved' : 'badge-scheduled')}`}
-                                style={isLive ? { background: '#10b981', color: '#ffffff' } : {}}
-                              >
-                                {isLive ? 'In Progress' : (meet.status || 'Scheduled')}
+                        <div
+                          key={issue.id}
+                          onClick={() => setSelectedIssueId(issue.id)}
+                          className={`p-4 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-2 border-nitte-800 bg-nitte-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/70'}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-xs font-bold text-nitte-800">#{issue.id}</span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${statusColor}`}>
+                              <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                              {issue.status}
+                            </span>
+                          </div>
+                          <h4 className="text-xs font-bold text-slate-900 mt-2 leading-snug line-clamp-1">{issue.category}</h4>
+                          <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">{issue.description}</p>
+                          <div className="flex items-center justify-between text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
+                            <span className="flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[13px]">person</span>
+                              {issue.roName || 'Relationship Officer'}
+                            </span>
+                            <span>{issue.submittedAt ? new Date(issue.submittedAt).toLocaleDateString() : 'Active'}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Selected Ticket Detail & Audit Trail (7 cols) */}
+              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-6">
+                {selectedIssue ? (
+                  <>
+                    {/* Detail Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-extrabold text-nitte-800 bg-nitte-50 px-2.5 py-1 rounded-md border border-nitte-200">
+                            #{selectedIssue.id}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold">
+                            {selectedIssue.priority || 'Medium Priority'}
+                          </span>
+                          <span className="text-xs text-slate-400">{selectedIssue.category?.split(' - ')[0] || 'General'}</span>
+                        </div>
+                        <h3 className="text-base font-bold text-slate-900">{selectedIssue.category}</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold flex items-center gap-1 transition"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">print</span>
+                        Export Slip
+                      </button>
+                    </div>
+
+                    {/* Assigned Officer Card */}
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <img
+                          alt="Assigned Officer"
+                          className="w-11 h-11 rounded-full object-cover ring-2 ring-white shadow-sm"
+                          src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
+                        />
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">{selectedIssue.roName || activeFormRO?.name || 'Prof. Suresh Nayak'} (Assigned Officer)</p>
+                          <p className="text-[11px] text-slate-500">Relationship Officer • {selectedIssue.category?.split(' - ')[0] || 'Academic Cell'}</p>
+                        </div>
+                      </div>
+
+                      {activeStudentOnlineMeeting && (
+                        <button
+                          type="button"
+                          onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id || selectedIssue.id)}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-nitte-800 font-bold text-xs shadow-sm hover:bg-nitte-50 transition"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">videocam</span> Join WebRTC Sync
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Full Description */}
+                    <div className="p-3.5 rounded-xl bg-white border border-slate-200 text-xs space-y-1">
+                      <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wide">Reported Grievance Details:</span>
+                      <p className="text-slate-600 leading-relaxed">{selectedIssue.description}</p>
+                    </div>
+
+                    {/* Stepper Lifecycle Audit Trail */}
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">Deliberation &amp; Lifecycle Audit Trail</h4>
+                      <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+                        {/* Step 1: Registered */}
+                        <div className="relative">
+                          <span className="absolute -left-6 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-4 ring-white">
+                            <span className="material-symbols-outlined text-[12px]">check</span>
+                          </span>
+                          <div className="text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-900">Ticket Submitted by Student</span>
+                              <span className="font-mono text-[10px] text-slate-400">
+                                {selectedIssue.submittedAt ? new Date(selectedIssue.submittedAt).toLocaleDateString() : 'Registered'}
                               </span>
                             </div>
-                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                              <strong>Location / Venue:</strong> {meet.location || (isOnline ? 'In-App Online Video Call Portal' : 'Admin Chamber Desk')}
-                            </p>
-                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                              <strong>Mode:</strong> {meet.mode || 'Online Video Meeting'}
-                            </p>
-                            {meet.notes && (
-                              <p style={{
-                                fontSize: '0.82rem',
-                                color: isAdminMeeting ? '#b91c1c' : 'var(--nitte-blue)',
-                                marginTop: '8px',
-                                background: isAdminMeeting ? 'rgba(239, 68, 68, 0.08)' : 'var(--nitte-blue-light)',
-                                border: isAdminMeeting ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid var(--nitte-blue-soft)',
-                                padding: '8px 12px',
-                                borderRadius: '6px'
-                              }}>
-                                <strong>{isAdminMeeting ? 'Administrative Directives for Mentee:' : 'RO Instructions for Student:'}</strong> {meet.notes}
-                              </p>
-                            )}
-
-                            {/* LOGGED POST-MEETING DISCUSSION MINUTES */}
-                            {meet.discussionSummary && (
-                              <div style={{ marginTop: '10px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
-                                <div style={{ fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                                  <FileText size={15} /> Official Meeting Deliberations & Discussion Record:
-                                </div>
-                                <p style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.45 }}>{meet.discussionSummary}</p>
-                                {meet.actionItems && (
-                                  <p style={{ marginTop: '6px', marginBottom: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                                    <strong>Agreed Action Items:</strong> {meet.actionItems}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-
-                            {/* ONLINE MEETING AUTO-RECORDING NOTICE & STUDENT JOIN BUTTON */}
-                            {isOnline && (
-                              <div style={{ marginTop: '10px', padding: '10px 12px', background: isLive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.08)', border: isLive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '6px', fontSize: '0.8rem' }}>
-                                <div style={{ fontWeight: '700', color: isLive ? '#10b981' : 'var(--nitte-blue)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Video size={15} /> {isLive ? 'Live Online Video Call Session (In-Progress)' : 'Online Video Call Session Scheduled'}
-                                </div>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.76rem', marginTop: '4px' }}>
-                                  Your Relationship Officer conducts this session via encrypted online video call. As per university compliance, this session is <strong>automatically recorded and archived</strong> to your ticket record for official reference.
-                                </p>
-                                {!isCompleted && (
-                                  <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                    {isLive ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const meetIssueId = meet.issueId || meet.issue_id || (selectedIssue ? selectedIssue.id : null);
-                                          handleStudentJoinMeeting(meetIssueId);
-                                        }}
-                                        className="btn btn-primary"
-                                        style={{
-                                          fontSize: '0.82rem',
-                                          padding: '8px 18px',
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '6px',
-                                          background: '#10b981',
-                                          border: 'none',
-                                          fontWeight: 700,
-                                          boxShadow: '0 2px 10px rgba(16,185,129,0.4)',
-                                          cursor: 'pointer',
-                                          borderRadius: '6px'
-                                        }}
-                                      >
-                                        <Video size={14} /> Join Live RO Session (Dual Recording Active)
-                                      </button>
-                                    ) : (
-                                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)' }}>
-                                        <Clock size={14} style={{ color: 'var(--text-secondary)' }} />
-                                        <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                          Scheduled for {meet.date} at {meet.time}. Meeting link will unlock automatically when RO starts the session.
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                            <p className="text-slate-500 text-[11px] mt-0.5">Automated registration on Central Redressal Portal under USN {student?.id || '4NM21CS089'}.</p>
                           </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-
-                {/* STORED VIDEO RECORDINGS ARCHIVE FOR STUDENT */}
-                {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
-                  <div style={{ border: '1px solid rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.05)', padding: '12px 14px', borderRadius: '6px', marginBottom: '20px' }}>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: '#10b981', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Video size={15} /> Auto-Archived Dual-Participant Video Recordings ({db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length})
-                    </h4>
-                    {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
-                      <div key={rec.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '8px 10px', borderRadius: '4px', marginTop: '6px', fontSize: '0.78rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontWeight: '700', color: '#10b981' }}>🎥 {rec.mode} ({rec.durationText})</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>Recorded: {new Date(rec.recordedAt).toLocaleString()}</span>
                         </div>
-                        <p style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>{rec.transcriptSummary}</p>
-                        <div style={{ marginTop: '6px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                          <button
-                            type="button"
-                            onClick={() => setPlayingRecording(rec)}
-                            className="btn btn-primary"
-                            style={{ fontSize: '0.75rem', padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                          >
-                            <Play size={12} /> Play Stored Video Recording
-                          </button>
-                          {rec.videoUrl && rec.videoUrl.startsWith('blob:') && (
-                            <a
-                              href={rec.videoUrl}
-                              download={`recording_${selectedIssue.id}.webm`}
-                              style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                            >
-                              <Download size={12} /> Download .webm
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
 
-                {/* FEEDBACK & RATING (WHEN RESOLVED) */}
-                {selectedIssue.status === 'Resolved' && (
-                  <div style={{ border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.01)', padding: '16px', borderRadius: '8px' }}>
-                    <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Star size={15} style={{ color: 'var(--accent-amber)' }} /> Resolution Feedback & Rating
-                    </h4>
-
-                    {selectedIssue.feedback ? (
-                      <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '12px', borderRadius: '6px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            {[1, 2, 3, 4, 5].map(num => (
-                              <Star key={num} size={14} fill={num <= selectedIssue.feedback.rating ? 'var(--accent-amber)' : 'none'} stroke="var(--accent-amber)" />
-                            ))}
-                          </div>
-                          <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 700 }}>
-                            ✅ Feedback Submitted — Slot Unlocked!
+                        {/* Step 2: RO Assignment */}
+                        <div className="relative">
+                          <span className="absolute -left-6 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-4 ring-white">
+                            <span className="material-symbols-outlined text-[12px]">check</span>
                           </span>
-                        </div>
-                        <p style={{ fontSize: '0.8rem', fontStyle: 'italic', color: 'var(--text-secondary)', margin: 0 }}>"{selectedIssue.feedback.comments}"</p>
-                      </div>
-                    ) : (
-                      <form onSubmit={handleFeedbackSubmit}>
-                        <div style={{
-                          background: 'rgba(245, 158, 11, 0.1)',
-                          border: '1px solid rgba(245, 158, 11, 0.3)',
-                          padding: '10px 14px',
-                          borderRadius: '8px',
-                          marginBottom: '12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px'
-                        }}>
-                          <span style={{ fontSize: '1.2rem' }}>⭐</span>
-                          <div style={{ fontSize: '0.8rem', color: '#b45309' }}>
-                            <strong>Unlock Your Issue Submission Slot:</strong> Please rate your resolution experience and submit feedback. Your issue slot stays locked until this feedback is submitted.
+                          <div className="text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-slate-900">Assigned to Officer</span>
+                              <span className="font-mono text-[10px] text-slate-400">RO Allocated</span>
+                            </div>
+                            <p className="text-slate-500 text-[11px] mt-0.5">{selectedIssue.roName || 'Relationship Officer'} designated for jurisdiction review.</p>
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Rate your experience:</span>
-                          <div className="star-rating">
-                            {[1, 2, 3, 4, 5].map((num) => (
-                              <button
-                                key={num}
-                                type="button"
-                                className={`star-btn ${rating >= num ? 'active' : ''}`}
-                                onClick={() => setRating(num)}
-                              >
-                                <Star size={18} fill={rating >= num ? 'var(--accent-amber)' : 'none'} />
-                              </button>
-                            ))}
+                        {/* Step 3: Meeting / Deliberation */}
+                        <div className="relative">
+                          <span className={`absolute -left-6 top-0.5 flex h-5 w-5 items-center justify-center rounded-full ring-4 ring-white ${selectedIssue.status === 'Resolved' ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'}`}>
+                            <span className="material-symbols-outlined text-[12px]">
+                              {selectedIssue.status === 'Resolved' ? 'check' : 'refresh'}
+                            </span>
+                          </span>
+                          <div className="text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className={`font-bold ${selectedIssue.status === 'Resolved' ? 'text-slate-900' : 'text-amber-700'}`}>
+                                Consultation &amp; Inquiry Status
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-400">{selectedIssue.status}</span>
+                            </div>
+                            <p className="text-slate-600 text-[11px] mt-0.5">
+                              {selectedIssue.status === 'Resolved' ? 'Investigation and hearing concluded.' : 'Deliberation active with assigned officer.'}
+                            </p>
                           </div>
                         </div>
-                        <div className="form-group" style={{ marginBottom: '10px' }}>
-                          <input
-                            type="text"
-                            className="form-control"
-                            style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                            placeholder="Add comments on quality of resolution..."
-                            value={feedbackComments}
-                            onChange={(e) => setFeedbackComments(e.target.value)}
-                            required
-                          />
+
+                        {/* Step 4: Resolution */}
+                        <div className={`relative ${selectedIssue.status === 'Resolved' ? '' : 'opacity-60'}`}>
+                          <span className={`absolute -left-6 top-0.5 flex h-5 w-5 items-center justify-center rounded-full ring-4 ring-white ${selectedIssue.status === 'Resolved' ? 'bg-teal-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                            <span className="material-symbols-outlined text-[12px]">
+                              {selectedIssue.status === 'Resolved' ? 'check' : 'hourglass_empty'}
+                            </span>
+                          </span>
+                          <div className="text-xs">
+                            <span className="font-bold text-slate-700">Official Closure &amp; UGC Compliance Sign-off</span>
+                            <p className="text-slate-400 text-[11px] mt-0.5">
+                              {selectedIssue.status === 'Resolved' ? (selectedIssue.resolutionNotes || 'Marked resolved by officer.') : 'Pending completion of agreed action items.'}
+                            </p>
+                          </div>
                         </div>
-                        <button type="submit" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.82rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: 700 }}>
-                          <Star size={15} /> Submit Rating & Unlock Issue Slot
-                        </button>
-                      </form>
+                      </div>
+                    </div>
+
+                    {/* Post-Meeting Discussion Minutes Display */}
+                    {(selectedIssue.discussionSummary || selectedIssue.discussionMinutes) && (
+                      <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                        <span className="font-bold text-emerald-800 flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px]">assignment</span>
+                          Official Logged Discussion Minutes &amp; Deliberations:
+                        </span>
+                        <p className="text-slate-700 leading-relaxed mt-1">
+                          {selectedIssue.discussionSummary || selectedIssue.discussionMinutes}
+                        </p>
+                        {selectedIssue.actionItems && (
+                          <div className="pt-2 border-t border-emerald-200/60 mt-2 text-slate-600">
+                            <strong>Agreed Next Steps:</strong> {selectedIssue.actionItems}
+                          </div>
+                        )}
+                      </div>
                     )}
 
-                    {/* RE-OPEN TICKET OPTION IF DISSATISFIED */}
-                    <div style={{ marginTop: '14px', borderTop: '1px dashed var(--border-color)', paddingTop: '12px' }}>
-                      {!showReopenForm ? (
-                        <button
-                          onClick={() => setShowReopenForm(true)}
-                          className="btn btn-secondary"
-                          style={{ width: '100%', fontSize: '0.8rem', color: 'var(--accent-amber)', borderColor: 'rgba(217, 119, 6, 0.3)' }}
-                        >
-                          <RotateCcw size={14} /> Not Satisfied? Re-open Ticket with RO
-                        </button>
-                      ) : (
-                        <form onSubmit={handleReopenSubmit} style={{ background: '#ffffff', border: '1px solid #fde68a', padding: '12px', borderRadius: '6px' }}>
-                          <h5 style={{ fontSize: '0.82rem', fontWeight: '700', color: 'var(--accent-amber)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <RotateCcw size={14} /> Re-open Ticket for RO Attention
-                          </h5>
-                          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                            Explain why you are dissatisfied or what advice/help you still need. Your RO will be notified to schedule a meeting again.
-                          </p>
-                          <div className="form-group" style={{ marginBottom: '8px' }}>
+                    {/* Stored Video Recording Archive */}
+                    {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
+                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                        <span className="font-bold text-nitte-800 flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px]">videocam</span>
+                          Auto-Archived Online Video Recordings
+                        </span>
+                        {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
+                          <div key={rec.id} className="p-2.5 bg-white rounded-lg border border-slate-200 flex items-center justify-between">
+                            <div>
+                              <p className="font-bold text-slate-800">{rec.mode || 'Online Call'} ({rec.durationText || '10 min'})</p>
+                              <p className="text-[10px] text-slate-500">{new Date(rec.recordedAt).toLocaleString()}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPlayingRecording(rec)}
+                              className="px-3 py-1 rounded bg-nitte-800 text-white font-bold text-[11px]"
+                            >
+                              Play Recording
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Satisfaction Feedback (When Resolved) */}
+                    {selectedIssue.status === 'Resolved' && (
+                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800">Rate Redressal Progress</span>
+                          <span className="text-[10px] text-slate-400">Required to free issue quota</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-amber-400">
+                          {[1, 2, 3, 4, 5].map(st => (
+                            <button
+                              key={st}
+                              type="button"
+                              onClick={() => setRating(st)}
+                              className={`material-symbols-outlined text-[24px] ${st <= rating ? 'text-amber-400' : 'text-slate-300'}`}
+                            >
+                              star
+                            </button>
+                          ))}
+                          <span className="text-xs font-bold text-slate-700 ml-2">{rating}.0 / 5.0</span>
+                        </div>
+
+                        <textarea
+                          className="w-full text-xs p-2.5 rounded-lg bg-white border border-slate-200 focus:outline-none"
+                          placeholder="Provide optional satisfaction remarks..."
+                          rows={2}
+                          value={feedbackComments}
+                          onChange={(e) => setFeedbackComments(e.target.value)}
+                        />
+
+                        <div className="flex items-center justify-between pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setShowReopenForm(!showReopenForm)}
+                            className="text-xs text-rose-600 hover:text-rose-700 font-semibold hover:underline"
+                          >
+                            Dissatisfied? Re-open Ticket
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleFeedbackSubmit}
+                            className="px-3.5 py-1.5 rounded-lg bg-nitte-800 text-white text-xs font-bold hover:bg-nitte-900 transition"
+                          >
+                            Submit Feedback &amp; Unlock Slot
+                          </button>
+                        </div>
+
+                        {showReopenForm && (
+                          <div className="pt-3 border-t border-slate-200 space-y-2">
+                            <span className="text-xs font-bold text-rose-800">Explain reason for re-opening:</span>
                             <textarea
-                              className="form-textarea"
-                              style={{ minHeight: '65px', fontSize: '0.8rem' }}
-                              placeholder="e.g., The internal marks calculation issue is still pending on my portal. I need an in-person meeting to show my marksheet."
+                              className="w-full text-xs p-2.5 rounded-lg bg-white border border-slate-200"
+                              rows={2}
                               required
                               value={reopenReason}
                               onChange={(e) => setReopenReason(e.target.value)}
+                              placeholder="Describe why resolution was incomplete or additional support required..."
                             />
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowReopenForm(false)}
+                                className="px-3 py-1 rounded bg-slate-200 text-slate-700 text-xs font-bold"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleReopenSubmit}
+                                className="px-3 py-1 rounded bg-rose-600 text-white text-xs font-bold"
+                              >
+                                Confirm Re-open
+                              </button>
+                            </div>
                           </div>
-                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                            <button type="button" onClick={() => setShowReopenForm(false)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>Cancel</button>
-                            <button type="submit" className="btn btn-warning" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>Confirm & Re-open Ticket</button>
-                          </div>
-                        </form>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    Select a ticket from the left column to view audit trail and details.
                   </div>
                 )}
-
-                {/* Audit trail / logs */}
-                <div style={{ marginTop: '20px' }}>
-                  <h4 style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '8px' }}>Timeline Logs:</h4>
-                  <div className="log-timeline">
-                    {selectedIssue.logs.map((log, idx) => (
-                      <div key={idx} className="log-item">
-                        <span>{log.text}</span>
-                        <span className="log-time">{new Date(log.time).toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
               </div>
-            )}
-
+            </div>
           </div>
         )}
 
-        {/* TAB 3: MENTORSHIP HUB */}
-        {activeTab === 'mentor-hub' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+        {/* ================= TAB 3: FACULTY MENTORSHIP HUB ================= */}
+        {activeTab === 'mentorship' && (
+          <div className="tab-panel space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Mentor Profile Card (5 cols) */}
+              <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Permanent Faculty Mentor</span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Assigned 2023-25</span>
+                </div>
 
-            {/* Scheduled Mentoring Period Card for Student */}
-            {myMentor && (
-              <div style={{
-                gridColumn: '1 / -1',
-                background: 'linear-gradient(135deg, #eff6ff 0%, #ffffff 50%, #f0fdf4 100%)',
-                border: '1px solid #bfdbfe',
-                borderRadius: '12px',
-                padding: '14px 18px',
-                boxShadow: '0 2px 8px rgba(37, 99, 235, 0.06)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '10px',
-                      background: '#dbeafe',
-                      color: '#1d4ed8',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Clock size={18} />
+                <div className="flex flex-col items-center text-center p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
+                  <img
+                    alt={myMentor?.name || 'Faculty Mentor'}
+                    className="w-24 h-24 rounded-2xl object-cover ring-4 ring-nitte-100 shadow-md"
+                    src={myMentor?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
+                  />
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">{myMentor?.name || 'Prof. Suresh Nayak, M.Tech'}</h3>
+                    <p className="text-xs text-nitte-800 font-semibold">{myMentor?.designation || 'Associate Professor • Dept of CSE'}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Faculty In-Charge • Cloud &amp; Distributed Labs</p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2 pt-1">
+                    <span className="text-[11px] font-mono bg-white px-2.5 py-1 rounded-md border border-slate-200 text-slate-600">
+                      Office: {myMentor?.cabin || 'CS-204'}
+                    </span>
+                    <span className="text-[11px] font-mono bg-white px-2.5 py-1 rounded-md border border-slate-200 text-slate-600">
+                      Hours: Mon-Thu 3-5 PM
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Mentorship Batch</span>
+                    <span className="font-bold text-slate-800">2021-25 CSE Batch B</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Total 1-on-1 Sessions</span>
+                    <span className="font-bold text-slate-800">8 Completed</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Next Scheduled Evaluation</span>
+                    <span className="font-bold text-nitte-800">Nov 04, 2024</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center gap-3">
+                  <a
+                    href={`mailto:${myMentor?.email || 'suresh.nayak@nitte.edu.in'}`}
+                    className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-nitte-50 hover:bg-nitte-100 text-nitte-800 border border-nitte-200 text-xs font-bold transition shadow-sm group"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-nitte-800">mail</span>
+                    <span>Email Mentor</span>
+                    <span className="text-[11px] font-mono font-normal text-slate-500 group-hover:text-nitte-900">
+                      ({myMentor?.email || 'suresh.nayak@nitte.edu.in'})
+                    </span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Mentorship Logs & Milestones (7 cols) */}
+              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Mentorship Logs &amp; Academic Recommendations</h3>
+                    <p className="text-xs text-slate-500">Continuous Evaluation records entered by your faculty mentor.</p>
+                  </div>
+                  <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                    Good Standing (8.6 CGPA)
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900">Semester 5 Mid-Term Review &amp; Internship Search</span>
+                      <span className="text-[11px] font-mono text-slate-400">Sep 12, 2024</span>
                     </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      "Student is advised to focus on distributed system algorithms and apply for summer research internships through the university innovation lab. Lab attendances verified at 94%."
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[10px] font-bold bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                        Signed: {myMentor?.name || 'Prof. Suresh Nayak'}
+                      </span>
+                      <span className="text-[10px] text-emerald-600 font-medium">UGC Action Item Completed</span>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900">Semester 4 Capstone Phase 0 Evaluation</span>
+                      <span className="text-[11px] font-mono text-slate-400">May 19, 2024</span>
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      "Synopsis approved for decentralized attendance tracker. Co-guide assigned from Electronics dept for hardware integration."
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[10px] font-bold bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                        Signed: {myMentor?.name || 'Prof. Suresh Nayak'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-nitte-50 border border-nitte-100 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-nitte-800 text-[24px]">ondemand_video</span>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#1e3a8a' }}>
-                          Official Weekly Mentoring Hour & Period
-                        </h4>
-                        <span style={{
-                          fontSize: '0.68rem',
-                          fontWeight: '700',
-                          padding: '1px 7px',
-                          borderRadius: '999px',
-                          background: '#dcfce7',
-                          color: '#15803d',
-                          border: '1px solid #bbf7d0'
-                        }}>
-                          ● Timetable Period
-                        </span>
-                      </div>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#64748b' }}>
-                        Conducted by Mentor <strong>{myMentor.name}</strong> for {myMentor.class || 'your class'}
-                      </p>
+                      <p className="text-xs font-bold text-nitte-900">Recommended Guidance Video for Capstone</p>
+                      <p className="text-[11px] text-slate-500">IEEE Paper Publication standards and ethical AI usage guidelines.</p>
                     </div>
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#1e3a8a' }}>
-                      🕒 {db.mentoringSchedules?.[myMentor.id]?.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)'}
-                    </div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#059669' }}>
-                      📅 {db.mentoringSchedules?.[myMentor.id]?.day || 'Friday'}, {db.mentoringSchedules?.[myMentor.id]?.date || '2026-09-25'}
-                    </div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#d97706' }}>
-                      📍 {db.mentoringSchedules?.[myMentor.id]?.venue || 'Seminar Hall 1 (Admin Block)'}
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionVideoModal({ issueId: 'CAPSTONE', category: 'Academic Guidance', roName: myMentor?.name || 'Mentor' })}
+                    className="text-xs font-bold text-nitte-800 hover:underline"
+                  >
+                    Watch →
+                  </button>
                 </div>
               </div>
-            )}
-
-            {/* Group Mentoring Sessions */}
-            <div className="glass-card">
-              <h2 className="section-title">Group Sessions ({mySessions.length})</h2>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Your Mentor, <strong>{myMentor ? myMentor.name : 'Faculty'}</strong>, conducts class-level checkins. Individual issues are handled by the RO.
-              </p>
-
-              {mySessions.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  <p>No upcoming group sessions scheduled.</p>
-                </div>
-              ) : (
-                mySessions.map(session => (
-                  <div key={session.id} className="glass-card" style={{ marginBottom: '12px', background: 'rgba(255,255,255,0.01)', padding: '16px' }}>
-                    <h3 style={{ fontSize: '0.95rem', fontWeight: '700' }}>{session.title}</h3>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', marginTop: '4px' }}>
-                      📆 {new Date(session.dateTime).toLocaleString()}
-                    </p>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px', marginBottom: '12px' }}>
-                      {session.description}
-                    </p>
-                    <a
-                      href={session.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 12px', fontSize: '0.75rem' }}
-                    >
-                      Join Meeting Link <ExternalLink size={12} />
-                    </a>
-                  </div>
-                ))
-              )}
             </div>
-
-            {/* Shared Academic Resources */}
-            <div className="glass-card">
-              <h2 className="section-title">Mentor's Resource Center</h2>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Academics guidance notes, reference portals, and registration files.
-              </p>
-
-              {myResources.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  <p>No shared materials available yet.</p>
-                </div>
-              ) : (
-                myResources.map(res => (
-                  <div key={res.id} className="resource-list-item">
-                    <div className="resource-info">
-                      <span className="resource-type-tag">{res.type}</span>
-                      <div>
-                        <h4 style={{ fontSize: '0.85rem', fontWeight: '600' }}>{res.title}</h4>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Shared: {res.dateShared}</span>
-                      </div>
-                    </div>
-                    {res.type === 'Link' ? (
-                      <a
-                        href={res.content}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-icon-only"
-                        style={{ padding: '6px' }}
-                      >
-                        <ExternalLink size={14} />
-                      </a>
-                    ) : (
-                      <button
-                        onClick={() => alert(`Content: ${res.content}`)}
-                        className="btn btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '0.7rem' }}
-                      >
-                        View Info
-                      </button>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
           </div>
         )}
 
-        {/* TAB 4: MENTOR / MENTORING CLASS FEEDBACK */}
-        {(activeTab === 'mentor-feedback' || activeTab === 'mentor-hub') && (
-          <div className="glass-card" style={{ gridColumn: '1 / -1' }}>
-            <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <MessageSquare size={20} style={{ color: 'var(--accent-amber)' }} />
-              Mentor / Mentoring Class Feedback
-            </h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-              Share your feedback about your mentor <strong>{myMentor ? myMentor.name : 'Faculty'}</strong> and mentoring classes. Your honest feedback helps improve the mentorship experience.
-            </p>
-
-            {mfSuccess && (
-              <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#34d399' }}>
-                <CheckCircle2 size={16} />
-                <span>{mfSuccess}</span>
+        {/* ================= TAB 4: MENTOR FEEDBACK & RATING ================= */}
+        {activeTab === 'feedback' && (
+          <div className="tab-panel space-y-6">
+            <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-card space-y-6">
+              <div className="border-b border-slate-100 pb-4 text-center sm:text-left flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Student Feedback on Mentorship Experience</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Your ratings are 100% anonymized to internal NAAC/NIRF audit standards.</p>
+                </div>
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-nitte-50 text-nitte-800 border border-nitte-200 self-start sm:self-auto">
+                  Semester 6 • Cycle 2
+                </span>
               </div>
-            )}
 
-            <form onSubmit={handleMentorFeedbackSubmit}>
-              {/* Mentor Name (Read-only) */}
-              <div className="form-group">
-                <label className="form-label">Mentor Name</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  readOnly
-                  disabled
-                  value={myMentor ? `${myMentor.name} (${myMentor.dept} — ${myMentor.class || 'All'})` : 'Not Assigned'}
+              {mfSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-800 text-xs font-semibold">
+                  {mfSuccess}
+                </div>
+              )}
+
+              {/* Mentor Banner */}
+              <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <img
+                  alt={myMentor?.name || 'Mentor'}
+                  className="w-12 h-12 rounded-xl object-cover ring-2 ring-white"
+                  src={myMentor?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
                 />
-              </div>
-
-              {/* Star Rating Fields */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '16px' }}>
-                {/* Regularity */}
                 <div>
-                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Regularity of Mentoring Classes</label>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3, 4, 5].map(num => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setMfRegularity(num)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
-                      >
-                        <Star size={22} fill={mfRegularity >= num ? '#f59e0b' : 'none'} stroke="#f59e0b" />
-                      </button>
-                    ))}
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    {mfRegularity > 0 ? `${mfRegularity} / 5` : 'Click to rate'}
-                  </span>
-                </div>
-
-                {/* Clarity */}
-                <div>
-                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Clarity of Explanation</label>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3, 4, 5].map(num => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setMfClarity(num)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
-                      >
-                        <Star size={22} fill={mfClarity >= num ? '#3b82f6' : 'none'} stroke="#3b82f6" />
-                      </button>
-                    ))}
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    {mfClarity > 0 ? `${mfClarity} / 5` : 'Click to rate'}
-                  </span>
-                </div>
-
-                {/* Participation */}
-                <div>
-                  <label className="form-label" style={{ marginBottom: '8px', display: 'block' }}>Opportunity to Participate & Express Opinions</label>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3, 4, 5].map(num => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setMfParticipation(num)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
-                      >
-                        <Star size={22} fill={mfParticipation >= num ? '#10b981' : 'none'} stroke="#10b981" />
-                      </button>
-                    ))}
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    {mfParticipation > 0 ? `${mfParticipation} / 5` : 'Click to rate'}
-                  </span>
+                  <h4 className="text-sm font-bold text-slate-900">Evaluating: {myMentor?.name || 'Prof. Suresh Nayak'}</h4>
+                  <p className="text-xs text-slate-500">Department of Computer Science &amp; Engineering • Term 2024</p>
                 </div>
               </div>
 
-              {/* Difficulties Textarea */}
-              <div className="form-group">
-                <label className="form-label">What difficulties or issues do you face with the mentoring classes or the way they are conducted?</label>
+              {/* 3-Criteria Rating Grid */}
+              <div className="space-y-5">
+                {/* Criterion 1 */}
+                <div className="p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-nitte-200 transition">
+                  <div className="space-y-0.5">
+                    <h5 className="text-xs font-bold text-slate-800">1. Regularity &amp; Punctuality of Mentorship Meetings</h5>
+                    <p className="text-[11px] text-slate-500">Adherence to scheduled appointment calendar &amp; responsiveness to emergency pings.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    {[1, 2, 3, 4, 5].map(st => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setMfRegularity(st)}
+                        className={`material-symbols-outlined text-[24px] ${st <= mfRegularity ? 'text-amber-400' : 'text-slate-300'}`}
+                      >
+                        star
+                      </button>
+                    ))}
+                    <span className="text-xs font-bold text-slate-800 ml-2">{mfRegularity}/5</span>
+                  </div>
+                </div>
+
+                {/* Criterion 2 */}
+                <div className="p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-nitte-200 transition">
+                  <div className="space-y-0.5">
+                    <h5 className="text-xs font-bold text-slate-800">2. Clarity of Guidance &amp; Redressal Escalation</h5>
+                    <p className="text-[11px] text-slate-500">Ability to resolve departmental grievances and provide actionable career counseling.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    {[1, 2, 3, 4, 5].map(st => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setMfClarity(st)}
+                        className={`material-symbols-outlined text-[24px] ${st <= mfClarity ? 'text-amber-400' : 'text-slate-300'}`}
+                      >
+                        star
+                      </button>
+                    ))}
+                    <span className="text-xs font-bold text-slate-800 ml-2">{mfClarity}/5</span>
+                  </div>
+                </div>
+
+                {/* Criterion 3 */}
+                <div className="p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-nitte-200 transition">
+                  <div className="space-y-0.5">
+                    <h5 className="text-xs font-bold text-slate-800">3. Empathy, Inclusivity &amp; Student Encouragement</h5>
+                    <p className="text-[11px] text-slate-500">Active listening, confidentiality assurance, and positive mental health support.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    {[1, 2, 3, 4, 5].map(st => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setMfParticipation(st)}
+                        className={`material-symbols-outlined text-[24px] ${st <= mfParticipation ? 'text-amber-400' : 'text-slate-300'}`}
+                      >
+                        star
+                      </button>
+                    ))}
+                    <span className="text-xs font-bold text-slate-800 ml-2">{mfParticipation}/5</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Constructive Comments */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Constructive Remarks &amp; Suggestions for Improvement
+                </label>
                 <textarea
-                  className="form-textarea"
-                  style={{ minHeight: '100px' }}
-                  placeholder="Describe any challenges, suggestions, or concerns about the mentoring sessions..."
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition custom-scrollbar"
+                  placeholder="Mention any specific support you received or areas where mentorship sessions can be made more helpful..."
+                  rows={3}
                   value={mfDifficulties}
                   onChange={(e) => setMfDifficulties(e.target.value)}
                 />
               </div>
 
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0}
-                style={{
-                  width: '100%',
-                  justifyContent: 'center',
-                  opacity: (mfRegularity === 0 || mfClarity === 0 || mfParticipation === 0) ? 0.5 : 1
-                }}
-              >
-                <Send size={16} /> Submit Mentor Feedback
-              </button>
-            </form>
-
-            {/* Previously submitted feedbacks */}
-            {myMentorFeedbacks.length > 0 && (
-              <div style={{ marginTop: '24px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                <h4 style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px' }}>
-                  Your Previous Feedback ({myMentorFeedbacks.length})
-                </h4>
-                {myMentorFeedbacks.map((fb, idx) => (
-                  <div key={fb.id || idx} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', padding: '12px 14px', borderRadius: '8px', marginBottom: '10px', fontSize: '0.82rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <strong style={{ color: 'var(--text-primary)' }}>Feedback for {fb.mentorName}</strong>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{new Date(fb.createdAt).toLocaleDateString()}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '16px', marginBottom: '6px', flexWrap: 'wrap' }}>
-                      <span>Regularity: <strong style={{ color: '#f59e0b' }}>{fb.regularityRating}/5</strong></span>
-                      <span>Clarity: <strong style={{ color: '#3b82f6' }}>{fb.clarityRating}/5</strong></span>
-                      <span>Participation: <strong style={{ color: '#10b981' }}>{fb.participationRating}/5</strong></span>
-                    </div>
-                    {fb.difficulties && (
-                      <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', margin: '4px 0 0 0' }}>
-                        "{fb.difficulties}"
-                      </p>
-                    )}
-                  </div>
-                ))}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleMentorFeedbackSubmit}
+                  className="px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+                >
+                  Submit Confidential Feedback
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
-
       </div>
 
-      {/* STUDENT ONLINE VIDEO MEETING ROOM MODAL */}
+      {/* ================= WEBRTC VIDEO MODAL (STITCH CINEMATIC DESIGN) ================= */}
       {showStudentVideoModal && (
-        <div className="modal-overlay" style={{ zIndex: 1100, background: 'rgba(3, 7, 18, 0.88)', backdropFilter: 'blur(10px)' }}>
-          <div
-            className="modal-content"
-            style={{
-              maxWidth: '1120px',
-              width: '95vw',
-              maxHeight: '94vh',
-              background: 'linear-gradient(180deg, #0b1120 0%, #060911 100%)',
-              color: '#f8fafc',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              borderRadius: '20px',
-              boxShadow: '0 30px 70px -15px rgba(0, 0, 0, 0.9)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden'
-            }}
-          >
-            {/* Ultra-Sleek Conference Header */}
-            <div style={{
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '16px 24px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'rgba(15, 23, 42, 0.5)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <div style={{
-                  background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
-                  padding: '10px',
-                  borderRadius: '12px',
-                  color: '#ffffff',
-                  boxShadow: '0 4px 14px rgba(37, 99, 235, 0.4)'
-                }}>
-                  <Video size={22} />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <h3 style={{ fontWeight: '800', color: '#ffffff', fontSize: '1.15rem', margin: 0, letterSpacing: '-0.02em' }}>
-                      NITTE Student Live Mentorship Session
-                    </h3>
-                    <span style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '2px 8px', borderRadius: '12px', fontSize: '0.68rem', fontWeight: 700 }}>
-                      Ticket #{selectedIssue?.id}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: '0.78rem', color: '#94a3b8', margin: '3px 0 0 0' }}>
-                    Officer: <strong>{selectedIssue?.roName || 'Relationship Officer (Host)'}</strong> &nbsp;|&nbsp; Category: <strong>{selectedIssue?.category}</strong>
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
-                  padding: '6px 14px',
-                  borderRadius: '30px'
-                }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444' }} />
-                  <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#fca5a5', letterSpacing: '0.04em' }}>
-                    REC • AUDIO & VIDEO
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-slate-900 text-white rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="flex h-3 w-3 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                </span>
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-white tracking-wide">
+                    WebRTC Encrypted Session • Ticket #{activeMeetingIssueId || 'TICKET'}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {activeFormRO?.name || 'Relationship Officer'} &amp; {student?.name || 'Student'} ({student?.id})
                   </span>
                 </div>
-
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  background: 'rgba(16, 185, 129, 0.12)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  padding: '6px 12px',
-                  borderRadius: '30px',
-                  fontSize: '0.74rem',
-                  color: '#6ee7b7',
-                  fontWeight: 600
-                }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
-                  {peerConnected ? '⚡ 18ms P2P Live' : 'Connecting...'}
-                </div>
               </div>
-            </div>
-
-            {/* Modal Body - Video Stage */}
-            <div style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-              {/* Permission & Notice Banner */}
-              {studentMediaPermissionState === 'denied' && (
-                <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <AlertCircle size={16} style={{ color: '#ef4444' }} />
-                    <span><strong>Camera/Mic Notice:</strong> {studentMediaPermissionError || 'Permissions blocked by browser.'}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={requestStudentMedia}
-                    className="btn btn-warning"
-                    style={{ fontSize: '0.74rem', padding: '4px 12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    <RotateCcw size={12} /> Retry Permissions
-                  </button>
-                </div>
-              )}
-
-              {/* Large Cinematic Video Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px', marginBottom: '16px', flex: 1 }}>
-
-                {/* RO OFFICER (HOST) LIVE VIDEO FEED */}
-                <div style={{
-                  background: '#0a0f1d',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '14px',
-                  overflow: 'hidden',
-                  height: '380px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  position: 'relative',
-                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
-                }}>
-                  {roRemoteStream && !isRoCameraOff ? (
-                    <VideoStreamPlayer
-                      stream={roRemoteStream}
-                      muted={false}
-                      badge={{ text: isRoMicMuted ? '🔇 RO Host (Mic Muted)' : '🟢 RO Host Live WebCam', color: isRoMicMuted ? '#f59e0b' : '#3b82f6' }}
-                      participantName={selectedIssue?.roName || 'Relationship Officer'}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '100%',
-                      height: '100%',
-                      background: 'radial-gradient(circle at center, #1e293b 0%, #090d16 100%)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        width: '84px',
-                        height: '84px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
-                        color: '#ffffff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '2rem',
-                        fontWeight: '800',
-                        boxShadow: '0 0 25px rgba(37, 99, 235, 0.5)',
-                        border: '2px solid rgba(255, 255, 255, 0.2)'
-                      }}>
-                        RO
-                      </div>
-                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>
-                        {selectedIssue?.roName || 'Relationship Officer'} (Host)
-                      </p>
-                      <span style={{ fontSize: '0.75rem', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isRoCameraOff ? '#f59e0b' : (peerConnected ? '#10b981' : '#60a5fa'), display: 'inline-block' }} />
-                        {isRoCameraOff ? 'Officer has paused video camera' : (peerConnected ? 'Live Connection Active' : 'Waiting for RO Host to join...')}
-                      </span>
-                    </div>
-                  )}
-
-                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: roRemoteStream ? '#10b981' : '#94a3b8', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
-                    {roRemoteStream ? '🟢 Host Live P2P' : (peerConnected ? '🟡 Connecting...' : '⚪ Waiting')}
-                  </div>
-                </div>
-
-                {/* STUDENT (YOU) LIVE WEBCAM VIDEO FEED */}
-                <div style={{
-                  background: '#0a0f1d',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '14px',
-                  overflow: 'hidden',
-                  height: '380px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  position: 'relative',
-                  boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
-                }}>
-                  {isStudentCamOff ? (
-                    <div style={{ color: '#64748b', textAlign: 'center', padding: '20px' }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto' }}>
-                        <VideoOff size={32} />
-                      </div>
-                      <p style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Your Camera is Disabled</p>
-                      <button
-                        type="button"
-                        onClick={toggleStudentCamera}
-                        style={{ marginTop: '12px', background: '#3b82f6', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
-                      >
-                        Turn Camera Back On
-                      </button>
-                    </div>
-                  ) : studentMediaPermissionState === 'granted' && studentStream ? (
-                    <VideoStreamPlayer
-                      stream={studentStream}
-                      muted={true}
-                      badge={{ text: 'Live HD WebCam (You)', color: '#10b981' }}
-                      participantName={student.name}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '100%',
-                      height: '100%',
-                      background: 'radial-gradient(circle at center, #064e3b 0%, #090d16 100%)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        width: '84px',
-                        height: '84px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                        color: '#ffffff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '2rem',
-                        fontWeight: '800',
-                        boxShadow: '0 0 25px rgba(16, 185, 129, 0.4)',
-                        border: '2px solid rgba(255, 255, 255, 0.2)'
-                      }}>
-                        {student.name ? student.name.charAt(0) : 'S'}
-                      </div>
-                      <p style={{ marginTop: '14px', fontWeight: '800', fontSize: '1rem', color: '#ffffff', margin: '14px 0 2px 0' }}>
-                        {student.name} (You)
-                      </p>
-                      <span style={{ fontSize: '0.75rem', color: '#a7f3d0' }}>
-                        {studentMediaPermissionState === 'requesting' ? 'Connecting webcam...' : 'Student Participant — Live'}
-                      </span>
-                    </div>
-                  )}
-
-                  <div style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(11, 15, 25, 0.75)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', color: '#10b981', zIndex: 5, border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)' }}>
-                    📶 HD Audio/Video
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Security Info */}
-              <div style={{ background: 'rgba(15, 23, 42, 0.4)', border: '1px solid rgba(255, 255, 255, 0.06)', padding: '10px 16px', borderRadius: '10px', fontSize: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8' }}>
-                  <Shield size={14} style={{ color: '#10b981' }} />
-                  <span><strong>256-bit Encrypted Session</strong> &nbsp;|&nbsp; Live session audio & video recording archived to support ticket</span>
-                </div>
-                <div style={{ color: '#10b981', fontWeight: 600 }}>
-                  Active Mentorship Channel
-                </div>
-              </div>
-            </div>
-
-            {/* Ultra-Modern Floating Controls Dock */}
-            <div style={{
-              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '16px 24px',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              gap: '16px',
-              background: 'rgba(11, 15, 25, 0.85)',
-              backdropFilter: 'blur(16px)'
-            }}>
-              {/* Mic Toggle */}
-              <button
-                type="button"
-                onClick={toggleStudentMic}
-                style={{
-                  background: isStudentMicMuted ? '#ef4444' : 'rgba(16, 185, 129, 0.15)',
-                  color: isStudentMicMuted ? '#ffffff' : '#10b981',
-                  border: isStudentMicMuted ? '1px solid #dc2626' : '1px solid rgba(16, 185, 129, 0.35)',
-                  padding: '10px 20px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  transition: 'all 0.2s ease',
-                  boxShadow: isStudentMicMuted ? '0 4px 14px rgba(239, 68, 68, 0.3)' : '0 4px 14px rgba(16, 185, 129, 0.15)'
-                }}
-              >
-                {isStudentMicMuted ? <MicOff size={16} /> : <Mic size={16} />}
-                <span>{isStudentMicMuted ? 'Unmute Mic' : 'Mute Mic'}</span>
-              </button>
-
-              {/* Camera Toggle */}
-              <button
-                type="button"
-                onClick={toggleStudentCamera}
-                style={{
-                  background: isStudentCamOff ? '#ef4444' : 'rgba(255, 255, 255, 0.08)',
-                  color: isStudentCamOff ? '#ffffff' : '#f1f5f9',
-                  border: isStudentCamOff ? '1px solid #dc2626' : '1px solid rgba(255, 255, 255, 0.15)',
-                  padding: '10px 20px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                {isStudentCamOff ? <VideoOff size={16} /> : <Video size={16} />}
-                <span>{isStudentCamOff ? 'Turn Camera On' : 'Turn Camera Off'}</span>
-              </button>
-
-              {studentMediaPermissionState !== 'granted' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                  {peerConnected ? 'Bitrate: 2.4 Mbps (HD 1080p)' : 'Connecting P2P...'}
+                </span>
                 <button
-                  type="button"
-                  onClick={requestStudentMedia}
-                  style={{
-                    background: '#2563eb',
-                    color: '#ffffff',
-                    border: 'none',
-                    padding: '10px 20px',
-                    borderRadius: '30px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '0.82rem',
-                    fontWeight: 700
-                  }}
+                  onClick={handleCloseStudentVideo}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
                 >
-                  <Camera size={16} /> Request Cam/Mic Access
+                  <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
-              )}
-
-              {/* Leave Call Button */}
-              <button
-                type="button"
-                onClick={handleCloseStudentVideo}
-                style={{
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  color: '#f87171',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
-                  padding: '10px 22px',
-                  borderRadius: '30px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  transition: 'all 0.2s ease',
-                  marginLeft: '12px'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#ef4444';
-                  e.currentTarget.style.color = '#ffffff';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
-                  e.currentTarget.style.color = '#f87171';
-                }}
-              >
-                <PhoneOff size={16} />
-                <span>Leave Call</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* VIDEO PLAYER MODAL FOR ARCHIVED RECORDINGS FOR STUDENT */}
-      {playingRecording && (
-        <div className="modal-overlay" style={{ zIndex: 1200, background: 'rgba(0,0,0,0.85)' }}>
-          <div className="modal-content" style={{ maxWidth: '750px', width: '92%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px' }}>
-            <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Video size={20} style={{ color: '#10b981' }} />
-                <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#fff' }}>
-                  Archived Online Video Recording ({playingRecording.durationText})
-                </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setPlayingRecording(null)}
-                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px' }}
-              >
-                <X size={20} />
-              </button>
             </div>
-            <div className="modal-body" style={{ padding: '20px 0' }}>
-              <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', marginBottom: '14px' }}>
-                <video
-                  src={playingRecording.videoUrl}
-                  controls
-                  autoPlay
-                  style={{ width: '100%', maxHeight: '420px', display: 'block' }}
-                >
-                  Your browser does not support HTML5 video playback.
-                </video>
-              </div>
-              <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '12px 14px', borderRadius: '6px', fontSize: '0.8rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: '#10b981', fontWeight: '700' }}>Mode: {playingRecording.mode}</span>
-                  <span style={{ color: '#94a3b8' }}>Recorded: {new Date(playingRecording.recordedAt).toLocaleString()}</span>
+
+            {/* Stage: Remote Video Stream + PiP Student Stream */}
+            <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden">
+              {roRemoteStream ? (
+                <div className="absolute inset-0 w-full h-full flex items-center justify-center">
+                  <VideoStreamPlayer
+                    stream={roRemoteStream}
+                    muted={false}
+                    objectFit="contain"
+                    isMicMuted={isRoMicMuted}
+                    isCameraOff={isRoCameraOff}
+                    participantName={activeFormRO?.name || 'Relationship Officer'}
+                  />
                 </div>
-                <p style={{ margin: 0, color: '#cbd5e1' }}>{playingRecording.transcriptSummary}</p>
-              </div>
-            </div>
-            <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              {playingRecording.videoUrl && playingRecording.videoUrl.startsWith('blob:') && (
-                <a
-                  href={playingRecording.videoUrl}
-                  download={`recording_${playingRecording.issueId || 'session'}.webm`}
-                  className="btn btn-secondary"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
-                >
-                  <Download size={14} /> Download Recording (.webm)
-                </a>
-              )}
-              <button
-                type="button"
-                onClick={() => setPlayingRecording(null)}
-                className="btn btn-primary"
-                style={{ marginLeft: 'auto' }}
-              >
-                Close Video Player
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SELF-HELP GUIDANCE & SOLUTION VIDEO MODAL (SHOWN UPON ISSUE SUBMISSION) */}
-      {submissionVideoModal && (() => {
-        const catVideo = getCategoryVideo(submissionVideoModal.category);
-        const rawUrl = catVideo ? (catVideo.videoUrl || catVideo.video_url || '') : '';
-        const embedUrl = catVideo ? getYoutubeEmbedUrl(rawUrl) : '';
-        const isEmbed = embedUrl.includes('/embed/') || embedUrl.includes('youtube') || embedUrl.includes('youtu.be');
-
-        return (
-          <div className="modal-overlay" style={{ zIndex: 1250, background: 'rgba(0,0,0,0.88)' }}>
-            <div className="modal-content" style={{ maxWidth: '820px', width: '95%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
-              {/* Header */}
-              <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '10px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Play size={22} fill="#ef4444" />
+              ) : (
+                <div className="flex flex-col items-center gap-3 text-slate-400 p-6 text-center">
+                  <div className="relative w-16 h-16 rounded-full border-2 border-slate-700 border-t-emerald-400 animate-spin flex items-center justify-center">
+                    <span className="material-symbols-outlined text-emerald-400 text-2xl animate-none">videocam</span>
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff', fontWeight: '700' }}>
-                      Instant Solution & Guidance Video
-                    </h3>
-                    <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
-                      Ticket <strong>#{submissionVideoModal.issueId}</strong> &nbsp;|&nbsp; Category: <strong>{submissionVideoModal.category}</strong>
-                    </p>
+                    <p className="text-sm font-semibold text-white">Connecting Secure WebRTC Link...</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Waiting for {activeFormRO?.name || 'Relationship Officer'} video stream</p>
                   </div>
                 </div>
+              )}
+
+              {/* PiP Local Video Stream */}
+              <div className="absolute bottom-4 right-4 w-44 sm:w-48 aspect-video rounded-xl bg-slate-800 border-2 border-nitte-500 overflow-hidden shadow-2xl z-20">
+                {studentStream ? (
+                  <VideoStreamPlayer
+                    stream={studentStream}
+                    muted={true}
+                    objectFit="contain"
+                    isMicMuted={isStudentMicMuted}
+                    isCameraOff={isStudentCamOff}
+                    participantName="You"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">Camera Off</div>
+                )}
+                <span className="absolute bottom-1.5 left-2 text-[10px] font-mono bg-black/70 px-1.5 py-0.5 rounded text-white z-10 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> You
+                </span>
+              </div>
+
+              {/* Subtitles / Recording active indicator */}
+              <div className="absolute bottom-4 left-4 max-w-md bg-slate-950/80 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10 text-xs text-slate-200 z-10">
+                <span className="text-emerald-400 font-bold">Encrypted Session:</span> Institutional audio &amp; video streams protected under FERPA &amp; UGC guidelines.
+              </div>
+            </div>
+
+            {/* Video Control Dock Bar */}
+            <div className="px-6 py-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+              <div className="text-xs text-slate-400 font-mono">
+                Status: <span className="text-white font-bold">{peerConnected ? 'Connected' : 'Syncing'}</span>
+              </div>
+
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleProceedToRO}
-                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '6px' }}
-                  title="Close and keep ticket assigned to RO"
+                  onClick={toggleStudentMic}
+                  className={`p-3 rounded-full transition shadow-sm ${isStudentMicMuted ? 'bg-rose-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
+                  title={isStudentMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
                 >
-                  <X size={22} />
+                  <span className="material-symbols-outlined text-[20px]">{isStudentMicMuted ? 'mic_off' : 'mic'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleStudentCamera}
+                  className={`p-3 rounded-full transition shadow-sm ${isStudentCamOff ? 'bg-rose-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
+                  title={isStudentCamOff ? 'Turn On Camera' : 'Turn Off Camera'}
+                >
+                  <span className="material-symbols-outlined text-[20px]">{isStudentCamOff ? 'videocam_off' : 'videocam'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCloseStudentVideo}
+                  className="px-5 py-3 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg transition"
+                >
+                  <span className="material-symbols-outlined text-[18px]">call_end</span>
+                  <span>Leave Call</span>
                 </button>
               </div>
 
-              {/* Body */}
-              <div className="modal-body" style={{ padding: '16px 0' }}>
-                {/* Helpful notice */}
-                <div style={{ background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '10px', color: '#93c5fd' }}>
-                  <HelpCircle size={18} style={{ color: '#3b82f6', flexShrink: 0 }} />
-                  <span>
-                    <strong>Self-Help Resolution:</strong> Please review this official solution tutorial. Many routine procedures, portal instructions, and fee/exam requests can be resolved immediately with these steps!
-                  </span>
-                </div>
-
-                {/* Embedded Video Player */}
-                <div style={{ position: 'relative', width: '100%', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '10px', background: '#000', marginBottom: '14px' }}>
-                  {isEmbed ? (
-                    <iframe
-                      src={embedUrl}
-                      title={catVideo ? catVideo.title : 'Guidance Video'}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                      allowFullScreen
-                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
-                    />
-                  ) : (
-                    <video
-                      src={rawUrl}
-                      controls
-                      autoPlay
-                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-                    />
-                  )}
-                </div>
-
-                {/* Guidance Title & Step-by-Step Notes */}
-                <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '14px 16px', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: '#f8fafc' }}>
-                      {catVideo ? catVideo.title : 'Official Guidance Walkthrough'}
-                    </h4>
-                    <span style={{ fontSize: '0.72rem', background: '#2563eb', color: '#fff', padding: '2px 8px', borderRadius: '12px' }}>
-                      Curated by {catVideo?.updatedBy || 'RO Office'}
-                    </span>
-                  </div>
-                  <div style={{ whiteSpace: 'pre-wrap', color: '#cbd5e1', fontSize: '0.82rem', lineHeight: '1.55' }}>
-                    {catVideo?.description}
-                  </div>
-                </div>
+              <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px] text-emerald-400">lock</span>
+                <span>WebRTC P2P Active</span>
               </div>
-
-              {/* Decision Action Buttons */}
-              <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                <div style={{ fontSize: '0.76rem', color: '#94a3b8' }}>
-                  Did this video resolve your question?
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  {/* OPTION 1: Self-Resolve and Close Ticket */}
-                  <button
-                    type="button"
-                    onClick={handleSelfResolveIssue}
-                    className="btn btn-success"
-                    style={{ background: '#10b981', borderColor: '#10b981', color: '#ffffff', fontWeight: '700', padding: '9px 18px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}
-                  >
-                    <CheckCircle2 size={16} /> ✅ Video Solved My Issue - Close Ticket
-                  </button>
-
-                  {/* OPTION 2: Escalate / Forward to RO */}
-                  <button
-                    type="button"
-                    onClick={handleProceedToRO}
-                    className="btn btn-primary"
-                    style={{ background: '#2563eb', borderColor: '#2563eb', color: '#ffffff', fontWeight: '600', padding: '9px 18px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.84rem' }}
-                  >
-                    <Send size={15} /> 🚀 Need More Help - Proceed with RO
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-
-
-      {/* ONLINE MEETING ENDED BY RO POP-UP MODAL */}
-      {meetingEndedPopup && (
-        <div className="modal-overlay" style={{ zIndex: 1300, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(6px)' }}>
-          <div className="modal-content" style={{
-            maxWidth: '520px',
-            width: '92%',
-            background: '#ffffff',
-            color: '#1e293b',
-            border: '1px solid #e2e8f0',
-            borderRadius: '16px',
-            padding: '24px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
-              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CheckCircle2 size={28} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
-                  Online Meeting Ended by RO
-                </h3>
-                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-                  Concluded at {meetingEndedPopup.endedAt || 'Just now'} {meetingEndedPopup.issueId ? `• Ticket #${meetingEndedPopup.issueId}` : ''}
-                </p>
-              </div>
-            </div>
-
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px', marginBottom: '18px', fontSize: '0.84rem', color: '#334155', lineHeight: 1.5 }}>
-              <p style={{ margin: 0 }}>
-                Your <strong>Relationship Officer ({meetingEndedPopup.roName})</strong> has officially concluded this online meeting session.
-              </p>
-              <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
-                The full dual-participant audio/video recording, discussion summary, and agreed action items have been securely saved to your ticket records.
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (meetingEndedPopup.issueId) {
-                    setSelectedIssueId(meetingEndedPopup.issueId);
-                    setActiveTab('my-issues');
-                  }
-                  setMeetingEndedPopup(null);
-                }}
-                className="btn btn-secondary"
-                style={{ fontSize: '0.82rem', padding: '8px 16px' }}
-              >
-                View Ticket & Recordings
-              </button>
-              <button
-                type="button"
-                onClick={() => setMeetingEndedPopup(null)}
-                className="btn btn-primary"
-                style={{ fontSize: '0.82rem', padding: '8px 18px', background: '#2563eb', border: 'none', fontWeight: 700 }}
-              >
-                Okay, Got It
-              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* ================= SELF-HELP GUIDANCE VIDEO MODAL ================= */}
+      {submissionVideoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+              <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[20px] text-nitte-800">smart_display</span>
+                Self-Help Solution Center: {submissionVideoModal.category}
+              </span>
+              <button
+                onClick={() => setSubmissionVideoModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 transition"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
+                <iframe
+                  className="w-full h-full"
+                  src="https://www.youtube.com/embed/kqtD5dpn9C8?autoplay=1"
+                  title="Self-Help Video"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setSubmissionVideoModal(null)}
+                  className="px-4 py-2 rounded-xl bg-nitte-800 text-white text-xs font-bold"
+                >
+                  Close &amp; Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= RECORDING PLAYBACK MODAL ================= */}
+      {playingRecording && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-slate-900 text-white rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl border border-slate-800">
+            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+              <span className="text-xs font-bold">Auto-Archived Recording: Ticket #{playingRecording.issueId}</span>
+              <button onClick={() => setPlayingRecording(null)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div className="p-4">
+              <video src={playingRecording.videoUrl} controls autoPlay className="w-full aspect-video rounded-xl bg-black" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MEETING CONCLUDED ALERT POPUP ================= */}
+      {meetingEndedPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 text-center space-y-4">
+            <span className="material-symbols-outlined text-[48px] text-emerald-500">task_alt</span>
+            <h3 className="text-base font-bold text-slate-900">Meeting Session Concluded</h3>
+            <p className="text-xs text-slate-600">
+              Your consultation session with <strong>{meetingEndedPopup.roName}</strong> for Ticket #{meetingEndedPopup.issueId} ended at {meetingEndedPopup.endedAt}.
+            </p>
+            <button
+              onClick={() => setMeetingEndedPopup(null)}
+              className="w-full py-2.5 rounded-xl bg-nitte-800 text-white text-xs font-bold shadow-md"
+            >
+              Acknowledge &amp; Return to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= INSTITUTIONAL FOOTER ================= */}
+      <footer className="mt-auto border-t border-slate-200 bg-white py-6 rounded-2xl">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-nitte-800">NITTE (Deemed to be University)</span>
+            <span>•</span>
+            <span>Student Grievance Redressal Committee (SGRC)</span>
+          </div>
+          <div className="flex items-center gap-4 text-[11px]">
+            <a className="hover:text-nitte-800 transition" href="#ugc">UGC Regulations</a>
+            <a className="hover:text-nitte-800 transition" href="#anti-ragging">Anti-Ragging Squad</a>
+            <a className="hover:text-nitte-800 transition" href="#ombudsperson">Ombudsperson Contact</a>
+            <span className="font-mono text-slate-400">Build v3.2.0</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };
