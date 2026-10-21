@@ -19,7 +19,8 @@ export const LoginPage = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [isAutoLoggingIn, setIsAutoLoggingIn] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
+  const [isTypingPassword, setIsTypingPassword] = useState(false);
 
   // Handle URL query parameters for One-Click Direct Sign-In (from Roster Onboarding Gmail)
   useEffect(() => {
@@ -125,6 +126,36 @@ export const LoginPage = ({ onLoginSuccess }) => {
     } else {
       setIdentifier('');
       setPassword('');
+    }
+  };
+
+  // Track Caps Lock and typing status on password input
+  const handlePasswordKeyDown = (e) => {
+    // If the user clicks the Caps Lock key itself while not typing, do not show or trigger
+    if (e.key === 'CapsLock' && !isTypingPassword) {
+      return;
+    }
+
+    if (e.getModifierState) {
+      setCapsLockOn(e.getModifierState('CapsLock'));
+    } else if (e.key && e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
+      const isUpper = e.key === e.key.toUpperCase();
+      const isShift = e.shiftKey;
+      setCapsLockOn((isUpper && !isShift) || (!isUpper && isShift));
+    }
+
+    // Only set typing state when an actual typing key is pressed (not CapsLock by itself)
+    if (e.key !== 'CapsLock') {
+      setIsTypingPassword(true);
+    }
+  };
+
+  const handlePasswordKeyUp = (e) => {
+    if (e.key === 'CapsLock' && !isTypingPassword) {
+      return;
+    }
+    if (e.getModifierState) {
+      setCapsLockOn(e.getModifierState('CapsLock'));
     }
   };
 
@@ -426,7 +457,17 @@ export const LoginPage = ({ onLoginSuccess }) => {
                     type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (e.target.value.length > 0) {
+                        setIsTypingPassword(true);
+                      } else {
+                        setIsTypingPassword(false);
+                      }
+                    }}
+                    onKeyDown={handlePasswordKeyDown}
+                    onKeyUp={handlePasswordKeyUp}
+                    onBlur={() => setIsTypingPassword(false)}
                     placeholder="Enter account password..."
                     style={{
                       width: '100%',
@@ -434,7 +475,9 @@ export const LoginPage = ({ onLoginSuccess }) => {
                       paddingLeft: '36px',
                       paddingRight: '36px',
                       background: '#ffffff',
-                      border: '1px solid #cbd5e1',
+                      border: (isTypingPassword && password.length > 0 && capsLockOn)
+                        ? '1px solid #f59e0b'
+                        : '1px solid #cbd5e1',
                       borderRadius: '8px',
                       color: '#0f172a',
                       fontSize: '0.88rem',
@@ -461,6 +504,34 @@ export const LoginPage = ({ onLoginSuccess }) => {
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
+                {isTypingPassword && password.length > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '6px',
+                    padding: '5px 10px',
+                    background: capsLockOn ? '#fffbeb' : '#f0fdf4',
+                    border: `1px solid ${capsLockOn ? '#fde68a' : '#bbf7d0'}`,
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: capsLockOn ? '#b45309' : '#15803d',
+                    transition: 'all 0.15s ease'
+                  }}>
+                    {capsLockOn ? (
+                      <>
+                        <AlertCircle size={13} style={{ color: '#d97706', flexShrink: 0 }} />
+                        <span>Caps Lock is ON</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 size={13} style={{ color: '#16a34a', flexShrink: 0 }} />
+                        <span>Caps Lock is OFF</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Submit Button */}
