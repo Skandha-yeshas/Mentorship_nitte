@@ -901,19 +901,21 @@ export const DatabaseProvider = ({ children }) => {
       let cloudIssues = null;
       let cloudMeetings = null;
       let cloudFeedbacks = null;
+      let cloudGroupSessions = null;
 
       try {
         const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
         const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
         const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
 
-        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes] = await Promise.allSettled([
+        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes, sessRes] = await Promise.allSettled([
           fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/mentors?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/ros?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/issues?select=*&order=created_at.desc`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/meetings?select=*`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers })
+          fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/group_sessions?select=*&order=date_time.asc`, { headers })
         ]);
 
         if (stuRes.status === 'fulfilled' && stuRes.value.ok) {
@@ -1007,6 +1009,21 @@ export const DatabaseProvider = ({ children }) => {
           const raw = await fbRes.value.json();
           if (Array.isArray(raw)) {
             cloudFeedbacks = raw;
+          }
+        }
+
+        if (sessRes.status === 'fulfilled' && sessRes.value.ok) {
+          const raw = await sessRes.value.json();
+          if (Array.isArray(raw)) {
+            cloudGroupSessions = raw.map(s => ({
+              id: s.id,
+              mentorId: s.mentor_id || s.mentorId,
+              mentorName: s.mentor_name || s.mentorName,
+              title: s.title,
+              dateTime: s.date_time || s.dateTime,
+              description: s.description,
+              link: s.link
+            }));
           }
         }
 
@@ -1168,7 +1185,8 @@ export const DatabaseProvider = ({ children }) => {
           mentorFeedbacks: currentFeedbacks,
           mentoringSchedules: currentSchedules,
           recordings: recs,
-          categoryVideos: catVideos
+          categoryVideos: catVideos,
+          groupSessions: (cloudGroupSessions && cloudGroupSessions.length > 0) ? cloudGroupSessions : (prev.groupSessions || [])
         };
       });
       setError(null);
@@ -1928,18 +1946,52 @@ export const DatabaseProvider = ({ children }) => {
   };
 
   const addGroupSession = async (mentorId, title, dateTime, description, link) => {
-    const mentor = db.users.mentors.find(m => m.id === mentorId);
+    const mentor = (db.users?.mentors || []).find(m => m.id === mentorId);
+    const mentorName = mentor ? mentor.name : 'Faculty Mentor';
+    const newSess = {
+      id: `GS-${Date.now()}`,
+      mentorId,
+      mentorName,
+      title,
+      dateTime,
+      description,
+      link,
+      meetLink: link
+    };
+
+    setDb(prev => ({ ...prev, groupSessions: [newSess, ...(prev.groupSessions || [])] }));
+
+    // Sync live to Supabase Cloud
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/group_sessions`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          id: newSess.id,
+          mentor_id: mentorId,
+          mentor_name: mentorName,
+          title,
+          date_time: dateTime,
+          description,
+          link
+        })
+      });
+    } catch (e) { }
+
+    // Also notify local Express server if running
     try {
       await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mentorId, mentorName: mentor ? mentor.name : 'Mentor', title, dateTime, description, link })
+        body: JSON.stringify({ mentorId, mentorName, title, dateTime, description, link })
       });
-      await fetchDbState();
-    } catch (err) {
-      const newSess = { id: `GS-${Date.now()}`, mentorId, mentorName: mentor ? mentor.name : 'Mentor', title, dateTime, description, meetLink: link };
-      setDb(prev => ({ ...prev, groupSessions: [...prev.groupSessions, newSess] }));
-    }
+    } catch (err) { }
   };
 
   const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location) => {
