@@ -85,7 +85,6 @@ export const AdminDashboard = ({ onLogout }) => {
   const [ticketStatusFilter, setTicketStatusFilter] = useState('All');
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
-  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString('en-IN', { hour12: false }) + ' IST');
 
   // Direct Dean Executive Intervention State
   const [interventionModalIssue, setInterventionModalIssue] = useState(null);
@@ -120,14 +119,6 @@ export const AdminDashboard = ({ onLogout }) => {
   const [mfMentorFilter, setMfMentorFilter] = useState('ALL');
   const [mfSearchTerm, setMfSearchTerm] = useState('');
   const [mfRatingFilter, setMfRatingFilter] = useState('ALL');
-
-  // Live Campus Clock Effect
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString('en-IN', { hour12: false }) + ' IST');
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Global Keyboard Shortcut (⌘K / Ctrl+K)
   useEffect(() => {
@@ -703,11 +694,6 @@ export const AdminDashboard = ({ onLogout }) => {
 
           {/* Quick Action Controls & Academic Status */}
           <div className="flex items-center space-x-3">
-            <div className="hidden xl:flex items-center space-x-2 px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono text-slate-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>{currentTime}</span>
-            </div>
-
             {/* Compliance Export CTA */}
             <button
               onClick={() => handleDownloadReport('full')}
