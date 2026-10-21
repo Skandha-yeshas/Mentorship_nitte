@@ -8,14 +8,14 @@ export const LoginModal = ({ isOpen, onClose }) => {
 
   // Login Form State
   const [role, setRole] = useState('Student');
-  const [loginIdentifier, setLoginIdentifier] = useState('skandhayashas2906@gmail.com');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginSuccess, setLoginSuccess] = useState('');
 
   // Register Student Form State
   const [regName, setRegName] = useState('');
-  const [regEmail, setRegEmail] = useState('skandhayashas2906@gmail.com');
+  const [regEmail, setRegEmail] = useState('');
   const [regUsn, setRegUsn] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regBranch, setRegBranch] = useState('Computer Science & Engineering (CSE)');
@@ -29,7 +29,7 @@ export const LoginModal = ({ isOpen, onClose }) => {
   const handleRoleChange = (newRole) => {
     setRole(newRole);
     if (newRole === 'Student') {
-      setLoginIdentifier(db.users?.students?.[0]?.email || 'skandhayashas2906@gmail.com');
+      setLoginIdentifier('');
     } else if (newRole === 'RO') {
       setLoginIdentifier(db.users?.ros?.[0]?.id || 'RO-01');
     } else if (newRole === 'Mentor') {
@@ -347,30 +347,6 @@ export const LoginModal = ({ isOpen, onClose }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ width: '100%', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}
                 />
-                {role === 'Student' && (
-                  <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: '#475569', backgroundColor: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem' }}>
-                    <span>💡 <strong>Demo:</strong> <code>S101</code> / <code>Nit#Stu2026</code></span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLoginIdentifier('S101');
-                        setPassword('Nit#Stu2026');
-                      }}
-                      style={{
-                        padding: '0.15rem 0.5rem',
-                        fontSize: '0.75rem',
-                        borderRadius: '4px',
-                        border: '1px solid #cbd5e1',
-                        backgroundColor: '#ffffff',
-                        color: '#2563eb',
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Fill Demo
-                    </button>
-                  </div>
-                )}
               </div>
 
               <button

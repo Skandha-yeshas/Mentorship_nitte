@@ -895,36 +895,128 @@ export const DatabaseProvider = ({ children }) => {
       setError(null);
     } catch (err) {
       console.warn('Backend server offline or connecting, syncing live with Supabase cloud...');
+      let cloudStudents = null;
+      let cloudMentors = null;
+      let cloudRos = null;
+      let cloudIssues = null;
+      let cloudMeetings = null;
+      let cloudFeedbacks = null;
+
       try {
         const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
         const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-        const stuRes = await fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, {
-          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
-        });
-        if (stuRes.ok) {
-          const cloudStudents = await stuRes.json();
-          if (Array.isArray(cloudStudents) && cloudStudents.length > 0) {
-            setDb(prev => {
-              const merged = structureAndDeduplicateStudents([
-                ...DEFAULT_STUDENTS,
-                ...(prev.users?.students || []),
-                ...cloudStudents
-              ]);
-              try { localStorage.setItem('nitte_saved_students', JSON.stringify(merged)); } catch (e) {}
-              return {
-                ...prev,
-                users: {
-                  ...prev.users,
-                  students: merged
-                }
-              };
-            });
-            setIsPgConnected(true);
+        const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+
+        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes] = await Promise.allSettled([
+          fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/mentors?select=*`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/ros?select=*`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/issues?select=*&order=created_at.desc`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/meetings?select=*`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers })
+        ]);
+
+        if (stuRes.status === 'fulfilled' && stuRes.value.ok) {
+          const raw = await stuRes.value.json();
+          if (Array.isArray(raw) && raw.length > 0) {
+            cloudStudents = raw.map(s => ({
+              id: s.id,
+              name: s.name,
+              email: s.email,
+              mentorId: s.mentor_id || s.mentorId || 'M101',
+              phone: s.phone || '',
+              branch: s.branch || 'CSE',
+              sem: s.sem || 5,
+              password: s.password || 'Nit#Stu2026',
+              role: 'Student'
+            }));
           }
         }
+
+        if (mntRes.status === 'fulfilled' && mntRes.value.ok) {
+          const raw = await mntRes.value.json();
+          if (Array.isArray(raw) && raw.length > 0) {
+            cloudMentors = raw.map(m => ({
+              id: m.id,
+              name: m.name,
+              email: m.email,
+              dept: m.dept || 'CSE',
+              class: m.class || '',
+              password: m.password || 'Nit#Mnt2026',
+              role: 'Mentor'
+            }));
+          }
+        }
+
+        if (rosRes.status === 'fulfilled' && rosRes.value.ok) {
+          const raw = await rosRes.value.json();
+          if (Array.isArray(raw) && raw.length > 0) {
+            cloudRos = raw.map(r => ({
+              id: r.id,
+              name: r.name,
+              email: r.email,
+              region: r.region || '',
+              password: r.password || 'Nit#Ro2026',
+              role: 'RO'
+            }));
+          }
+        }
+
+        if (issRes.status === 'fulfilled' && issRes.value.ok) {
+          const raw = await issRes.value.json();
+          if (Array.isArray(raw)) {
+            cloudIssues = raw.map(i => ({
+              id: i.id,
+              studentId: i.student_id || i.studentId,
+              studentName: i.student_name || i.studentName,
+              category: i.category,
+              description: i.description,
+              priority: i.priority || 'Medium',
+              status: i.status || 'Assigned to RO',
+              roId: i.ro_id || i.roId,
+              createdAt: i.created_at || i.createdAt,
+              resolvedAt: i.resolved_at || i.resolvedAt,
+              resolutionNotes: i.resolution_notes || i.resolutionNotes,
+              feedbackRating: i.feedback_rating || i.feedbackRating,
+              feedbackComments: i.feedback_comments || i.feedbackComments,
+              logs: Array.isArray(i.logs) ? i.logs : []
+            }));
+          }
+        }
+
+        if (meetRes.status === 'fulfilled' && meetRes.value.ok) {
+          const raw = await meetRes.value.json();
+          if (Array.isArray(raw)) {
+            cloudMeetings = raw.map(m => ({
+              id: m.id,
+              issueId: m.issue_id || m.issueId,
+              studentId: m.student_id || m.studentId,
+              studentName: m.student_name || m.studentName,
+              roId: m.ro_id || m.roId,
+              date: m.date,
+              time: m.time,
+              mode: m.mode || 'Online',
+              location: m.location || 'In-App Online Video Call Portal',
+              notes: m.notes || '',
+              status: m.status || 'Confirmed'
+            }));
+          }
+        }
+
+        if (fbRes.status === 'fulfilled' && fbRes.value.ok) {
+          const raw = await fbRes.value.json();
+          if (Array.isArray(raw)) {
+            cloudFeedbacks = raw;
+          }
+        }
+
+        if (cloudStudents || cloudMentors || cloudRos) {
+          setIsPgConnected(true);
+        }
       } catch (cloudErr) {
-        setIsPgConnected(false);
+        console.warn('Supabase direct query notice:', cloudErr?.message || cloudErr);
       }
+
       setDb(prev => {
         let recs = prev.recordings || [];
         if (!recs.length) {
@@ -945,7 +1037,7 @@ export const DatabaseProvider = ({ children }) => {
           catVideos = MOCK_DB.categoryVideos;
         }
 
-        let currentIssues = (prev.issues && prev.issues.length) ? prev.issues : [];
+        let currentIssues = (cloudIssues && cloudIssues.length > 0) ? cloudIssues : ((prev.issues && prev.issues.length) ? prev.issues : []);
         try {
           const saved = localStorage.getItem('nitte_saved_issues');
           if (saved) {
@@ -969,7 +1061,7 @@ export const DatabaseProvider = ({ children }) => {
           currentIssues = MOCK_DB.issues;
         }
 
-        let currentFeedbacks = (prev.mentorFeedbacks && prev.mentorFeedbacks.length) ? prev.mentorFeedbacks : [];
+        let currentFeedbacks = (cloudFeedbacks && cloudFeedbacks.length > 0) ? cloudFeedbacks : ((prev.mentorFeedbacks && prev.mentorFeedbacks.length) ? prev.mentorFeedbacks : []);
         if (!currentFeedbacks.length) {
           try {
             const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
@@ -983,7 +1075,7 @@ export const DatabaseProvider = ({ children }) => {
           currentFeedbacks = MOCK_DB.mentorFeedbacks;
         }
 
-        let currentMeetings = (prev.meetings && prev.meetings.length) ? prev.meetings : [];
+        let currentMeetings = (cloudMeetings && cloudMeetings.length > 0) ? cloudMeetings : ((prev.meetings && prev.meetings.length) ? prev.meetings : []);
         try {
           const savedMeetings = localStorage.getItem('nitte_saved_meetings');
           if (savedMeetings) {
@@ -1011,42 +1103,6 @@ export const DatabaseProvider = ({ children }) => {
           currentMeetings = MOCK_DB.meetings;
         }
 
-        // Auto-ensure: if any active issue has status 'Meeting Scheduled', ensure a meeting exists
-        (currentIssues || []).forEach(iss => {
-          if (iss.status === 'Meeting Scheduled') {
-            const hasMeet = currentMeetings.some(m => (m.issueId || m.issue_id)?.toUpperCase() === (iss.id || iss.issue_id)?.toUpperCase());
-            if (!hasMeet) {
-              currentMeetings.push({
-                id: `MEET-${iss.id}`,
-                issueId: iss.id,
-                issue_id: iss.id,
-                studentId: iss.studentId,
-                student_id: iss.studentId,
-                studentName: iss.studentName,
-                student_name: iss.studentName,
-                roId: iss.roId || 'RO-01',
-                ro_id: iss.roId || 'RO-01',
-                date: new Date().toISOString().split('T')[0],
-                time: '11:00',
-                mode: 'Online',
-                location: 'In-App Online Video Call Portal',
-                notes: 'Scheduled meeting session with Relationship Officer.',
-                status: 'Confirmed',
-                endedByRo: false
-              });
-            }
-          }
-        });
-
-        // Auto-cleanup: if meeting's ticket is Resolved or already ended, mark as Completed so it doesn't linger
-        currentMeetings = currentMeetings.map(m => {
-          const parentIss = (currentIssues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (m.issueId || m.issue_id)?.toUpperCase());
-          if (parentIss && (parentIss.status === 'Resolved' || parentIss.status === 'Closed')) {
-            return { ...m, status: 'Completed', endedByRo: true };
-          }
-          return m;
-        });
-
         let currentSchedules = prev.mentoringSchedules || null;
         if (!currentSchedules) {
           try {
@@ -1060,32 +1116,44 @@ export const DatabaseProvider = ({ children }) => {
           currentSchedules = MOCK_DB.mentoringSchedules;
         }
 
-        let currentStudents = prev.users?.students || [];
+        // Merge students: Supabase Cloud + Local Cache + Prev
+        let currentStudents = structureAndDeduplicateStudents([
+          ...DEFAULT_STUDENTS,
+          ...(prev.users?.students || []),
+          ...(cloudStudents || [])
+        ]);
         try {
           const savedStudents = localStorage.getItem('nitte_saved_students');
           if (savedStudents !== null) {
             const parsed = JSON.parse(savedStudents);
-            if (Array.isArray(parsed)) {
-              currentStudents = structureAndDeduplicateStudents(parsed);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              currentStudents = structureAndDeduplicateStudents([...currentStudents, ...parsed]);
             }
           }
+          localStorage.setItem('nitte_saved_students', JSON.stringify(currentStudents));
         } catch (e) { }
 
-        let currentMentors = prev.users?.mentors || [];
+        // Merge mentors: Supabase Cloud + Local Cache + Prev
+        let currentMentors = structureAndDeduplicateMentors([
+          ...DEFAULT_FACULTY_MENTORS,
+          ...(prev.users?.mentors || []),
+          ...(cloudMentors || [])
+        ]);
         try {
           const savedMentors = localStorage.getItem('nitte_saved_mentors');
           if (savedMentors !== null) {
             const parsed = JSON.parse(savedMentors);
-            if (Array.isArray(parsed)) {
-              currentMentors = structureAndDeduplicateMentors(parsed);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              currentMentors = structureAndDeduplicateMentors([...currentMentors, ...parsed]);
             }
-          } else if (!currentMentors || currentMentors.length === 0) {
-            currentMentors = DEFAULT_FACULTY_MENTORS;
-            try {
-              localStorage.setItem('nitte_saved_mentors', JSON.stringify(DEFAULT_FACULTY_MENTORS));
-            } catch (e) { }
           }
+          localStorage.setItem('nitte_saved_mentors', JSON.stringify(currentMentors));
         } catch (e) { }
+
+        // ROs from Cloud or Prev or Fallback
+        const currentRos = (cloudRos && cloudRos.length > 0)
+          ? cloudRos
+          : ((prev.users && prev.users.ros && prev.users.ros.length > 0) ? prev.users.ros : MOCK_DB.users.ros);
 
         return {
           ...prev,
@@ -1093,7 +1161,7 @@ export const DatabaseProvider = ({ children }) => {
             ...prev.users,
             students: currentStudents,
             mentors: currentMentors,
-            ros: (prev.users && prev.users.ros) ? prev.users.ros : MOCK_DB.users.ros
+            ros: currentRos
           },
           issues: currentIssues,
           meetings: currentMeetings,
@@ -1401,6 +1469,31 @@ export const DatabaseProvider = ({ children }) => {
       } catch (e) { }
       return { ...prev, issues: updatedIssues };
     });
+
+    // Sync issue directly to live Supabase Cloud
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      fetch(`${SUPABASE_URL}/rest/v1/issues`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          id: newIssue.id,
+          student_id: studentId,
+          student_name: studentName,
+          category,
+          description,
+          priority,
+          status: initialStatus,
+          ro_id: roId,
+          logs: newIssue.logs
+        })
+      }).catch(() => {});
+    } catch (e) { }
 
     // Automated Real Gmail Notification Dispatch
     try {
@@ -3224,8 +3317,8 @@ Office of Student Welfare & Academic Mentorship
       throw new Error('Please enter both User ID / Email and Password.');
     }
 
-    // Role-specific authenticator functions
-    const tryAdmin = () => {
+    // Role-specific authenticator functions with Live Supabase Cloud fallback
+    const tryAdmin = async () => {
       if (
         idClean.toLowerCase() === 'admin@nitte.edu.in' ||
         idClean.toUpperCase() === 'ADMIN' ||
@@ -3249,7 +3342,7 @@ Office of Student Welfare & Academic Mentorship
       return null;
     };
 
-    const tryStudent = () => {
+    const tryStudent = async () => {
       let allStudents = [...DEFAULT_STUDENTS, ...(db.users?.students || [])];
       if (typeof window !== 'undefined') {
         try {
@@ -3271,6 +3364,36 @@ Office of Student Welfare & Academic Mentorship
         );
         if (!student) {
           student = allStudents.find(s => s.email && s.email.toLowerCase() === idClean.toLowerCase());
+        }
+      }
+
+      // If not found in local memory or localStorage, query Supabase Cloud live!
+      if (!student) {
+        try {
+          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/students?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+          });
+          if (res.ok) {
+            const cloudMatches = await res.json();
+            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
+              const matched = cloudMatches.find(s => s.id && s.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
+              student = {
+                id: matched.id,
+                name: matched.name,
+                email: matched.email,
+                mentorId: matched.mentor_id || matched.mentorId || 'M101',
+                phone: matched.phone || '',
+                branch: matched.branch || 'CSE',
+                sem: matched.sem || 5,
+                password: matched.password || 'Nit#Stu2026',
+                role: 'Student'
+              };
+            }
+          }
+        } catch (cloudErr) {
+          console.warn('Direct Supabase student auth lookup notice:', cloudErr?.message || cloudErr);
         }
       }
 
@@ -3323,7 +3446,7 @@ Office of Student Welfare & Academic Mentorship
       return null;
     };
 
-    const tryMentor = () => {
+    const tryMentor = async () => {
       let allMentors = [...(db.users?.mentors || [])];
       if (typeof window !== 'undefined') {
         try {
@@ -3345,6 +3468,34 @@ Office of Student Welfare & Academic Mentorship
         );
         if (!mentor) {
           mentor = allMentors.find(m => m.email && m.email.toLowerCase() === idClean.toLowerCase());
+        }
+      }
+
+      // If not found in local memory or localStorage, query Supabase Cloud live!
+      if (!mentor) {
+        try {
+          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/mentors?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+          });
+          if (res.ok) {
+            const cloudMatches = await res.json();
+            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
+              const matched = cloudMatches.find(m => m.id && m.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
+              mentor = {
+                id: matched.id,
+                name: matched.name,
+                email: matched.email,
+                dept: matched.dept || 'CSE',
+                class: matched.class || '',
+                password: matched.password || 'Nit#Mnt2026',
+                role: 'Mentor'
+              };
+            }
+          }
+        } catch (cloudErr) {
+          console.warn('Direct Supabase mentor auth lookup notice:', cloudErr?.message || cloudErr);
         }
       }
 
@@ -3370,6 +3521,9 @@ Office of Student Welfare & Academic Mentorship
           const updatedList = (prev.users?.mentors || []).map(m =>
             m.id?.toUpperCase() === mentor.id?.toUpperCase() ? updatedMentor : m
           );
+          if (!updatedList.some(m => m.id?.toUpperCase() === mentor.id?.toUpperCase())) {
+            updatedList.push(updatedMentor);
+          }
           try {
             localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
           } catch (e) { }
@@ -3390,12 +3544,39 @@ Office of Student Welfare & Academic Mentorship
       return null;
     };
 
-    const tryRo = () => {
+    const tryRo = async () => {
       const roList = db.users?.ros || [];
-      const ro = roList.find(r =>
+      let ro = roList.find(r =>
         (r.id && r.id.toLowerCase() === idClean.toLowerCase()) ||
         (r.email && r.email.toLowerCase() === idClean.toLowerCase())
       );
+
+      // If not found in local state, query Supabase Cloud live!
+      if (!ro) {
+        try {
+          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/ros?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+          });
+          if (res.ok) {
+            const cloudMatches = await res.json();
+            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
+              const matched = cloudMatches.find(r => r.id && r.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
+              ro = {
+                id: matched.id,
+                name: matched.name,
+                email: matched.email,
+                region: matched.region || '',
+                password: matched.password || 'Nit#Ro2026',
+                role: 'RO'
+              };
+            }
+          }
+        } catch (cloudErr) {
+          console.warn('Direct Supabase RO auth lookup notice:', cloudErr?.message || cloudErr);
+        }
+      }
 
       if (ro) {
         const isPasswordValid = (
@@ -3443,7 +3624,7 @@ Office of Student Welfare & Academic Mentorship
     }
 
     for (const checker of checkers) {
-      const result = checker();
+      const result = await checker();
       if (result) return result;
     }
 

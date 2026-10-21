@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/mentorship_db';
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:Nsamfgc%40123@db.tadfbhczpmnyouoailds.supabase.co:5432/postgres';
 
 // Extract database name from connection string
 const dbName = connectionString.substring(connectionString.lastIndexOf('/') + 1);
