@@ -109,7 +109,7 @@ export const initDb = async () => {
   pool = new Pool({
     connectionString,
     ssl: isLocalhost ? false : { rejectUnauthorized: false },
-    connectionTimeoutMillis: 1500
+    connectionTimeoutMillis: 10000
   });
 
   pool.on('error', (err) => {
@@ -430,7 +430,7 @@ const getActivePool = () => {
     pool = new Pool({
       connectionString,
       ssl: isLocalhost ? false : { rejectUnauthorized: false },
-      connectionTimeoutMillis: 1500
+      connectionTimeoutMillis: 10000
     });
     pool.on('error', () => { isPgAvailable = false; });
   }
