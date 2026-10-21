@@ -3602,6 +3602,31 @@ Office of Student Welfare & Academic Mentorship
       });
     }
 
+    // Direct Supabase Cloud batch upsert
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      fetch(`${SUPABASE_URL}/rest/v1/students`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify(addedStudents.map(st => ({
+          id: st.id,
+          name: st.name,
+          email: st.email,
+          mentor_id: st.mentorId || 'M101',
+          phone: st.phone || '9876543210',
+          branch: st.branch,
+          sem: st.sem,
+          password: st.password
+        })))
+      }).catch(() => {});
+    } catch (e) { }
+
     setDb(prev => {
       const updatedList = structureAndDeduplicateStudents([
         ...(prev.users?.students || []),
@@ -3713,6 +3738,29 @@ Office of Student Welfare & Academic Mentorship
       });
     });
 
+    // Direct Supabase Cloud batch upsert for mentors
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      fetch(`${SUPABASE_URL}/rest/v1/mentors`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify(addedMentors.map(m => ({
+          id: m.id,
+          name: m.name,
+          email: m.email,
+          dept: m.dept,
+          class: m.class,
+          password: m.password
+        })))
+      }).catch(() => {});
+    } catch (e) { }
+
     setDb(prev => {
       const updatedList = structureAndDeduplicateMentors([
         ...(prev.users?.mentors || []),
@@ -3799,6 +3847,28 @@ Office of Student Welfare & Academic Mentorship
         emailStatus: 'DELIVERED_GMAIL'
       });
     });
+
+    // Direct Supabase Cloud batch upsert for ROs
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      fetch(`${SUPABASE_URL}/rest/v1/ros`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify(addedRos.map(r => ({
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          region: r.category,
+          password: r.password
+        })))
+      }).catch(() => {});
+    } catch (e) { }
 
     setDb(prev => {
       const existing = prev.users?.ros || [];
