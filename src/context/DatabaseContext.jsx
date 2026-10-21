@@ -104,6 +104,17 @@ if (typeof window !== 'undefined') {
   } catch (e) { }
 }
 
+export const DEFAULT_STUDENTS = [
+  { id: 'S101', name: 'Aarav Mehta', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543210', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S102', name: 'Bhavana Rao', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543211', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S103', name: 'Chaitra Hegde', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543212', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S104', name: 'Daniel Dsouza', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543213', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S105', name: 'Esha Sharma', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543214', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S106', name: 'Farhan Khan', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543215', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S107', name: 'Gautam Shenoy', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543216', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
+  { id: 'S108', name: 'Harshita Pai', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543217', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' }
+];
+
 export const DEFAULT_FACULTY_MENTORS = [
   { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
   { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026', role: 'Mentor' },
@@ -120,7 +131,7 @@ export const DEFAULT_FACULTY_MENTORS = [
 // Clean Database State
 const MOCK_DB = {
   users: {
-    students: [],
+    students: DEFAULT_STUDENTS,
     mentors: DEFAULT_FACULTY_MENTORS,
     ros: ALL_CATEGORIES.map((cat, idx) => ({
       id: `RO-${String(idx + 1).padStart(2, '0')}`,
@@ -486,6 +497,15 @@ export const DatabaseProvider = ({ children }) => {
   const removeMentor = async (mentorId) => {
     if (!mentorId) return { success: false, message: 'Mentor ID is required.' };
     const cleanId = String(mentorId).trim();
+    const cleanIdUpper = cleanId.toUpperCase();
+
+    // Track deleted mentor ID so background polling never resurrects it
+    try {
+      const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
+      const deletedSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
+      deletedSet.add(cleanIdUpper);
+      localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
+    } catch (e) { }
 
     setDb(prev => {
       const currentMentors = prev.users?.mentors || [];
@@ -527,16 +547,107 @@ export const DatabaseProvider = ({ children }) => {
     return { success: true, mentorId: cleanId };
   };
 
+  const removeAllMentors = async () => {
+    setDb(prev => {
+      const currentMentors = prev.users?.mentors || [];
+      const currentStudents = prev.users?.students || [];
+
+      // Unassign all students
+      const updatedStudents = currentStudents.map(s => ({ ...s, mentorId: null }));
+
+      // Track all deleted IDs so background polling never resurrects them
+      try {
+        const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
+        const deletedSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
+        currentMentors.forEach(m => {
+          if (m.id) deletedSet.add(String(m.id).toUpperCase());
+        });
+        localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify([]));
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          mentors: [],
+          students: updatedStudents
+        }
+      };
+    });
+
+    // Notify backend / Vite proxy
+    try {
+      await fetch('/api/admin/delete-all-mentors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (e) { }
+
+    return { success: true };
+  };
+
+  const restoreDefaultMentors = () => {
+    try {
+      localStorage.removeItem('nitte_deleted_mentor_ids');
+      localStorage.setItem('nitte_saved_mentors', JSON.stringify(DEFAULT_FACULTY_MENTORS));
+    } catch (e) { }
+    setDb(prev => ({
+      ...prev,
+      users: {
+        ...prev.users,
+        mentors: DEFAULT_FACULTY_MENTORS
+      }
+    }));
+    return { success: true, count: DEFAULT_FACULTY_MENTORS.length };
+  };
+
+  const removeRo = async (roId) => {
+    if (!roId) return { success: false, message: 'RO ID is required.' };
+    const cleanId = String(roId).trim().toUpperCase();
+
+    setDb(prev => {
+      const currentRos = prev.users?.ros || [];
+      const updatedRos = currentRos.filter(r => (r.id || '').toUpperCase() !== cleanId);
+      try {
+        localStorage.setItem('nitte_saved_ros', JSON.stringify(updatedRos));
+      } catch (e) { }
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          ros: updatedRos
+        }
+      };
+    });
+
+    try {
+      await fetch('/api/admin/delete-ro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roId: cleanId })
+      });
+    } catch (e) { }
+
+    return { success: true, roId: cleanId };
+  };
+
+  const addSingleRo = async (roData) => {
+    if (!roData) return { success: false, message: 'RO data is required.' };
+    return await bulkUploadRos([roData]);
+  };
+
   const [db, setDb] = useState(() => {
     let base = { ...MOCK_DB };
     try {
       const savedStudents = localStorage.getItem('nitte_saved_students');
       if (savedStudents) {
         const parsed = JSON.parse(savedStudents);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           base.users = {
             ...base.users,
-            students: structureAndDeduplicateStudents(parsed)
+            students: structureAndDeduplicateStudents([...DEFAULT_STUDENTS, ...parsed])
           };
         }
       }
@@ -544,12 +655,28 @@ export const DatabaseProvider = ({ children }) => {
 
     try {
       const savedMentors = localStorage.getItem('nitte_saved_mentors');
-      if (savedMentors) {
+      if (savedMentors !== null) {
         const parsed = JSON.parse(savedMentors);
         if (Array.isArray(parsed)) {
           base.users = {
             ...base.users,
             mentors: structureAndDeduplicateMentors(parsed)
+          };
+        }
+      }
+    } catch (e) { }
+
+    try {
+      const savedRos = localStorage.getItem('nitte_saved_ros');
+      if (savedRos) {
+        const parsed = JSON.parse(savedRos);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const roMap = new Map();
+          (base.users?.ros || []).forEach(r => roMap.set(r.id?.toUpperCase(), r));
+          parsed.forEach(r => roMap.set(r.id?.toUpperCase(), r));
+          base.users = {
+            ...base.users,
+            ros: Array.from(roMap.values())
           };
         }
       }
@@ -620,6 +747,7 @@ export const DatabaseProvider = ({ children }) => {
 
         // Preserve and sync students with passwords intact
         let mergedStudents = structureAndDeduplicateStudents([
+          ...DEFAULT_STUDENTS,
           ...(prev.users?.students || []),
           ...((data.users && data.users.students) ? data.users.students : [])
         ]);
@@ -638,21 +766,35 @@ export const DatabaseProvider = ({ children }) => {
         } catch (e) { }
 
         // Preserve and sync mentors with passwords intact
-        let mergedMentors = structureAndDeduplicateMentors([
-          ...(prev.users?.mentors || []),
-          ...((data.users && data.users.mentors) ? data.users.mentors : [])
-        ]);
+        let mergedMentors = [];
         try {
           const cachedMentors = localStorage.getItem('nitte_saved_mentors');
-          if (cachedMentors) {
+          const deletedIds = new Set(
+            JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]').map(id => String(id).toUpperCase())
+          );
+
+          if (cachedMentors !== null) {
             const parsed = JSON.parse(cachedMentors);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              mergedMentors = structureAndDeduplicateMentors([
-                ...mergedMentors,
-                ...parsed
-              ]);
+            if (Array.isArray(parsed)) {
+              mergedMentors = structureAndDeduplicateMentors(parsed);
             }
           }
+
+          if (data.users && Array.isArray(data.users.mentors)) {
+            const serverMentors = data.users.mentors.filter(m => !deletedIds.has(String(m.id || '').toUpperCase()));
+            if (cachedMentors === null) {
+              mergedMentors = structureAndDeduplicateMentors(serverMentors);
+            } else if (mergedMentors.length > 0) {
+              const localIdSet = new Set(mergedMentors.map(m => String(m.id).toUpperCase()));
+              const newFromServer = serverMentors.filter(m => !localIdSet.has(String(m.id).toUpperCase()));
+              mergedMentors = structureAndDeduplicateMentors([...mergedMentors, ...newFromServer]);
+            }
+          }
+
+          if (cachedMentors === null && mergedMentors.length === 0) {
+            mergedMentors = DEFAULT_FACULTY_MENTORS;
+          }
+
           localStorage.setItem('nitte_saved_mentors', JSON.stringify(mergedMentors));
         } catch (e) { }
 
@@ -752,8 +894,37 @@ export const DatabaseProvider = ({ children }) => {
       setIsPgConnected(true);
       setError(null);
     } catch (err) {
-      console.warn('PostgreSQL backend server offline or connecting, running in local state mode.');
-      setIsPgConnected(false);
+      console.warn('Backend server offline or connecting, syncing live with Supabase cloud...');
+      try {
+        const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+        const stuRes = await fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+        });
+        if (stuRes.ok) {
+          const cloudStudents = await stuRes.json();
+          if (Array.isArray(cloudStudents) && cloudStudents.length > 0) {
+            setDb(prev => {
+              const merged = structureAndDeduplicateStudents([
+                ...DEFAULT_STUDENTS,
+                ...(prev.users?.students || []),
+                ...cloudStudents
+              ]);
+              try { localStorage.setItem('nitte_saved_students', JSON.stringify(merged)); } catch (e) {}
+              return {
+                ...prev,
+                users: {
+                  ...prev.users,
+                  students: merged
+                }
+              };
+            });
+            setIsPgConnected(true);
+          }
+        }
+      } catch (cloudErr) {
+        setIsPgConnected(false);
+      }
       setDb(prev => {
         let recs = prev.recordings || [];
         if (!recs.length) {
@@ -889,30 +1060,32 @@ export const DatabaseProvider = ({ children }) => {
           currentSchedules = MOCK_DB.mentoringSchedules;
         }
 
-        let currentStudents = (prev.users?.students && prev.users.students.length) ? prev.users.students : [];
+        let currentStudents = prev.users?.students || [];
         try {
           const savedStudents = localStorage.getItem('nitte_saved_students');
-          if (savedStudents) {
+          if (savedStudents !== null) {
             const parsed = JSON.parse(savedStudents);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               currentStudents = structureAndDeduplicateStudents(parsed);
             }
           }
         } catch (e) { }
 
-        let currentMentors = (prev.users?.mentors && prev.users.mentors.length) ? prev.users.mentors : [];
+        let currentMentors = prev.users?.mentors || [];
         try {
           const savedMentors = localStorage.getItem('nitte_saved_mentors');
-          if (savedMentors) {
+          if (savedMentors !== null) {
             const parsed = JSON.parse(savedMentors);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               currentMentors = structureAndDeduplicateMentors(parsed);
             }
+          } else if (!currentMentors || currentMentors.length === 0) {
+            currentMentors = DEFAULT_FACULTY_MENTORS;
+            try {
+              localStorage.setItem('nitte_saved_mentors', JSON.stringify(DEFAULT_FACULTY_MENTORS));
+            } catch (e) { }
           }
         } catch (e) { }
-        if (!currentMentors || currentMentors.length === 0) {
-          currentMentors = DEFAULT_FACULTY_MENTORS;
-        }
 
         return {
           ...prev,
@@ -2949,63 +3122,98 @@ Office of Student Welfare & Academic Mentorship
   });
 
   const registerStudent = async ({ name, email, usn, password, branch, sem }) => {
+    const rawId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const studentPassword = password ? String(password).trim() : 'Nit#Stu2026';
+
+    const allKnownStudents = [
+      ...DEFAULT_STUDENTS,
+      ...(db.users?.students || [])
+    ];
+
+    // Check if student already exists
+    const existing = allKnownStudents.find(s =>
+      (s.id && s.id.toUpperCase() === rawId.toUpperCase()) ||
+      (s.email && s.email.toLowerCase() === cleanEmail)
+    );
+    if (existing) {
+      throw new Error(`A student account with ID "${rawId}" or Email "${cleanEmail}" is already registered.`);
+    }
+
+    const newStudent = {
+      id: rawId,
+      name: (name || '').trim(),
+      email: cleanEmail,
+      branch: (branch || 'CSE').trim().toUpperCase(),
+      sem: parseInt(sem) || 4,
+      mentorId: 'M101',
+      password: studentPassword,
+      role: 'Student',
+      createdAt: new Date().toISOString()
+    };
+
+    // Forward to backend / Vite dev plugin if available
     try {
       const res = await fetch('/api/auth/register-student', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, usn, password, branch, sem })
+        body: JSON.stringify({ name, email: cleanEmail, usn: rawId, password: studentPassword, branch, sem })
       });
-      if (res.ok) {
-        const data = await res.json();
-        await fetchDbState();
-        return { success: true, student: data.student };
-      } else {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Registration failed');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData.error && !errData.error.includes('fetch')) {
+          console.warn('[registerStudent] Server notice:', errData.error);
+        }
       }
-    } catch (err) {
-      if (err.message && !err.message.includes('fetch')) {
-        throw err;
-      }
-      const rawId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
-      const cleanEmail = (email || '').trim().toLowerCase();
-
-      // Check if student already exists
-      const existing = (db.users?.students || []).find(s =>
-        (s.id && s.id.toUpperCase() === rawId.toUpperCase()) ||
-        (s.email && s.email.toLowerCase() === cleanEmail)
-      );
-      if (existing) {
-        throw new Error(`A student account with ID "${rawId}" or Email "${cleanEmail}" is already registered.`);
-      }
-
-      const newStudent = {
-        id: rawId,
-        name: (name || '').trim(),
-        email: cleanEmail,
-        branch: (branch || 'CSE').trim().toUpperCase(),
-        sem: parseInt(sem) || 4,
-        mentorId: 'M101',
-        password: password ? String(password).trim() : 'Nit#Stu2026',
-        role: 'Student',
-        createdAt: new Date().toISOString()
-      };
-
-      setDb(prev => {
-        const updated = structureAndDeduplicateStudents([...(prev.users?.students || []), newStudent]);
-        try {
-          localStorage.setItem('nitte_saved_students', JSON.stringify(updated));
-        } catch (e) { }
-        return {
-          ...prev,
-          users: {
-            ...prev.users,
-            students: updated
-          }
-        };
-      });
-      return { success: true, student: newStudent };
+    } catch (e) {
+      console.warn('[registerStudent] Backend offline, saving locally in browser session:', e.message);
     }
+
+    // Live sync to Supabase Cloud directly via REST API
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/students`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify({
+          id: rawId,
+          name: (name || '').trim(),
+          email: cleanEmail,
+          mentor_id: 'M101',
+          phone: '9876543210',
+          branch: (branch || 'CSE').trim().toUpperCase(),
+          sem: parseInt(sem) || 4,
+          password: studentPassword
+        })
+      });
+    } catch (cloudErr) { }
+
+    // ALWAYS ensure the student is saved to state and localStorage WITH password so they can log in immediately
+    setDb(prev => {
+      const updated = structureAndDeduplicateStudents([
+        ...DEFAULT_STUDENTS,
+        ...(prev.users?.students || []),
+        newStudent
+      ]);
+      try {
+        localStorage.setItem('nitte_saved_students', JSON.stringify(updated));
+      } catch (e) { }
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          students: updated
+        }
+      };
+    });
+
+    return { success: true, student: newStudent };
   };
 
   const loginUser = async (identifier, password, role) => {
@@ -3042,14 +3250,14 @@ Office of Student Welfare & Academic Mentorship
     };
 
     const tryStudent = () => {
-      let allStudents = [...(db.users?.students || [])];
+      let allStudents = [...DEFAULT_STUDENTS, ...(db.users?.students || [])];
       if (typeof window !== 'undefined') {
         try {
           const cached = localStorage.getItem('nitte_saved_students');
           if (cached) {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              allStudents = structureAndDeduplicateStudents([...parsed, ...allStudents]);
+              allStudents = structureAndDeduplicateStudents([...DEFAULT_STUDENTS, ...parsed, ...allStudents]);
             }
           }
         } catch (e) { }
@@ -3449,6 +3657,10 @@ Office of Student Welfare & Academic Mentorship
             ]);
             try {
               localStorage.setItem('nitte_saved_mentors', JSON.stringify(current));
+              const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
+              const newSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
+              registered.forEach(m => { if (m.id) newSet.delete(String(m.id).toUpperCase()); });
+              localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(newSet)));
             } catch (e) { }
             return {
               ...prev,
@@ -3508,6 +3720,10 @@ Office of Student Welfare & Academic Mentorship
       ]);
       try {
         localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
+        const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
+        const newSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
+        addedMentors.forEach(m => { if (m.id) newSet.delete(String(m.id).toUpperCase()); });
+        localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(newSet)));
       } catch (e) { }
       return {
         ...prev,
@@ -3592,6 +3808,9 @@ Office of Student Welfare & Academic Mentorship
         if (idx >= 0) updatedList[idx] = ro;
         else updatedList.push(ro);
       });
+      try {
+        localStorage.setItem('nitte_saved_ros', JSON.stringify(updatedList));
+      } catch (e) { }
       return {
         ...prev,
         users: {
@@ -3662,7 +3881,11 @@ Office of Student Welfare & Academic Mentorship
       isMatchingMentorId,
       removeStudent,
       removeMentor,
-      addSingleMentor
+      removeAllMentors,
+      restoreDefaultMentors,
+      addSingleMentor,
+      removeRo,
+      addSingleRo
     }}>
       {children}
     </DatabaseContext.Provider>

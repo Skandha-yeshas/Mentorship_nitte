@@ -522,6 +522,18 @@ app.post('/api/admin/delete-mentor', async (req, res) => {
   }
 });
 
+// ADMIN BULK FACULTY MENTOR REMOVAL (CLEAR ALL MENTORS)
+app.post('/api/admin/delete-all-mentors', async (req, res) => {
+  try {
+    await query('UPDATE students SET mentor_id = NULL');
+    await query('DELETE FROM mentors');
+    await logSystemEvent('Admin removed all faculty mentors. All mentees unassigned.', 'Admin', 'ADMIN');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ADMIN BULK FACULTY MENTORS ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
 app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
   const { mentors } = req.body;

@@ -497,6 +497,16 @@ function fullStackDevPlugin() {
             try {
               const { studentId } = JSON.parse(body || '{}');
               res.setHeader('Content-Type', 'application/json');
+              // Forward to backend PostgreSQL server if running
+              try {
+                fetch('http://localhost:5001/api/admin/delete-student', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ studentId })
+                }).catch(() => {});
+              } catch (e) {}
+
+              res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, studentId }));
             } catch (err) {
               res.statusCode = 500;
@@ -514,6 +524,16 @@ function fullStackDevPlugin() {
           req.on('end', () => {
             try {
               const { mentorId } = JSON.parse(body || '{}');
+
+              // Forward to backend PostgreSQL server if running
+              try {
+                fetch('http://localhost:5001/api/admin/delete-mentor', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ mentorId })
+                }).catch(() => {});
+              } catch (e) {}
+
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, mentorId }));
             } catch (err) {
@@ -525,6 +545,19 @@ function fullStackDevPlugin() {
           return;
         }
 
+        // 9e. POST /api/admin/delete-all-mentors
+        if (req.url === '/api/admin/delete-all-mentors' && req.method === 'POST') {
+          try {
+            fetch('http://localhost:5001/api/admin/delete-all-mentors', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            }).catch(() => {});
+          } catch (e) {}
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ success: true }));
+          return;
+        }
+
         // 10. POST /api/auth/register-student
         if (req.url === '/api/auth/register-student' && req.method === 'POST') {
           let body = '';
@@ -533,22 +566,34 @@ function fullStackDevPlugin() {
             try {
               const { name, email, usn, password, branch, sem } = JSON.parse(body || '{}');
               const studentId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
+              const studentPassword = password ? String(password).trim() : 'Nit#Stu2026';
               const student = {
                 id: studentId,
                 name: (name || '').trim(),
                 email: (email || '').trim().toLowerCase(),
                 branch: branch || 'CSE',
                 sem: parseInt(sem) || 4,
-                mentorId: 'M101'
+                mentorId: 'M101',
+                password: studentPassword,
+                role: 'Student'
               };
+
+              // Forward to backend PostgreSQL server if running on port 5001
+              try {
+                fetch('http://localhost:5001/api/auth/register-student', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body
+                }).catch(() => {});
+              } catch (e) {}
 
               sendGmailNotification({
                 to: student.email,
                 replyTo: GMAIL_ADDRESS,
                 fromName: 'NITTE Student Portal',
                 subject: `[WELCOME TO NITTE PORTAL] Registration Successful - ${studentId}`,
-                html: `<h3>Welcome to NITTE Mentorship Portal</h3><p>Dear <strong>${student.name}</strong>,</p><p>Your student account has been registered successfully. Student ID: <strong>${studentId}</strong></p>`,
-                text: `Welcome ${student.name}! Your account has been registered. ID: ${studentId}`,
+                html: `<h3>Welcome to NITTE Mentorship Portal</h3><p>Dear <strong>${student.name}</strong>,</p><p>Your student account has been registered successfully. Student ID: <strong>${studentId}</strong></p><p>Password: <code>${studentPassword}</code></p>`,
+                text: `Welcome ${student.name}! Your account has been registered. ID: ${studentId}, Password: ${studentPassword}`,
                 eventType: 'STUDENT_REGISTERED',
                 recipientName: student.name
               }).catch(() => {});

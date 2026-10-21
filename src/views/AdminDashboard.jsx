@@ -30,12 +30,16 @@ export const AdminDashboard = ({ onLogout }) => {
     isMatchingMentorId,
     removeStudent,
     removeMentor,
+    removeAllMentors,
+    restoreDefaultMentors,
     addSingleMentor,
+    removeRo,
+    addSingleRo,
     logoutUser
   } = useContext(DatabaseContext);
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'students', 'mentors', 'mentor-logs', 'mentor-feedbacks', 'all-tickets', 'audit'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'students', 'mentors', 'ros', 'mentor-logs', 'mentor-feedbacks', 'all-tickets', 'audit'
 
   // Course / Branch Management & Filtering State
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('ALL');
@@ -58,6 +62,8 @@ export const AdminDashboard = ({ onLogout }) => {
   // Faculty Mentor Removal & Single Onboard Form State
   const [mentorPendingDelete, setMentorPendingDelete] = useState(null);
   const [mentorDeleteSuccessMsg, setMentorDeleteSuccessMsg] = useState('');
+  const [isRemoveAllMentorsModalOpen, setIsRemoveAllMentorsModalOpen] = useState(false);
+  const [isRemovingAllMentors, setIsRemovingAllMentors] = useState(false);
   const [isAddMentorModalOpen, setIsAddMentorModalOpen] = useState(false);
   const [singleMentorName, setSingleMentorName] = useState('');
   const [singleMentorEmail, setSingleMentorEmail] = useState('');
@@ -118,7 +124,27 @@ export const AdminDashboard = ({ onLogout }) => {
   // Mentor Feedback Filter State
   const [mfMentorFilter, setMfMentorFilter] = useState('ALL');
   const [mfSearchTerm, setMfSearchTerm] = useState('');
-  const [mfRatingFilter, setMfRatingFilter] = useState('ALL');
+  const [selectedFeedbackModal, setSelectedFeedbackModal] = useState(null);
+
+  // Relationship Officer (RO) Management State
+  const [roSearchTerm, setRoSearchTerm] = useState('');
+  const [roCategoryFilter, setRoCategoryFilter] = useState('ALL');
+  const [isRoImportDrawerOpen, setIsRoImportDrawerOpen] = useState(false);
+  const [roRosterFile, setRoRosterFile] = useState(null);
+  const [parsedRoRoster, setParsedRoRoster] = useState([]);
+  const [isUploadingRoRoster, setIsUploadingRoRoster] = useState(false);
+  const [roUploadResult, setRoUploadResult] = useState(null);
+  const [roUploadError, setRoUploadError] = useState('');
+  const [isAddRoModalOpen, setIsAddRoModalOpen] = useState(false);
+  const [singleRoId, setSingleRoId] = useState('');
+  const [singleRoName, setSingleRoName] = useState('');
+  const [singleRoEmail, setSingleRoEmail] = useState('');
+  const [singleRoCategory, setSingleRoCategory] = useState(ALL_CATEGORIES[0] || 'Hostel Infrastructure & Wi-Fi');
+  const [singleRoPhone, setSingleRoPhone] = useState('');
+  const [singleRoPassword, setSingleRoPassword] = useState('');
+  const [isSubmittingSingleRo, setIsSubmittingSingleRo] = useState(false);
+  const [singleRoError, setSingleRoError] = useState('');
+  const [roPendingDelete, setRoPendingDelete] = useState(null);
 
   // Global Keyboard Shortcut (⌘K / Ctrl+K)
   useEffect(() => {
@@ -236,6 +262,25 @@ export const AdminDashboard = ({ onLogout }) => {
     }
     return list;
   }, [db.users?.mentors, mentorFilterDept, searchTerm]);
+
+  // Memoized Filtered Relationship Officers
+  const filteredRos = useMemo(() => {
+    let list = db.users?.ros || [];
+    if (roCategoryFilter !== 'ALL') {
+      list = list.filter(r => (r.category || '').toLowerCase() === roCategoryFilter.toLowerCase());
+    }
+    if (roSearchTerm.trim()) {
+      const q = roSearchTerm.toLowerCase().trim();
+      list = list.filter(r =>
+        (r.name || '').toLowerCase().includes(q) ||
+        (r.id || '').toLowerCase().includes(q) ||
+        (r.email || '').toLowerCase().includes(q) ||
+        (r.category || '').toLowerCase().includes(q) ||
+        (r.phone || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [db.users?.ros, roCategoryFilter, roSearchTerm]);
 
   // Memoized Filtered All Tickets
   const filteredAllTickets = useMemo(() => {
@@ -376,35 +421,30 @@ export const AdminDashboard = ({ onLogout }) => {
     return logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   }, [db.issues, db.mentorSessionRecords]);
 
-  // Mentor Feedback calculations
+  // Mentor Feedback calculations (Direct Student-to-Mentor feedback list, no rating averages)
   const mentorFeedbacks = db.mentorFeedbacks || [];
   const totalMf = mentorFeedbacks.length;
-  const avgRegularity = totalMf > 0
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.regularityRating) || 0), 0) / totalMf).toFixed(1)
-    : '4.8';
-  const avgClarity = totalMf > 0
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.clarityRating) || 0), 0) / totalMf).toFixed(1)
-    : '4.7';
-  const avgParticipation = totalMf > 0
-    ? (mentorFeedbacks.reduce((sum, f) => sum + (Number(f.participationRating) || 0), 0) / totalMf).toFixed(1)
-    : '4.9';
+  const uniqueStudentsWithFeedback = useMemo(() => {
+    return new Set(mentorFeedbacks.map(f => f.studentId || f.student_id)).size;
+  }, [mentorFeedbacks]);
+  const uniqueMentorsWithFeedback = useMemo(() => {
+    return new Set(mentorFeedbacks.map(f => f.mentorId || f.mentor_id)).size;
+  }, [mentorFeedbacks]);
 
   const filteredMentorFeedbacks = useMemo(() => {
     return mentorFeedbacks.filter(f => {
       if (mfMentorFilter !== 'ALL' && f.mentorId !== mfMentorFilter && f.mentorName !== mfMentorFilter) return false;
-      const overall = (Number(f.regularityRating || 0) + Number(f.clarityRating || 0) + Number(f.participationRating || 0)) / 3;
-      if (mfRatingFilter === 'LOW' && overall > 3) return false;
-      if (mfRatingFilter === 'HIGH' && overall < 4) return false;
       if (mfSearchTerm.trim()) {
         const q = mfSearchTerm.toLowerCase();
-        const matchStudent = (f.studentName || '').toLowerCase().includes(q) || (f.studentId || '').toLowerCase().includes(q);
-        const matchMentor = (f.mentorName || '').toLowerCase().includes(q);
-        const matchDifficulties = (f.difficulties || '').toLowerCase().includes(q);
-        if (!matchStudent && !matchMentor && !matchDifficulties) return false;
+        const sName = String(f.studentName || f.student_name || '').toLowerCase();
+        const sId = String(f.studentId || f.student_id || '').toLowerCase();
+        const mName = String(f.mentorName || f.mentor_name || '').toLowerCase();
+        const diff = String(f.difficulties || '').toLowerCase();
+        if (!sName.includes(q) && !sId.includes(q) && !mName.includes(q) && !diff.includes(q)) return false;
       }
       return true;
     });
-  }, [mentorFeedbacks, mfMentorFilter, mfRatingFilter, mfSearchTerm]);
+  }, [mentorFeedbacks, mfMentorFilter, mfSearchTerm]);
 
   // Action Handlers
   const handleOpenAssignmentModal = (mentor) => {
@@ -567,6 +607,24 @@ export const AdminDashboard = ({ onLogout }) => {
     showToast(`Faculty Mentor "${name}" (${id}) removed.`);
   };
 
+  const handleConfirmRemoveAllMentors = async () => {
+    setIsRemovingAllMentors(true);
+    try {
+      await removeAllMentors();
+      setIsRemoveAllMentorsModalOpen(false);
+      showToast('All faculty mentors have been removed. Mentees unassigned.');
+    } catch (e) {
+      showToast('Failed to remove all mentors: ' + e.message);
+    } finally {
+      setIsRemovingAllMentors(false);
+    }
+  };
+
+  const handleRestoreDefaultMentors = () => {
+    restoreDefaultMentors();
+    showToast('Default faculty mentors restored successfully.');
+  };
+
   // Excel / CSV File Handlers
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
@@ -636,6 +694,123 @@ export const AdminDashboard = ({ onLogout }) => {
     document.body.removeChild(link);
   };
 
+  // RO Roster & Modal Handlers
+  const handleRoFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setRoRosterFile(file);
+    setRoUploadError('');
+    setRoUploadResult(null);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const buffer = evt.target.result;
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        setParsedRoRoster(data || []);
+      } catch (err) {
+        setRoUploadError('Failed to parse file: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDownloadRoTemplate = () => {
+    const sampleData = [
+      { 'RO ID': 'RO-01', 'RO Name': 'Prof. Suresh Nayak', 'Official Email': 'suresh.nayak@nitte.edu.in', 'Assigned Domain Category': 'Hostel Infrastructure & Wi-Fi', 'Contact Phone': '9845012345', 'Initial Password': 'Nit#Ro2026' },
+      { 'RO ID': 'RO-02', 'RO Name': 'Dr. Rekha Bhandary', 'Official Email': 'rekha.bhandary@nitte.edu.in', 'Assigned Domain Category': 'Academic & CIA Marks Re-evaluation', 'Contact Phone': '9845023456', 'Initial Password': 'Nit#Ro2026' },
+      { 'RO ID': 'RO-03', 'RO Name': 'Prof. Ramesh Bhat', 'Official Email': 'ramesh.bhat@nitte.edu.in', 'Assigned Domain Category': 'Campus Transport & Fee Accounts', 'Contact Phone': '9845034567', 'Initial Password': 'Nit#Ro2026' },
+      { 'RO ID': 'RO-04', 'RO Name': 'Dr. Niranjan Chiplunkar', 'Official Email': 'niranjan.c@nitte.edu.in', 'Assigned Domain Category': 'Laboratory Equipment & Calibration', 'Contact Phone': '9845045678', 'Initial Password': 'Nit#Ro2026' }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'RO Roster');
+    XLSX.writeFile(wb, 'nitte_relationship_officers_specimen.xlsx');
+    showToast('Downloading official NITTE Relationship Officers Specimen Template...');
+  };
+
+  const handleRoRosterSubmit = async () => {
+    if (!parsedRoRoster || parsedRoRoster.length === 0) {
+      setRoUploadError('Please select a valid Excel (.xlsx) or CSV file with RO records.');
+      return;
+    }
+    setIsUploadingRoRoster(true);
+    setRoUploadError('');
+    try {
+      const res = await bulkUploadRos(parsedRoRoster);
+      setRoUploadResult(res);
+      setParsedRoRoster([]);
+      setRoRosterFile(null);
+      showToast(`RO Batch Ingested: ${res?.count || parsedRoRoster.length} Relationship Officers added/updated.`);
+    } catch (err) {
+      setRoUploadError(err.message || 'Failed to process RO roster.');
+    } finally {
+      setIsUploadingRoRoster(false);
+    }
+  };
+
+  const handleExportRoCredentialsCsv = () => {
+    if (!roUploadResult || !roUploadResult.results) return;
+    let csvContent = 'data:text/csv;charset=utf-8,Index,RO ID,RO Name,Official Email,Domain Category,Initial Password,Delivery Status\n';
+    roUploadResult.results.forEach((row, i) => {
+      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.category || 'General'}","${row.password || 'Nit#Ro2026'}","${row.emailStatus || 'DELIVERED_GMAIL'}"\n`;
+    });
+    const link = document.createElement('a');
+    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('download', `NITTE_RO_Credentials_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Exported provisioned RO LDAP credentials.');
+  };
+
+  const handleSingleRoSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!singleRoName.trim() || !singleRoEmail.trim()) {
+      setSingleRoError('Please enter both RO Full Name and Official Email.');
+      return;
+    }
+    setSingleRoError('');
+    setIsSubmittingSingleRo(true);
+    try {
+      let roIdToUse = singleRoId.trim().toUpperCase();
+      if (!roIdToUse) {
+        const nextNum = (db.users?.ros || []).length + 1;
+        roIdToUse = `RO-${String(nextNum).padStart(2, '0')}`;
+      }
+      const roPayload = {
+        id: roIdToUse,
+        name: singleRoName.trim(),
+        email: singleRoEmail.trim().toLowerCase(),
+        category: singleRoCategory || 'Academic & Attendance Support',
+        phone: singleRoPhone.trim() || '9876543210',
+        password: singleRoPassword.trim() || `Nit#Ro${Math.floor(1000 + Math.random() * 9000)}`
+      };
+      await addSingleRo(roPayload);
+      showToast(`Relationship Officer ${roPayload.name} (${roPayload.id}) onboarded.`);
+      setSingleRoName('');
+      setSingleRoEmail('');
+      setSingleRoId('');
+      setSingleRoPhone('');
+      setSingleRoPassword('');
+      setIsAddRoModalOpen(false);
+    } catch (err) {
+      setSingleRoError(err.message || 'Failed to onboard Relationship Officer.');
+    } finally {
+      setIsSubmittingSingleRo(false);
+    }
+  };
+
+  const handleConfirmRemoveRo = async () => {
+    if (!roPendingDelete) return;
+    const name = roPendingDelete.name;
+    const id = roPendingDelete.id;
+    await removeRo(id);
+    setRoPendingDelete(null);
+    showToast(`Relationship Officer "${name}" (${id}) deactivated.`);
+  };
+
   const handleDownloadReport = (reportType) => {
     let csvContent = 'data:text/csv;charset=utf-8,Ticket ID,Student Name,Category,Priority,Status,Created At,Resolved At,Satisfaction\n';
     (db.issues || []).forEach(i => {
@@ -654,18 +829,19 @@ export const AdminDashboard = ({ onLogout }) => {
 
   const handleExportMentorFeedbacksCsv = () => {
     if (filteredMentorFeedbacks.length === 0) return;
-    let csvContent = 'data:text/csv;charset=utf-8,ID,Student Name,Student ID,Mentor Name,Mentor ID,Regularity (1-5),Clarity (1-5),Opportunity (1-5),Average,Feedback Narrative,Date\n';
+    let csvContent = 'data:text/csv;charset=utf-8,ID,Student Name,Student USN,Faculty Mentor Name,Mentor ID,Student Feedback Narrative,Submission Date\n';
     filteredMentorFeedbacks.forEach((f, idx) => {
-      const avg = ((Number(f.regularityRating || 0) + Number(f.clarityRating || 0) + Number(f.participationRating || 0)) / 3).toFixed(1);
-      const cleanDiff = (f.difficulties || '').replace(/"/g, '""').replace(/\r?\n/g, ' ');
-      csvContent += `"${f.id || idx + 1}","${f.studentName}","${f.studentId}","${f.mentorName}","${f.mentorId || ''}","${f.regularityRating}","${f.clarityRating}","${f.participationRating}","${avg}","${cleanDiff}","${new Date(f.createdAt).toLocaleString()}"\n`;
+      const cleanDiff = (f.difficulties || 'Student shared positive session feedback with no concerns noted.').replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      const dateStr = f.createdAt ? new Date(f.createdAt).toLocaleString() : 'Recent';
+      csvContent += `"${f.id || idx + 1}","${f.studentName || f.student_name || ''}","${f.studentId || f.student_id || ''}","${f.mentorName || f.mentor_name || ''}","${f.mentorId || f.mentor_id || ''}","${cleanDiff}","${dateStr}"\n`;
     });
     const link = document.createElement('a');
     link.setAttribute('href', encodeURI(csvContent));
-    link.setAttribute('download', `nitte_mentor_feedbacks_${Date.now()}.csv`);
+    link.setAttribute('download', `nitte_student_mentor_feedbacks_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    showToast('Exported student mentor feedbacks to CSV.');
   };
 
   return (
@@ -787,6 +963,14 @@ export const AdminDashboard = ({ onLogout }) => {
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700 font-mono font-semibold">{(db.users?.mentors || []).length}</span>
             </button>
             <button
+              onClick={() => setActiveTab('ros')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${activeTab === 'ros' ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
+            >
+              <Briefcase size={15} />
+              <span>Relationship Officers</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-50 text-amber-800 font-mono font-semibold border border-amber-200">{(db.users?.ros || []).length}</span>
+            </button>
+            <button
               onClick={() => setActiveTab('mentor-logs')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${activeTab === 'mentor-logs' ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
             >
@@ -798,9 +982,9 @@ export const AdminDashboard = ({ onLogout }) => {
               onClick={() => setActiveTab('mentor-feedbacks')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${activeTab === 'mentor-feedbacks' ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
             >
-              <Star size={15} />
+              <MessageSquare size={15} />
               <span>Mentor Feedback</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-50 text-emerald-700 font-mono font-semibold border border-emerald-200">{averageSatisfaction} ★</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-50 text-blue-700 font-mono font-semibold border border-blue-200">{totalMf}</span>
             </button>
             <button
               onClick={() => setActiveTab('all-tickets')}
@@ -1345,13 +1529,25 @@ export const AdminDashboard = ({ onLogout }) => {
                 <p className="text-xs text-slate-500 mt-0.5">Enforce mandatory UGC Mentorship Ratio (&lt; 1:30) and monitor fortnightly session reports</p>
               </div>
               <div className="flex items-center space-x-2.5">
-                <button
-                  onClick={() => handleOpenAssignmentModal((db.users?.mentors || [])[0])}
-                  className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-                >
-                  <Grid size={14} />
-                  <span>Interactive Allocation Engine</span>
-                </button>
+                {(db.users?.mentors || []).length > 0 && (
+                  <button
+                    onClick={() => setIsRemoveAllMentorsModalOpen(true)}
+                    className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                    title="Remove all faculty mentors and unassign mentees"
+                  >
+                    <Trash2 size={13} />
+                    <span>Clear All Mentors</span>
+                  </button>
+                )}
+                {(db.users?.mentors || []).length > 0 && (
+                  <button
+                    onClick={() => handleOpenAssignmentModal((db.users?.mentors || [])[0])}
+                    className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                  >
+                    <Grid size={14} />
+                    <span>Interactive Allocation Engine</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setIsAddMentorModalOpen(true)}
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-blue-600/30"
@@ -1362,73 +1558,399 @@ export const AdminDashboard = ({ onLogout }) => {
               </div>
             </div>
 
-            {/* Faculty Mentor Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 lg:gap-5">
-              {filteredMentors.map((mentor) => {
-                const menteeCount = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id)).length;
-                const ratioPct = Math.min(100, Math.round((menteeCount / 30) * 100));
+            {/* Faculty Mentor Cards Grid or Clean Empty State */}
+            {(db.users?.mentors || []).length === 0 ? (
+              <div className="p-12 text-center rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
+                  <UserPlus size={28} />
+                </div>
+                <div className="max-w-md mx-auto">
+                  <h3 className="text-base font-bold text-slate-900">No Faculty Mentors Active</h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    All faculty mentors have been removed. You can onboard individual faculty mentors, import a roster via Excel, or restore the official demo faculty mentors.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => setIsAddMentorModalOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-blue-600/20"
+                  >
+                    <UserPlus size={14} />
+                    <span>Onboard Faculty Mentor</span>
+                  </button>
+                  <button
+                    onClick={() => setIsImportDrawerOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition flex items-center space-x-1.5 border border-slate-200 shadow-sm"
+                  >
+                    <Upload size={14} />
+                    <span>Bulk Import Roster</span>
+                  </button>
+                  <button
+                    onClick={handleRestoreDefaultMentors}
+                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition flex items-center space-x-1.5 border border-slate-200 shadow-sm"
+                  >
+                    <RefreshCw size={14} />
+                    <span>Restore Default Mentors</span>
+                  </button>
+                </div>
+              </div>
+            ) : filteredMentors.length === 0 ? (
+              <div className="p-8 text-center rounded-2xl bg-white border border-slate-200 shadow-sm">
+                <p className="text-sm font-semibold text-slate-700">No faculty mentors match the selected department or search filter.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 lg:gap-5">
+                {filteredMentors.map((mentor) => {
+                  const menteeCount = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id)).length;
+                  const ratioPct = Math.min(100, Math.round((menteeCount / 30) * 100));
 
-                return (
-                  <div key={mentor.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-700 text-white font-bold flex items-center justify-center text-sm shadow">
-                            {mentor.name ? mentor.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ME'}
+                  return (
+                    <div key={mentor.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-700 text-white font-bold flex items-center justify-center text-sm shadow">
+                              {mentor.name ? mentor.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ME'}
+                            </div>
+                            <div>
+                              <h3 className="text-xs font-bold text-slate-900">{mentor.name}</h3>
+                              <div className="text-[11px] text-blue-700 font-semibold">{mentor.class || 'Faculty Mentor'}</div>
+                              <div className="text-[10px] text-slate-500">Dept. of {mentor.dept || 'Engineering'}</div>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="text-xs font-bold text-slate-900">{mentor.name}</h3>
-                            <div className="text-[11px] text-blue-700 font-semibold">{mentor.class || 'Faculty Mentor'}</div>
-                            <div className="text-[10px] text-slate-500">Dept. of {mentor.dept || 'Engineering'}</div>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">Active</span>
+                        </div>
+
+                        {/* Allocation Capacity Meter */}
+                        <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5">
+                          <div className="flex justify-between text-xs font-medium">
+                            <span className="text-slate-500">Mentee Allocation</span>
+                            <span className="font-mono text-slate-900 font-bold">{menteeCount} / 30 Mentees</span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${ratioPct >= 100 ? 'bg-rose-500' : ratioPct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${ratioPct}%` }}
+                            ></div>
+                          </div>
+                          <div className={`text-[10px] font-mono font-medium ${ratioPct >= 100 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                            {ratioPct >= 100 ? 'Maximum Capacity Reached' : `${30 - menteeCount} slots remaining before cap`}
                           </div>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">Active</span>
+
+                        <div className="mt-3 text-[11px] text-slate-500 space-y-1">
+                          <div>Assigned Batch: <span className="text-slate-900 font-medium">{mentor.class || 'All Semesters'}</span></div>
+                          <div>Official ID: <span className="text-slate-700 font-mono font-medium">{mentor.id}</span></div>
+                        </div>
                       </div>
 
-                      {/* Allocation Capacity Meter */}
-                      <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5">
-                        <div className="flex justify-between text-xs font-medium">
-                          <span className="text-slate-500">Mentee Allocation</span>
-                          <span className="font-mono text-slate-900 font-bold">{menteeCount} / 30 Mentees</span>
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-xs text-blue-700 font-mono font-semibold">{mentor.email}</span>
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={() => handleOpenAssignmentModal(mentor)}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold shadow-sm transition"
+                          >
+                            Manage Mentees
+                          </button>
+                          <button
+                            onClick={() => setMentorPendingDelete(mentor)}
+                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
+                            title="Remove Mentor"
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-300 ${ratioPct >= 100 ? 'bg-rose-500' : ratioPct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${ratioPct}%` }}
-                          ></div>
-                        </div>
-                        <div className={`text-[10px] font-mono font-medium ${ratioPct >= 100 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                          {ratioPct >= 100 ? 'Maximum Capacity Reached' : `${30 - menteeCount} slots remaining before cap`}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-[11px] text-slate-500 space-y-1">
-                        <div>Assigned Batch: <span className="text-slate-900 font-medium">{mentor.class || 'All Semesters'}</span></div>
-                        <div>Official ID: <span className="text-slate-700 font-mono font-medium">{mentor.id}</span></div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-xs text-blue-700 font-mono font-semibold">{mentor.email}</span>
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => handleOpenAssignmentModal(mentor)}
-                          className="px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold shadow-sm transition"
-                        >
-                          Manage Mentees
-                        </button>
-                        <button
-                          onClick={() => setMentorPendingDelete(mentor)}
-                          className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
-                          title="Remove Mentor"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+        {/* ================= TAB: RELATIONSHIP OFFICERS (RO MODULE) ================= */}
+        {activeTab === 'ros' && (
+          <section className="space-y-6">
+            {/* Header & Controls */}
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Relationship Officers (RO) Registry & Governance</h2>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                    Level 2 Authority
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">Manage institutional Relationship Officers, assign specialized domain categories, and import officer rosters</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleDownloadRoTemplate}
+                  className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                >
+                  <FileSpreadsheet size={14} className="text-emerald-600" />
+                  <span>Download RO Excel Specimen</span>
+                </button>
+                <button
+                  onClick={() => setIsRoImportDrawerOpen(!isRoImportDrawerOpen)}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-blue-600/30"
+                >
+                  <Upload size={14} />
+                  <span>{isRoImportDrawerOpen ? 'Close Roster Importer' : 'Bulk RO Roster Import'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const nextNum = (db.users?.ros || []).length + 1;
+                    setSingleRoId(`RO-${String(nextNum).padStart(2, '0')}`);
+                    setIsAddRoModalOpen(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-emerald-600/30"
+                >
+                  <UserPlus size={14} />
+                  <span>Onboard Relationship Officer</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bulk RO Roster Import Drawer */}
+            {isRoImportDrawerOpen && (
+              <div className="p-6 rounded-2xl bg-slate-50 border-2 border-dashed border-blue-400 shadow-sm transition space-y-4">
+                <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700">
+                      <Briefcase size={28} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900">Import Relationship Officers Registry (.xlsx or .csv)</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">Upload official NITTE RO roster spreadsheet: RO ID, RO Name, Official Email, Assigned Domain Category, Contact Phone, Password.</p>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono mt-2">
+                        <span>Max file size: 25MB</span>
+                        <span>•</span>
+                        <span>Auto-creates LDAP Credentials</span>
+                        <span>•</span>
+                        <span>Overwrites/Updates matching RO IDs</span>
                       </div>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+                    <label className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-semibold cursor-pointer border border-slate-200 shadow-sm transition">
+                      <span>{roRosterFile ? roRosterFile.name : 'Choose RO Spreadsheet File'}</span>
+                      <input
+                        type="file"
+                        accept=".xlsx, .xls, .csv"
+                        onChange={handleRoFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      onClick={handleRoRosterSubmit}
+                      disabled={isUploadingRoRoster || !parsedRoRoster.length}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-emerald-600/20 disabled:opacity-50"
+                    >
+                      <Upload size={14} />
+                      <span>{isUploadingRoRoster ? 'Ingesting...' : `Ingest ${parsedRoRoster.length || 0} RO Records`}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {roUploadError && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center space-x-2">
+                    <AlertCircle size={15} />
+                    <span>{roUploadError}</span>
+                  </div>
+                )}
+
+                {/* Parsed Preview Table */}
+                {parsedRoRoster.length > 0 && !roUploadResult && (
+                  <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                      <span>Preview of Parsed RO Roster ({parsedRoRoster.length} Rows Detected)</span>
+                      <span className="text-[11px] text-slate-500 font-mono">Ready to Ingest</span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 text-[11px]">
+                          <tr>
+                            <th className="py-2 px-3">#</th>
+                            <th className="py-2 px-3">RO ID</th>
+                            <th className="py-2 px-3">Full Name</th>
+                            <th className="py-2 px-3">Official Email</th>
+                            <th className="py-2 px-3">Domain Category</th>
+                            <th className="py-2 px-3">Contact Phone</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-700">
+                          {parsedRoRoster.slice(0, 10).map((r, i) => (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 font-mono text-slate-400">{i + 1}</td>
+                              <td className="py-2 px-3 font-mono font-bold text-blue-700">{r['RO ID'] || r.id || r.roId || `RO-${100 + i}`}</td>
+                              <td className="py-2 px-3 font-semibold text-slate-900">{r['RO Name'] || r.name || r.roName || 'Officer'}</td>
+                              <td className="py-2 px-3 font-mono text-slate-600">{r['Official Email'] || r.email || r.Email || 'N/A'}</td>
+                              <td className="py-2 px-3 text-slate-700">{r['Assigned Domain Category'] || r.category || 'General Support'}</td>
+                              <td className="py-2 px-3 font-mono text-slate-500">{r['Contact Phone'] || r.phone || '9876543210'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {parsedRoRoster.length > 10 && (
+                        <div className="p-2 text-center text-[11px] text-slate-500 bg-slate-50 border-t border-slate-200">
+                          ... and {parsedRoRoster.length - 10} more rows
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ingestion Results Card */}
+                {roUploadResult && (
+                  <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-emerald-800 font-bold">
+                        <CheckCircle2 size={16} className="text-emerald-600" />
+                        <span>RO Roster Ingestion Complete: {roUploadResult.count || parsedRoRoster.length} Officers Provisioned</span>
+                      </div>
+                      <button
+                        onClick={handleExportRoCredentialsCsv}
+                        className="px-3 py-1.5 rounded-lg bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold transition flex items-center space-x-1.5 shadow-sm"
+                      >
+                        <Download size={13} />
+                        <span>Export RO Credentials (CSV)</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-emerald-700">
+                      All Relationship Officers can now authenticate using their official institutional email ID or RO-ID with standard or generated passwords.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Filter & Search Bar */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative w-full sm:w-64">
+                  <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={roSearchTerm}
+                    onChange={(e) => setRoSearchTerm(e.target.value)}
+                    placeholder="Search by RO Name, ID, Email..."
+                    className="w-full bg-slate-50 text-xs text-slate-800 pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white transition"
+                  />
+                </div>
+                <select
+                  value={roCategoryFilter}
+                  onChange={(e) => setRoCategoryFilter(e.target.value)}
+                  className="bg-slate-50 text-xs text-slate-700 px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600"
+                >
+                  <option value="ALL">All Domain Categories</option>
+                  {Array.from(new Set((db.users?.ros || []).map(r => r.category).filter(Boolean))).map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <span className="text-xs text-slate-500 font-mono">
+                Showing <strong className="text-slate-800">{filteredRos.length}</strong> of {(db.users?.ros || []).length} Relationship Officers
+              </span>
+            </div>
+
+            {/* RO High-Density Table */}
+            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                      <th className="py-3.5 px-4">Officer ID & Info</th>
+                      <th className="py-3.5 px-4">Assigned Domain Category</th>
+                      <th className="py-3.5 px-4">Official Contact</th>
+                      <th className="py-3.5 px-4">Active Ticket Caseload</th>
+                      <th className="py-3.5 px-4">Jurisdiction & Level</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {filteredRos.length > 0 ? (
+                      filteredRos.map((ro) => {
+                        const activeCaseload = (db.issues || []).filter(i =>
+                          (String(i.roId || '').toUpperCase() === String(ro.id || '').toUpperCase() ||
+                           String(i.roName || '').toLowerCase() === String(ro.name || '').toLowerCase()) &&
+                          i.status !== 'Resolved' && i.status !== 'Closed'
+                        ).length;
+
+                        return (
+                          <tr key={ro.id} className="hover:bg-slate-50/80 transition">
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center space-x-3">
+                                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-600 to-indigo-700 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                                  {ro.name ? ro.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'RO'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-900 text-xs">{ro.name}</div>
+                                  <div className="font-mono text-[11px] text-blue-700 font-semibold">{ro.id}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                                {ro.category || 'General Support & Redressal'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 font-mono text-[11px]">
+                              <div className="text-slate-800">{ro.email}</div>
+                              <div className="text-slate-500 text-[10px]">{ro.phone || '9876543210'}</div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
+                                activeCaseload > 5
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  : activeCaseload > 0
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              }`}>
+                                {activeCaseload} Active {activeCaseload === 1 ? 'Case' : 'Cases'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                Level 2 Hearing Officer
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-right">
+                              <div className="flex items-center justify-end space-x-2">
+                                <button
+                                  onClick={() => {
+                                    setTicketStatusFilter('All');
+                                    setSearchTerm(ro.name || ro.id);
+                                    setActiveTab('all-tickets');
+                                  }}
+                                  className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition"
+                                  title="View Assigned Tickets"
+                                >
+                                  <Eye size={14} />
+                                </button>
+                                <button
+                                  onClick={() => setRoPendingDelete(ro)}
+                                  className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
+                                  title="Deactivate Relationship Officer"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-slate-500 text-xs">
+                          No Relationship Officers found matching the search criteria.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         )}
@@ -1485,73 +2007,150 @@ export const AdminDashboard = ({ onLogout }) => {
           </section>
         )}
 
-        {/* ================= TAB 5: MENTOR FEEDBACK ================= */}
+        {/* ================= TAB 5: STUDENT FEEDBACK ON MENTORS ================= */}
         {activeTab === 'mentor-feedbacks' && (
           <section className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold uppercase">Total Feedbacks</span>
-                <div className="text-2xl font-bold text-slate-900 mt-1">{totalMf}</div>
+            {/* Header & Metrics (No rating averages, just student feedback counts) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Total Feedbacks Logged</span>
+                  <div className="text-2xl font-bold text-slate-900 mt-1">{totalMf}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Submitted by students</div>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <MessageSquare size={20} />
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold uppercase">Regularity Rating</span>
-                <div className="text-2xl font-bold text-blue-600 mt-1">{avgRegularity} / 5.0</div>
+
+              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Students Participating</span>
+                  <div className="text-2xl font-bold text-slate-900 mt-1">{uniqueStudentsWithFeedback}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Active mentee respondents</div>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Users size={20} />
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold uppercase">Clarity of Guidance</span>
-                <div className="text-2xl font-bold text-indigo-600 mt-1">{avgClarity} / 5.0</div>
-              </div>
-              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-semibold uppercase">Opportunity to Share</span>
-                <div className="text-2xl font-bold text-emerald-600 mt-1">{avgParticipation} / 5.0</div>
+
+              <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Faculty Mentors Covered</span>
+                  <div className="text-2xl font-bold text-slate-900 mt-1">{uniqueMentorsWithFeedback}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Mentors with feedback entries</div>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <GraduationCap size={20} />
+                </div>
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <Search size={15} className="text-slate-400" />
-                <input
-                  type="text"
-                  value={mfSearchTerm}
-                  onChange={(e) => setMfSearchTerm(e.target.value)}
-                  placeholder="Filter student or mentor..."
-                  className="bg-slate-50 text-xs px-3 py-1.5 rounded-lg border border-slate-200"
-                />
+            {/* Filter Bar */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="relative flex-1">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={mfSearchTerm}
+                    onChange={(e) => setMfSearchTerm(e.target.value)}
+                    placeholder="Search by student name, USN, mentor, or feedback text..."
+                    className="w-full bg-slate-50 text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <select
+                  value={mfMentorFilter}
+                  onChange={(e) => setMfMentorFilter(e.target.value)}
+                  className="bg-slate-50 text-xs px-3 py-2 rounded-xl border border-slate-200 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="ALL">All Faculty Mentors</option>
+                  {(db.users?.mentors || []).map(m => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.dept || 'Dept'})</option>
+                  ))}
+                </select>
               </div>
               <button
                 onClick={handleExportMentorFeedbacksCsv}
-                className="px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200"
+                className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 shadow-sm transition flex items-center justify-center space-x-1.5"
               >
-                Export Feedback (CSV)
+                <Download size={13} />
+                <span>Export Feedbacks (CSV)</span>
               </button>
             </div>
 
-            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="py-3 px-4">Student</th>
-                    <th className="py-3 px-4">Mentor</th>
-                    <th className="py-3 px-4">Ratings (Reg / Clar / Part)</th>
-                    <th className="py-3 px-4">Overall</th>
-                    <th className="py-3 px-4">Student Observations</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {filteredMentorFeedbacks.map((f, i) => (
-                    <tr key={f.id || i} className="hover:bg-slate-50">
-                      <td className="py-3 px-4 font-bold text-slate-900">{f.studentName} ({f.studentId})</td>
-                      <td className="py-3 px-4 text-blue-700 font-medium">{f.mentorName}</td>
-                      <td className="py-3 px-4 font-mono">{f.regularityRating}★ • {f.clarityRating}★ • {f.participationRating}★</td>
-                      <td className="py-3 px-4 font-bold text-emerald-700 font-mono">
-                        {(((Number(f.regularityRating || 0) + Number(f.clarityRating || 0) + Number(f.participationRating || 0)) / 3).toFixed(1))} ★
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 max-w-sm truncate">{f.difficulties || 'No difficulties noted. Mentor is very supportive.'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {/* Feedback Records Table */}
+            {filteredMentorFeedbacks.length === 0 ? (
+              <div className="p-12 text-center rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
+                  <MessageSquare size={24} />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900">No Student Feedbacks Found</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  {totalMf === 0
+                    ? "Students have not yet submitted feedback for their assigned faculty mentors. When they do, their observations will appear here."
+                    : "No feedbacks match the current search or mentor filter."}
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4">Student Details</th>
+                        <th className="py-3 px-4">Assigned Mentor</th>
+                        <th className="py-3 px-4">Submission Date</th>
+                        <th className="py-3 px-4">Student Observations & Feedback</th>
+                        <th className="py-3 px-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {filteredMentorFeedbacks.map((f, i) => {
+                        const student = (db.users?.students || []).find(s => String(s.id).toUpperCase() === String(f.studentId || f.student_id).toUpperCase());
+                        const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, f.mentorId || f.mentor_id));
+                        const feedbackText = f.difficulties || 'Student submitted positive mentorship session feedback with no concerns noted.';
+                        return (
+                          <tr key={f.id || i} className="hover:bg-slate-50/80 transition">
+                            <td className="py-3.5 px-4">
+                              <div className="font-bold text-slate-900">{f.studentName || f.student_name || student?.name || 'Student'}</div>
+                              <div className="font-mono text-[11px] text-blue-700 font-semibold">{f.studentId || f.student_id || student?.id}</div>
+                              {student && (
+                                <div className="text-[10px] text-slate-400 mt-0.5">{student.branch || 'Branch'} • Sem {student.sem || 5}</div>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <div className="font-semibold text-slate-800">{f.mentorName || f.mentor_name || mentor?.name || 'Faculty Mentor'}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{f.mentorId || f.mentor_id || mentor?.id || 'Mentor'}</div>
+                              {mentor && (
+                                <div className="text-[10px] text-slate-400">{mentor.dept || 'Engineering'}</div>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
+                              {f.createdAt ? new Date(f.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Recent'}
+                            </td>
+                            <td className="py-3.5 px-4 max-w-md">
+                              <p className="line-clamp-2 text-slate-700 text-xs leading-relaxed bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
+                                "{feedbackText}"
+                              </p>
+                            </td>
+                            <td className="py-3.5 px-4 text-right">
+                              <button
+                                onClick={() => setSelectedFeedbackModal({ ...f, fullText: feedbackText, student, mentor })}
+                                className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold shadow-sm transition inline-flex items-center space-x-1"
+                              >
+                                <Eye size={12} />
+                                <span>View Full</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -2209,6 +2808,250 @@ export const AdminDashboard = ({ onLogout }) => {
               </button>
               <button onClick={handleConfirmRemoveMentor} className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold">
                 Confirm Removal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7b. CONFIRM REMOVE ALL MENTORS MODAL */}
+      {isRemoveAllMentorsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <AlertCircle size={24} />
+              <h3 className="text-base font-bold text-slate-900">Remove All Faculty Mentors?</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to remove <strong>all {(db.users?.mentors || []).length} faculty mentors</strong>? All currently assigned students will be unallocated and returned to the general pool.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsRemoveAllMentorsModalOpen(false)}
+                disabled={isRemovingAllMentors}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmRemoveAllMentors}
+                disabled={isRemovingAllMentors}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50 flex items-center space-x-1.5"
+              >
+                {isRemovingAllMentors ? (
+                  <span>Removing...</span>
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    <span>Confirm Remove All</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. ONBOARD NEW RELATIONSHIP OFFICER MODAL */}
+      {isAddRoModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
+                  <Briefcase size={20} />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900">Onboard Relationship Officer (RO)</h3>
+              </div>
+              <button onClick={() => setIsAddRoModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X size={18} />
+              </button>
+            </div>
+
+            {singleRoError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center space-x-2">
+                <AlertCircle size={14} />
+                <span>{singleRoError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSingleRoSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Full Name (with Title) *</label>
+                <input
+                  type="text"
+                  required
+                  value={singleRoName}
+                  onChange={(e) => setSingleRoName(e.target.value)}
+                  placeholder="e.g. Prof. Suresh Nayak"
+                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Officer ID (RO-01 to RO-49) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={singleRoId}
+                    onChange={(e) => setSingleRoId(e.target.value.toUpperCase())}
+                    placeholder="e.g. RO-04"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Assigned Domain Category *</label>
+                  <select
+                    value={singleRoCategory}
+                    onChange={(e) => setSingleRoCategory(e.target.value)}
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white"
+                  >
+                    <option value="Hostel Infrastructure & Wi-Fi">Hostel Infrastructure & Wi-Fi</option>
+                    <option value="Academic & CIA Marks Re-evaluation">Academic & CIA Marks Re-evaluation</option>
+                    <option value="Laboratory Equipment & Calibration">Laboratory Equipment & Calibration</option>
+                    <option value="Examination Portal & Attendance Condonation">Examination Portal & Attendance Condonation</option>
+                    <option value="Campus Transport & Fee Accounts">Campus Transport & Fee Accounts</option>
+                    <option value="Placement Training & Drive Registration">Placement Training & Drive Registration</option>
+                    <option value="General Student Support & Counseling">General Student Support & Counseling</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Institutional Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={singleRoEmail}
+                    onChange={(e) => setSingleRoEmail(e.target.value)}
+                    placeholder="officer@nitte.edu.in"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Contact Phone</label>
+                  <input
+                    type="tel"
+                    value={singleRoPhone}
+                    onChange={(e) => setSingleRoPhone(e.target.value)}
+                    placeholder="9876543210"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Initial Password (Optional)</label>
+                <input
+                  type="text"
+                  value={singleRoPassword}
+                  onChange={(e) => setSingleRoPassword(e.target.value)}
+                  placeholder="Defaults to Nit#Ro2026"
+                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAddRoModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingSingleRo}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm"
+                >
+                  {isSubmittingSingleRo ? 'Provisioning...' : 'Provision Officer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 9. CONFIRM REMOVE RELATIONSHIP OFFICER MODAL */}
+      {roPendingDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <AlertCircle size={24} />
+              <h3 className="text-base font-bold text-slate-900">Confirm RO Deactivation</h3>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to deactivate Relationship Officer <strong className="text-slate-900 font-bold">{roPendingDelete.name}</strong> ({roPendingDelete.id})? Active tickets assigned to this officer will be flagged for reassignment.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button onClick={() => setRoPendingDelete(null)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold">
+                Cancel
+              </button>
+              <button onClick={handleConfirmRemoveRo} className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold">
+                Confirm Deactivation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: VIEW FULL STUDENT MENTOR FEEDBACK */}
+      {selectedFeedbackModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
+                  <MessageSquare size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Student Mentorship Feedback</h3>
+                  <p className="text-[11px] text-slate-500">Official student observation submitted for faculty mentor</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedFeedbackModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Submitted By Student</span>
+                <div className="font-bold text-slate-900 mt-0.5">{selectedFeedbackModal.studentName || selectedFeedbackModal.student_name}</div>
+                <div className="font-mono text-blue-700 font-semibold">{selectedFeedbackModal.studentId || selectedFeedbackModal.student_id}</div>
+                {selectedFeedbackModal.student && (
+                  <div className="text-[11px] text-slate-500 mt-0.5">{selectedFeedbackModal.student.branch} • Sem {selectedFeedbackModal.student.sem}</div>
+                )}
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Assigned Faculty Mentor</span>
+                <div className="font-bold text-slate-900 mt-0.5">{selectedFeedbackModal.mentorName || selectedFeedbackModal.mentor_name}</div>
+                <div className="font-mono text-slate-600">{selectedFeedbackModal.mentorId || selectedFeedbackModal.mentor_id}</div>
+                {selectedFeedbackModal.mentor && (
+                  <div className="text-[11px] text-slate-500 mt-0.5">{selectedFeedbackModal.mentor.dept} Department</div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-xs font-bold text-slate-700">Student Feedback / Observations Narrative:</span>
+              <div className="mt-1.5 p-4 rounded-xl bg-blue-50/50 border border-blue-100 text-xs text-slate-800 leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap">
+                "{selectedFeedbackModal.fullText}"
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100">
+              <span>Date: {selectedFeedbackModal.createdAt ? new Date(selectedFeedbackModal.createdAt).toLocaleString() : 'Recent submission'}</span>
+              <button
+                onClick={() => setSelectedFeedbackModal(null)}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition"
+              >
+                Close
               </button>
             </div>
           </div>
