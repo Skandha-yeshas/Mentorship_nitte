@@ -75,14 +75,14 @@ export const ALL_CATEGORIES = [
   'Personal - Homesickness assistance'
 ];
 
-let pool;
-
+let pool = null;
+let isPgAvailable = false;
 const isLocalhost = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
 
 // Check and Create database if it doesn't exist (only on local PostgreSQL)
 const ensureDatabaseExists = async () => {
   if (!isLocalhost) return; // Managed cloud databases (Supabase, Neon) have DB already created
-  const client = new Client({ connectionString: baseConnectionString });
+  const client = new Client({ connectionString: baseConnectionString, connectionTimeoutMillis: 1500 });
   try {
     await client.connect();
     
@@ -94,9 +94,9 @@ const ensureDatabaseExists = async () => {
       console.log(`Database "${dbName}" created successfully.`);
     }
   } catch (err) {
-    console.error(`Error verifying/creating database:`, err);
+    // Gracefully ignore error when local PostgreSQL daemon is not active
   } finally {
-    await client.end();
+    try { await client.end(); } catch (e) { }
   }
 };
 
@@ -108,18 +108,26 @@ export const initDb = async () => {
   
   pool = new Pool({
     connectionString,
-    ssl: isLocalhost ? false : { rejectUnauthorized: false }
+    ssl: isLocalhost ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 1500
+  });
+
+  pool.on('error', (err) => {
+    // Catch idle client errors without crashing server process
+    isPgAvailable = false;
   });
   
   try {
     const client = await pool.connect();
+    isPgAvailable = true;
     console.log(`Connected to PostgreSQL database: "${dbName}" (SSL: ${!isLocalhost})`);
     client.release();
     
     await createTables();
     await seedTables();
   } catch (err) {
-    console.error('Failed to initialize PostgreSQL pool:', err.message);
+    isPgAvailable = false;
+    console.log('[PostgreSQL] Local database offline on port 5432. Running Express API in graceful In-Memory Demo Mode.');
   }
 };
 
@@ -421,17 +429,76 @@ const getActivePool = () => {
   if (!pool) {
     pool = new Pool({
       connectionString,
-      ssl: isLocalhost ? false : { rejectUnauthorized: false }
+      ssl: isLocalhost ? false : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 1500
     });
+    pool.on('error', () => { isPgAvailable = false; });
   }
   return pool;
 };
 
 // Generic DB Query Helper
-export const query = (text, params) => getActivePool().query(text, params);
+export const query = async (text, params) => {
+  if (!isPgAvailable) {
+    return { rows: [], rowCount: 0 };
+  }
+  return getActivePool().query(text, params);
+};
+
+export const isDbConnected = () => isPgAvailable;
+
+export const getFallbackState = () => {
+  const defaultMentors = [
+    { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026' },
+    { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026' },
+    { id: 'M103', name: 'Prof. Ramesh Rao', email: 'ramesh.rao@nitte.edu', dept: 'BCA', class: '3rd Sem BCA - Sec A', password: 'Nit#Mnt2026' },
+    { id: 'M104', name: 'Dr. Deepa Shenoy', email: 'deepa.shenoy@nitte.edu', dept: 'BBA', class: '1st Sem BBA - Sec A', password: 'Nit#Mnt2026' },
+    { id: 'M105', name: 'Prof. Raghavendra Pai', email: 'raghavendra.pai@nitte.edu', dept: 'BCOM', class: '5th Sem BCOM - Sec A', password: 'Nit#Mnt2026' },
+    { id: 'M01', name: 'Dr. Rajesh Kumar', email: 'rajesh.kumar@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Section A (28 Mentees)', password: 'Nit#Mnt2026' },
+    { id: 'M02', name: 'Prof. Sunita Sharma', email: 'sunita.sharma@nitte.edu', dept: 'ISE', class: '3rd Sem ISE - Section B (26 Mentees)', password: 'Nit#Mnt2026' }
+  ];
+
+  const defaultStudents = [
+    { id: 'S101', name: 'Aarav Mehta', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543210', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
+    { id: 'S102', name: 'Bhavana Rao', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543211', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
+    { id: 'S103', name: 'Chaitra Hegde', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543212', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
+    { id: 'S104', name: 'Daniel Dsouza', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543213', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
+    { id: 'S105', name: 'Esha Sharma', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543214', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
+    { id: 'S106', name: 'Farhan Khan', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543215', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
+    { id: 'S107', name: 'Gautam Shenoy', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543216', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
+    { id: 'S108', name: 'Harshita Pai', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543217', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' }
+  ];
+
+  const defaultRos = ALL_CATEGORIES.map((cat, i) => ({
+    id: `RO-${String(i + 1).padStart(2, '0')}`,
+    name: `RO - ${cat.split(' - ')[1]}`,
+    email: 'skandhayashu2906@gmail.com',
+    region: `${cat.split(' - ')[0]} Support Desk`,
+    password: 'Nit#Ro2026'
+  }));
+
+  return {
+    isPgConnected: false,
+    users: {
+      students: defaultStudents,
+      mentors: defaultMentors,
+      ros: defaultRos
+    },
+    issues: [],
+    meetings: [],
+    groupSessions: [],
+    resources: [],
+    mentorSessionRecords: [],
+    categoryVideos: [],
+    mentorFeedbacks: [],
+    systemLogs: []
+  };
+};
+
 export const getPool = () => getActivePool();
 export const shutdown = () => pool ? pool.end() : Promise.resolve();
 export const dropAllTables = async () => {
+  if (!isPgAvailable) return;
   await pool.query(`DROP TABLE IF EXISTS email_logs, system_logs, resources, group_sessions, meetings, issues, students, ros, mentors, mentor_session_records, mentor_feedbacks CASCADE`);
   console.log('All database tables dropped.');
 };

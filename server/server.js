@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { initDb, query, dropAllTables, seedTables, ALL_CATEGORIES } from './db.js';
+import { initDb, query, dropAllTables, seedTables, ALL_CATEGORIES, isDbConnected, getFallbackState } from './db.js';
 import { sendGmailNotification, getEmailLogs, processInboundGmailReply, GMAIL_ADDRESS } from './gmailService.js';
 import { startImapListener, getImapStatus } from './gmailImapService.js';
 
@@ -28,6 +28,7 @@ startImapListener();
 
 // Helper to log system events to PostgreSQL
 const logSystemEvent = async (text, userRole, userId) => {
+  if (!isDbConnected()) return;
   try {
     await query(
       `INSERT INTO system_logs (text, user_role, user_id) VALUES ($1, $2, $3)`,
@@ -40,6 +41,17 @@ const logSystemEvent = async (text, userRole, userId) => {
 
 // 1. GET FULL APP STATE (For quick frontend loading)
 app.get('/api/db-state', async (req, res) => {
+  if (!isDbConnected()) {
+    const fallback = getFallbackState();
+    const emailLogs = await getEmailLogs().catch(() => []);
+    return res.json({
+      ...fallback,
+      gmailAddress: GMAIL_ADDRESS,
+      gmailLogs: emailLogs,
+      imapStatus: getImapStatus()
+    });
+  }
+
   try {
     const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem, password FROM students`);
     const mentorsRes = await query(`SELECT id, name, email, dept, class, password FROM mentors`);
@@ -111,8 +123,15 @@ app.get('/api/db-state', async (req, res) => {
       imapStatus: getImapStatus()
     });
   } catch (err) {
-    console.error('Error fetching database state:', err);
-    res.status(500).json({ error: 'Database query failed' });
+    console.warn('[Server] DB query error, serving in-memory demo state:', err.message);
+    const fallback = getFallbackState();
+    const emailLogs = await getEmailLogs().catch(() => []);
+    res.json({
+      ...fallback,
+      gmailAddress: GMAIL_ADDRESS,
+      gmailLogs: emailLogs,
+      imapStatus: getImapStatus()
+    });
   }
 });
 
