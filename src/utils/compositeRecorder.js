@@ -349,7 +349,7 @@ export class CompositeMeetingRecorder {
     ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.fillText('🔒 Tamper-Proof Automated Cloud Meeting Archive • End-to-End Encrypted DTLS-SRTP Dual Recording', 16, H - 10);
-    ctx.fillText('NMAMIT', W - 60, H - 10);
+    ctx.fillText('NITTE DU', W - 60, H - 10);
   }
 
   /**

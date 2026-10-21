@@ -51,7 +51,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
               <span className="text-base sm:text-lg font-extrabold tracking-tight text-nitte-800 leading-tight">NITTE DU</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-nitte-50 text-nitte-800 font-semibold border border-nitte-200">Redressal Portal</span>
             </div>
-            <span className="text-[12px] text-slate-500 font-medium leading-none mt-0.5">NMAM Institute of Technology • Smart Mentorship System</span>
+            <span className="text-[12px] text-slate-500 font-medium leading-none mt-0.5">NITTE DU • Smart Mentorship System</span>
           </div>
         </div>
 

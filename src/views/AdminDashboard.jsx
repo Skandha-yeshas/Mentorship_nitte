@@ -684,7 +684,7 @@ export const AdminDashboard = ({ onLogout }) => {
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Deemed to be University</span>
-                <span className="text-xs text-slate-500 font-medium">NIRF Top 50 • NMAMIT Campus</span>
+                <span className="text-xs text-slate-500 font-medium">NIRF Top 50 • NITTE DU</span>
               </div>
               <h1 className="text-sm lg:text-base font-bold text-slate-900 tracking-tight flex items-center gap-1.5 mt-0.5">
                 Central Mentorship, Escalation & Academic Governance Console
@@ -1042,7 +1042,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-5">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900 tracking-tight">Academic Branch SLA & Resolution Throughput</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Real-time resolution speed across NMAMIT engineering & computer applications departments</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Real-time resolution speed across NITTE DU engineering & computer applications departments</p>
                   </div>
                   <div className="flex items-center space-x-2 text-xs">
                     <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">&lt; 24h SLA</span>
@@ -1311,7 +1311,7 @@ export const AdminDashboard = ({ onLogout }) => {
 
               {/* Table Pagination */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-                <span>Displaying {paginatedStudents.length} of <strong className="text-slate-800 font-semibold">{filteredStudents.length}</strong> registered students across NMAMIT faculties</span>
+                <span>Displaying {paginatedStudents.length} of <strong className="text-slate-800 font-semibold">{filteredStudents.length}</strong> registered students across NITTE DU faculties</span>
                 <div className="flex items-center space-x-1.5">
                   <button
                     onClick={() => setStudentPage(p => Math.max(1, p - 1))}
@@ -2063,7 +2063,7 @@ export const AdminDashboard = ({ onLogout }) => {
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-xl rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">NMAMIT Academic Program & Branch Registry</h3>
+              <h3 className="text-sm font-bold text-slate-900">NITTE DU Academic Program & Branch Registry</h3>
               <button onClick={() => setIsBranchManagerOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
