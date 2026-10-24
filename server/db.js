@@ -292,8 +292,9 @@ const createTables = async () => {
     await pool.query(`ALTER TABLE mentors ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Mnt2026'`);
     await pool.query(`ALTER TABLE ros ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Ro2026'`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS password VARCHAR(100) DEFAULT 'Nit#Stu2026'`);
-    await pool.query(`UPDATE ros SET email = 'skandhayashu2906@gmail.com' WHERE email IS NOT NULL`);
-    await pool.query(`UPDATE students SET email = 'skandhayashas2906@gmail.com' WHERE email IS NOT NULL`);
+    await pool.query(`ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS direction VARCHAR(10) DEFAULT 'OUTBOUND'`);
+    await pool.query(`ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS sender VARCHAR(150) DEFAULT 'system@nitte.edu.in'`);
+    await pool.query(`ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS recipient VARCHAR(150) DEFAULT 'student@nitte.edu.in'`);
 
     // Seed default guidance videos if not existing
     const defaultVideos = [
@@ -381,48 +382,8 @@ export const seedTables = async () => {
       [roId, name, email, region]
     );
   }
-  // 2. Seed Mentors if empty
-  const mentorCheck = await pool.query(`SELECT COUNT(*) FROM mentors`);
-  if (parseInt(mentorCheck.rows[0].count) === 0) {
-    const defaultMentors = [
-      { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026' },
-      { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026' },
-      { id: 'M103', name: 'Prof. Ramesh Rao', email: 'ramesh.rao@nitte.edu', dept: 'BCA', class: '3rd Sem BCA - Sec A', password: 'Nit#Mnt2026' },
-      { id: 'M104', name: 'Dr. Deepa Shenoy', email: 'deepa.shenoy@nitte.edu', dept: 'BBA', class: '1st Sem BBA - Sec A', password: 'Nit#Mnt2026' },
-      { id: 'M105', name: 'Prof. Raghavendra Pai', email: 'raghavendra.pai@nitte.edu', dept: 'BCOM', class: '5th Sem BCOM - Sec A', password: 'Nit#Mnt2026' },
-      { id: 'M01', name: 'Dr. Rajesh Kumar', email: 'rajesh.kumar@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Section A (28 Mentees)', password: 'Nit#Mnt2026' },
-      { id: 'M02', name: 'Prof. Sunita Sharma', email: 'sunita.sharma@nitte.edu', dept: 'ISE', class: '3rd Sem ISE - Section B (26 Mentees)', password: 'Nit#Mnt2026' }
-    ];
-    for (const m of defaultMentors) {
-      await pool.query(
-        `INSERT INTO mentors (id, name, email, dept, class, password) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
-        [m.id, m.name, m.email, m.dept, m.class, m.password]
-      );
-    }
-  }
-
-  // 3. Seed Students if empty
-  const studentCheck = await pool.query(`SELECT COUNT(*) FROM students`);
-  if (parseInt(studentCheck.rows[0].count) === 0) {
-    const defaultStudents = [
-      { id: 'S101', name: 'Aarav Mehta', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543210', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-      { id: 'S102', name: 'Bhavana Rao', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543211', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-      { id: 'S103', name: 'Chaitra Hegde', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543212', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-      { id: 'S104', name: 'Daniel Dsouza', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543213', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-      { id: 'S105', name: 'Esha Sharma', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543214', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-      { id: 'S106', name: 'Farhan Khan', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543215', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-      { id: 'S107', name: 'Gautam Shenoy', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543216', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-      { id: 'S108', name: 'Harshita Pai', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543217', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' }
-    ];
-    for (const s of defaultStudents) {
-      await pool.query(
-        `INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING`,
-        [s.id, s.name, s.email, s.mentorId, s.phone, s.branch, s.sem, s.password]
-      );
-    }
-  }
-
-  console.log('Database tables seeded with ROs, Mentors, and Students.');
+  // Mentors and students are populated dynamically via bulk upload or registration
+  console.log('Database tables verified with RO institutional desk accounts.');
 };
 
 const getActivePool = () => {
@@ -448,27 +409,6 @@ export const query = async (text, params) => {
 export const isDbConnected = () => isPgAvailable;
 
 export const getFallbackState = () => {
-  const defaultMentors = [
-    { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026' },
-    { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026' },
-    { id: 'M103', name: 'Prof. Ramesh Rao', email: 'ramesh.rao@nitte.edu', dept: 'BCA', class: '3rd Sem BCA - Sec A', password: 'Nit#Mnt2026' },
-    { id: 'M104', name: 'Dr. Deepa Shenoy', email: 'deepa.shenoy@nitte.edu', dept: 'BBA', class: '1st Sem BBA - Sec A', password: 'Nit#Mnt2026' },
-    { id: 'M105', name: 'Prof. Raghavendra Pai', email: 'raghavendra.pai@nitte.edu', dept: 'BCOM', class: '5th Sem BCOM - Sec A', password: 'Nit#Mnt2026' },
-    { id: 'M01', name: 'Dr. Rajesh Kumar', email: 'rajesh.kumar@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Section A (28 Mentees)', password: 'Nit#Mnt2026' },
-    { id: 'M02', name: 'Prof. Sunita Sharma', email: 'sunita.sharma@nitte.edu', dept: 'ISE', class: '3rd Sem ISE - Section B (26 Mentees)', password: 'Nit#Mnt2026' }
-  ];
-
-  const defaultStudents = [
-    { id: 'S101', name: 'Aarav Mehta', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543210', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-    { id: 'S102', name: 'Bhavana Rao', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543211', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-    { id: 'S103', name: 'Chaitra Hegde', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543212', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-    { id: 'S104', name: 'Daniel Dsouza', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543213', branch: 'CSE', sem: 5, password: 'Nit#Stu2026' },
-    { id: 'S105', name: 'Esha Sharma', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543214', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-    { id: 'S106', name: 'Farhan Khan', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543215', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-    { id: 'S107', name: 'Gautam Shenoy', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543216', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' },
-    { id: 'S108', name: 'Harshita Pai', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543217', branch: 'ISE', sem: 3, password: 'Nit#Stu2026' }
-  ];
-
   const defaultRos = ALL_CATEGORIES.map((cat, i) => ({
     id: `RO-${String(i + 1).padStart(2, '0')}`,
     name: `RO - ${cat.split(' - ')[1]}`,
@@ -480,8 +420,8 @@ export const getFallbackState = () => {
   return {
     isPgConnected: false,
     users: {
-      students: defaultStudents,
-      mentors: defaultMentors,
+      students: [],
+      mentors: [],
       ros: defaultRos
     },
     issues: [],

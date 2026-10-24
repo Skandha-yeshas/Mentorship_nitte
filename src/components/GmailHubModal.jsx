@@ -16,8 +16,8 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
   const [sendSuccess, setSendSuccess] = useState(false);
 
   // Simulate State
-  const [simSenderEmail, setSimSenderEmail] = useState('student.aarav@nitte.edu');
-  const [simSenderName, setSimSenderName] = useState('Aarav Mehta');
+  const [simSenderEmail, setSimSenderEmail] = useState('');
+  const [simSenderName, setSimSenderName] = useState('');
   const [simIssueId, setSimIssueId] = useState('');
   const [simReplyText, setSimReplyText] = useState('I agree with the resolution provided and approve closing the ticket.');
   const [simSuccess, setSimSuccess] = useState(false);
@@ -416,7 +416,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
                 <input
                   type="email"
                   required
-                  placeholder="e.g. student.aarav@nitte.edu"
+                  placeholder="e.g. recipient@nitte.edu.in"
                   value={composeTo}
                   onChange={(e) => setComposeTo(e.target.value)}
                   style={{

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS ros (
 CREATE TABLE IF NOT EXISTS students (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
-  email VARCHAR(100) NOT NULL DEFAULT 'skandhayashas2906@gmail.com',
+  email VARCHAR(100) NOT NULL,
   mentor_id VARCHAR(50) REFERENCES mentors(id) ON DELETE SET NULL,
   phone VARCHAR(20),
   branch VARCHAR(20),
@@ -208,35 +208,9 @@ END $$;
 
 -- ==============================================================
 -- INITIAL SEED DATA
+-- Students and Mentors are uploaded/onboarded dynamically via the application
+-- Only the 49 Dedicated Institutional Relationship Officers are initialized
 -- ==============================================================
-
--- 1. Mentors Seed
-INSERT INTO mentors (id, name, email, dept, class, password) VALUES
-('M101', 'Dr. Radhakrishnan', 'radhakrishnan@nitte.edu', 'CSE', '5th Sem CSE - Sec A', 'Nit#Mnt2026'),
-('M102', 'Dr. Preethi Hegde', 'preethi.hegde@nitte.edu', 'CSE', '3rd Sem CSE - Sec B', 'Nit#Mnt2026'),
-('M103', 'Prof. Ramesh Rao', 'ramesh.rao@nitte.edu', 'BCA', '3rd Sem BCA - Sec A', 'Nit#Mnt2026'),
-('M104', 'Dr. Deepa Shenoy', 'deepa.shenoy@nitte.edu', 'BBA', '1st Sem BBA - Sec A', 'Nit#Mnt2026'),
-('M105', 'Prof. Raghavendra Pai', 'raghavendra.pai@nitte.edu', 'BCOM', '5th Sem BCOM - Sec A', 'Nit#Mnt2026'),
-('M106', 'Prof. Suresh Kumar', 'suresh.kumar@nitte.edu', 'ECE', '3rd Sem ECE - Sec B', 'Nit#Mnt2026'),
-('M107', 'Dr. Kavitha Bhat', 'kavitha.bhat@nitte.edu', 'AIML', '7th Sem AIML - Sec A', 'Nit#Mnt2026'),
-('M108', 'Prof. Santosh Prabhu', 'santosh.prabhu@nitte.edu', 'ISE', '5th Sem ISE - Sec A', 'Nit#Mnt2026'),
-('M109', 'Prof. Anitha Rao', 'anitha.rao@nitte.edu', 'MCA', '1st Sem MCA - Sec A', 'Nit#Mnt2026'),
-('M110', 'Dr. Prakash Shetty', 'prakash.shetty@nitte.edu', 'MBA', '3rd Sem MBA - Sec A', 'Nit#Mnt2026'),
-('M01', 'Dr. Rajesh Kumar', 'rajesh.kumar@nitte.edu', 'CSE', '5th Sem CSE - Section A (28 Mentees)', 'Nit#Mnt2026'),
-('M02', 'Prof. Sunita Sharma', 'sunita.sharma@nitte.edu', 'ISE', '3rd Sem ISE - Section B (26 Mentees)', 'Nit#Mnt2026')
-ON CONFLICT (id) DO NOTHING;
-
--- 2. Students Seed
-INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password) VALUES
-('S101', 'Aarav Mehta', 'skandhayashas2906@gmail.com', 'M101', '9876543210', 'CSE', 5, 'Nit#Stu2026'),
-('S102', 'Bhavana Rao', 'skandhayashas2906@gmail.com', 'M101', '9876543211', 'CSE', 5, 'Nit#Stu2026'),
-('S103', 'Chaitra Hegde', 'skandhayashas2906@gmail.com', 'M101', '9876543212', 'CSE', 5, 'Nit#Stu2026'),
-('S104', 'Daniel Dsouza', 'skandhayashas2906@gmail.com', 'M101', '9876543213', 'CSE', 5, 'Nit#Stu2026'),
-('S105', 'Esha Sharma', 'skandhayashas2906@gmail.com', 'M102', '9876543214', 'ISE', 3, 'Nit#Stu2026'),
-('S106', 'Farhan Khan', 'skandhayashas2906@gmail.com', 'M102', '9876543215', 'ISE', 3, 'Nit#Stu2026'),
-('S107', 'Gautam Shenoy', 'skandhayashas2906@gmail.com', 'M102', '9876543216', 'ISE', 3, 'Nit#Stu2026'),
-('S108', 'Harshita Pai', 'skandhayashas2906@gmail.com', 'M102', '9876543217', 'ISE', 3, 'Nit#Stu2026')
-ON CONFLICT (id) DO NOTHING;
 
 -- 3. 49 Dedicated ROs Seed
 INSERT INTO ros (id, name, email, region, password) VALUES

@@ -406,7 +406,7 @@ export const LoginModal = ({ isOpen, onClose }) => {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Aarav Mehta"
+                  placeholder="e.g. Student Full Name"
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
                   style={{ width: '100%', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.9rem' }}

@@ -29,6 +29,7 @@ export const AdminDashboard = ({ onLogout }) => {
     assignStudentsToMentor,
     isMatchingMentorId,
     removeStudent,
+    removeAllStudents,
     removeMentor,
     removeAllMentors,
     restoreDefaultMentors,
@@ -58,6 +59,8 @@ export const AdminDashboard = ({ onLogout }) => {
   // Student Removal State
   const [studentPendingDelete, setStudentPendingDelete] = useState(null);
   const [studentDeleteSuccessMsg, setStudentDeleteSuccessMsg] = useState('');
+  const [isRemoveAllStudentsModalOpen, setIsRemoveAllStudentsModalOpen] = useState(false);
+  const [isRemovingAllStudents, setIsRemovingAllStudents] = useState(false);
 
   // Faculty Mentor Removal & Single Onboard Form State
   const [mentorPendingDelete, setMentorPendingDelete] = useState(null);
@@ -120,6 +123,14 @@ export const AdminDashboard = ({ onLogout }) => {
   const [isUploadingRoster, setIsUploadingRoster] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState('');
+
+  // Faculty Mentor Bulk Excel Import States
+  const [isMentorImportDrawerOpen, setIsMentorImportDrawerOpen] = useState(false);
+  const [mentorRosterFile, setMentorRosterFile] = useState(null);
+  const [parsedMentorRoster, setParsedMentorRoster] = useState([]);
+  const [isUploadingMentorRoster, setIsUploadingMentorRoster] = useState(false);
+  const [mentorUploadResult, setMentorUploadResult] = useState(null);
+  const [mentorUploadError, setMentorUploadError] = useState('');
 
   // Mentor Feedback Filter State
   const [mfMentorFilter, setMfMentorFilter] = useState('ALL');
@@ -598,6 +609,19 @@ export const AdminDashboard = ({ onLogout }) => {
     showToast(`Student "${name}" (${id}) removed from institutional directory.`);
   };
 
+  const handleConfirmRemoveAllStudents = async () => {
+    setIsRemovingAllStudents(true);
+    try {
+      await removeAllStudents();
+      setIsRemoveAllStudentsModalOpen(false);
+      showToast('All students removed from database and local storage.');
+    } catch (e) {
+      showToast('Failed to remove all students: ' + e.message);
+    } finally {
+      setIsRemovingAllStudents(false);
+    }
+  };
+
   const handleConfirmRemoveMentor = async () => {
     if (!mentorPendingDelete) return;
     const name = mentorPendingDelete.name;
@@ -638,8 +662,11 @@ export const AdminDashboard = ({ onLogout }) => {
         const buffer = evt.target.result;
         const wb = XLSX.read(buffer, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        setParsedRoster(data || []);
+        const rawData = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const data = (rawData || []).filter(row =>
+          row && typeof row === 'object' && Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== '')
+        );
+        setParsedRoster(data);
       } catch (err) {
         setUploadError('Failed to parse file: ' + err.message);
       }
@@ -681,17 +708,128 @@ export const AdminDashboard = ({ onLogout }) => {
   };
 
   const handleExportCredentialsCsv = () => {
-    if (!uploadResult || !uploadResult.results) return;
-    let csvContent = 'data:text/csv;charset=utf-8,Index,Student ID,Student Name,Gmail Address,Generated Password,Email Delivery Status\n';
-    uploadResult.results.forEach((row, i) => {
-      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.password || 'N/A'}","${row.emailStatus || 'DELIVERED_GMAIL'}"\n`;
+    const records = (uploadResult && Array.isArray(uploadResult.results) && uploadResult.results.length > 0)
+      ? uploadResult.results
+      : (db.users?.students || []);
+
+    if (!records || records.length === 0) {
+      showToast('No student records available to export.');
+      return;
+    }
+
+    let csvContent = 'Index,Student ID,Student Name,Gmail Address,Generated Password,Email Delivery Status\n';
+    records.forEach((row, i) => {
+      const id = String(row.id || '').replace(/"/g, '""');
+      const name = String(row.name || '').replace(/"/g, '""');
+      const email = String(row.email || '').replace(/"/g, '""');
+      const pwd = String(row.password || 'N/A').replace(/"/g, '""');
+      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
+      csvContent += `${i + 1},"${id}","${name}","${email}","${pwd}","${status}"\n`;
     });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('href', url);
     link.setAttribute('download', `nitte_student_credentials_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${records.length} student credentials to CSV.`);
+  };
+
+  // Faculty Mentor Roster Handlers
+  const handleMentorFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setMentorRosterFile(file);
+    setMentorUploadError('');
+    setMentorUploadResult(null);
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const buffer = evt.target.result;
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rawData = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const data = (rawData || []).filter(row =>
+          row && typeof row === 'object' && Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== '')
+        );
+        setParsedMentorRoster(data);
+      } catch (err) {
+        setMentorUploadError('Failed to parse file: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDownloadMentorTemplate = () => {
+    const sampleData = [
+      { 'Mentor ID': 'FAC-CSE-01', 'Faculty Name': 'Dr. Rekha Bhandary', 'Official Email': 'rekha.bhandary@nitte.edu.in', 'Department': 'CSE', 'Assigned Class / Batch': '3rd Yr CSE-A & BCA', 'Initial Password': 'Nit#Mnt2026' },
+      { 'Mentor ID': 'FAC-CSE-02', 'Faculty Name': 'Prof. Ramesh Naik', 'Official Email': 'ramesh.naik@nitte.edu.in', 'Department': 'CSE', 'Assigned Class / Batch': '5th Sem CSE-B', 'Initial Password': 'Nit#Mnt2026' },
+      { 'Mentor ID': 'FAC-BCA-01', 'Faculty Name': 'Prof. Shailaja Shetty', 'Official Email': 'shailaja.s@nitte.edu.in', 'Department': 'BCA', 'Assigned Class / Batch': '3rd Sem BCA-A', 'Initial Password': 'Nit#Mnt2026' },
+      { 'Mentor ID': 'FAC-AIML-01', 'Faculty Name': 'Dr. Pradeep Kumar', 'Official Email': 'pradeep.k@nitte.edu.in', 'Department': 'AIML', 'Assigned Class / Batch': '5th Sem AIML', 'Initial Password': 'Nit#Mnt2026' }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Faculty Mentors Roster');
+    XLSX.writeFile(wb, 'nitte_faculty_mentor_roster_specimen.xlsx');
+    showToast('Downloading official NITTE Faculty Mentor Specimen Template...');
+  };
+
+  const handleMentorRosterSubmit = async () => {
+    if (!parsedMentorRoster || parsedMentorRoster.length === 0) {
+      setMentorUploadError('Please select a valid Excel (.xlsx, .xls) or CSV file with mentor records.');
+      return;
+    }
+    setIsUploadingMentorRoster(true);
+    setMentorUploadError('');
+    try {
+      const res = await bulkUploadMentors(parsedMentorRoster);
+      setMentorUploadResult(res);
+      setParsedMentorRoster([]);
+      setMentorRosterFile(null);
+      showToast(`Mentor Batch Ingested: ${res?.count || parsedMentorRoster.length} Faculty Mentors added/updated.`);
+    } catch (err) {
+      setMentorUploadError(err.message || 'Failed to process faculty mentor roster.');
+    } finally {
+      setIsUploadingMentorRoster(false);
+    }
+  };
+
+  const handleExportMentorCredentialsCsv = () => {
+    const records = (mentorUploadResult && Array.isArray(mentorUploadResult.results) && mentorUploadResult.results.length > 0)
+      ? mentorUploadResult.results
+      : (db.users?.mentors || []);
+
+    if (!records || records.length === 0) {
+      showToast('No Faculty Mentor records available to export.');
+      return;
+    }
+
+    let csvContent = 'Index,Faculty ID,Faculty Name,Official Email,Department,Assigned Class / Batch,Generated Password,Delivery Status\n';
+    records.forEach((row, i) => {
+      const id = String(row.id || '').replace(/"/g, '""');
+      const name = String(row.name || '').replace(/"/g, '""');
+      const email = String(row.email || '').replace(/"/g, '""');
+      const dept = String(row.dept || 'CSE').replace(/"/g, '""');
+      const cls = String(row.class || '').replace(/"/g, '""');
+      const pwd = String(row.password || 'Nit#Mnt2026').replace(/"/g, '""');
+      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
+      csvContent += `${i + 1},"${id}","${name}","${email}","${dept}","${cls}","${pwd}","${status}"\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `nitte_faculty_mentor_credentials_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${records.length} mentor credentials to CSV.`);
   };
 
   // RO Roster & Modal Handlers
@@ -751,18 +889,36 @@ export const AdminDashboard = ({ onLogout }) => {
   };
 
   const handleExportRoCredentialsCsv = () => {
-    if (!roUploadResult || !roUploadResult.results) return;
-    let csvContent = 'data:text/csv;charset=utf-8,Index,RO ID,RO Name,Official Email,Domain Category,Initial Password,Delivery Status\n';
-    roUploadResult.results.forEach((row, i) => {
-      csvContent += `${i + 1},"${row.id}","${row.name}","${row.email}","${row.category || 'General'}","${row.password || 'Nit#Ro2026'}","${row.emailStatus || 'DELIVERED_GMAIL'}"\n`;
+    const records = (roUploadResult && Array.isArray(roUploadResult.results) && roUploadResult.results.length > 0)
+      ? roUploadResult.results
+      : (db.users?.ros || []);
+
+    if (!records || records.length === 0) {
+      showToast('No Relationship Officer records available to export.');
+      return;
+    }
+
+    let csvContent = 'Index,RO ID,RO Name,Official Email,Domain Category,Initial Password,Delivery Status\n';
+    records.forEach((row, i) => {
+      const id = String(row.id || '').replace(/"/g, '""');
+      const name = String(row.name || '').replace(/"/g, '""');
+      const email = String(row.email || '').replace(/"/g, '""');
+      const cat = String(row.category || row.region || 'General').replace(/"/g, '""');
+      const pwd = String(row.password || 'Nit#Ro2026').replace(/"/g, '""');
+      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
+      csvContent += `${i + 1},"${id}","${name}","${email}","${cat}","${pwd}","${status}"\n`;
     });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('href', url);
     link.setAttribute('download', `NITTE_RO_Credentials_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Exported provisioned RO LDAP credentials.');
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${records.length} RO credentials to CSV.`);
   };
 
   const handleSingleRoSubmit = async (e) => {
@@ -812,35 +968,46 @@ export const AdminDashboard = ({ onLogout }) => {
   };
 
   const handleDownloadReport = (reportType) => {
-    let csvContent = 'data:text/csv;charset=utf-8,Ticket ID,Student Name,Category,Priority,Status,Created At,Resolved At,Satisfaction\n';
+    let csvContent = 'Ticket ID,Student Name,Category,Priority,Status,Created At,Resolved At,Satisfaction\n';
     (db.issues || []).forEach(i => {
       const satisfaction = i.feedback ? i.feedback.rating : 'N/A';
       const resolved = i.resolvedAt ? new Date(i.resolvedAt).toLocaleDateString() : 'N/A';
-      csvContent += `"${i.id}","${i.studentName}","${i.category}","${i.priority}","${i.status}","${new Date(i.createdAt).toLocaleDateString()}","${resolved}","${satisfaction}"\n`;
+      const id = String(i.id || '').replace(/"/g, '""');
+      const sName = String(i.studentName || '').replace(/"/g, '""');
+      const cat = String(i.category || '').replace(/"/g, '""');
+      const prio = String(i.priority || '').replace(/"/g, '""');
+      const stat = String(i.status || '').replace(/"/g, '""');
+      csvContent += `"${id}","${sName}","${cat}","${prio}","${stat}","${new Date(i.createdAt).toLocaleDateString()}","${resolved}","${satisfaction}"\n`;
     });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('href', url);
     link.setAttribute('download', `nitte_ugc_compliance_report_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     showToast('Generating official UGC Compliance Executive Report (CSV)...');
   };
 
   const handleExportMentorFeedbacksCsv = () => {
     if (filteredMentorFeedbacks.length === 0) return;
-    let csvContent = 'data:text/csv;charset=utf-8,ID,Student Name,Student USN,Faculty Mentor Name,Mentor ID,Student Feedback Narrative,Submission Date\n';
+    let csvContent = 'ID,Student Name,Student USN,Faculty Mentor Name,Mentor ID,Student Feedback Narrative,Submission Date\n';
     filteredMentorFeedbacks.forEach((f, idx) => {
       const cleanDiff = (f.difficulties || 'Student shared positive session feedback with no concerns noted.').replace(/"/g, '""').replace(/\r?\n/g, ' ');
       const dateStr = f.createdAt ? new Date(f.createdAt).toLocaleString() : 'Recent';
       csvContent += `"${f.id || idx + 1}","${f.studentName || f.student_name || ''}","${f.studentId || f.student_id || ''}","${f.mentorName || f.mentor_name || ''}","${f.mentorId || f.mentor_id || ''}","${cleanDiff}","${dateStr}"\n`;
     });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
+    link.setAttribute('href', url);
     link.setAttribute('download', `nitte_student_mentor_feedbacks_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     showToast('Exported student mentor feedbacks to CSV.');
   };
 
@@ -1322,6 +1489,26 @@ export const AdminDashboard = ({ onLogout }) => {
               </div>
 
               <div className="flex items-center space-x-2">
+                {(db.users?.students || []).length > 0 && (
+                  <button
+                    onClick={handleExportCredentialsCsv}
+                    className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                    title="Export credentials for all current students as CSV"
+                  >
+                    <Key size={13} className="text-emerald-600" />
+                    <span>Download Passwords CSV</span>
+                  </button>
+                )}
+                {(db.users?.students || []).length > 0 && (
+                  <button
+                    onClick={() => setIsRemoveAllStudentsModalOpen(true)}
+                    className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                    title="Remove all students from database"
+                  >
+                    <Trash2 size={13} />
+                    <span>Clear All Students</span>
+                  </button>
+                )}
                 <button
                   onClick={handleDownloadTemplate}
                   className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
@@ -1410,7 +1597,16 @@ export const AdminDashboard = ({ onLogout }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {paginatedStudents.map((s) => {
+                    {filteredStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" className="py-12 text-center text-slate-400">
+                          <Users size={28} className="mx-auto mb-2 text-slate-300" />
+                          <p className="font-semibold text-slate-600 text-sm">No Students Registered</p>
+                          <p className="text-xs text-slate-400 mt-0.5">Use "Bulk Batch Import" above to ingest an Excel/CSV roster or onboard students.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedStudents.map((s) => {
                       const studentIssues = (db.issues || []).filter(i =>
                         (i.studentId || '').toLowerCase() === (s.id || '').toLowerCase() &&
                         i.status !== 'Resolved' && i.status !== 'Closed'
@@ -1488,7 +1684,7 @@ export const AdminDashboard = ({ onLogout }) => {
                           </td>
                         </tr>
                       );
-                    })}
+                    }))}
                   </tbody>
                 </table>
               </div>
@@ -1528,7 +1724,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <h2 className="text-base font-bold text-slate-900 tracking-tight">Faculty Mentorship Governance & Capacity Engine</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Enforce mandatory UGC Mentorship Ratio (&lt; 1:30) and monitor fortnightly session reports</p>
               </div>
-              <div className="flex items-center space-x-2.5">
+              <div className="flex flex-wrap items-center gap-2">
                 {(db.users?.mentors || []).length > 0 && (
                   <button
                     onClick={() => setIsRemoveAllMentorsModalOpen(true)}
@@ -1541,6 +1737,16 @@ export const AdminDashboard = ({ onLogout }) => {
                 )}
                 {(db.users?.mentors || []).length > 0 && (
                   <button
+                    onClick={handleExportMentorCredentialsCsv}
+                    className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                    title="Export credentials for all current faculty mentors as CSV"
+                  >
+                    <Key size={13} className="text-emerald-600" />
+                    <span>Download Passwords CSV</span>
+                  </button>
+                )}
+                {(db.users?.mentors || []).length > 0 && (
+                  <button
                     onClick={() => handleOpenAssignmentModal((db.users?.mentors || [])[0])}
                     className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
                   >
@@ -1549,14 +1755,151 @@ export const AdminDashboard = ({ onLogout }) => {
                   </button>
                 )}
                 <button
-                  onClick={() => setIsAddMentorModalOpen(true)}
+                  onClick={handleDownloadMentorTemplate}
+                  className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                  title="Download NITTE Faculty Mentor Excel Specimen Template"
+                >
+                  <FileSpreadsheet size={14} className="text-emerald-600" />
+                  <span>Download Specimen Template</span>
+                </button>
+                <button
+                  onClick={() => setIsMentorImportDrawerOpen(!isMentorImportDrawerOpen)}
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-blue-600/30"
+                >
+                  <Upload size={14} />
+                  <span>{isMentorImportDrawerOpen ? 'Close Roster Importer' : 'Bulk Mentor Roster Import'}</span>
+                </button>
+                <button
+                  onClick={() => setIsAddMentorModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-emerald-600/30"
                 >
                   <UserPlus size={14} />
                   <span>Onboard Faculty Mentor</span>
                 </button>
               </div>
             </div>
+
+            {/* Faculty Mentor Bulk Roster Import Drawer */}
+            {isMentorImportDrawerOpen && (
+              <div className="p-6 rounded-2xl bg-slate-50 border-2 border-dashed border-blue-400 shadow-sm transition space-y-4">
+                <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-14 h-14 rounded-2xl bg-blue-100 border border-blue-200 flex items-center justify-center text-blue-700 shrink-0">
+                      <GraduationCap size={28} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900">Import Faculty Mentor Registry (.xlsx or .csv)</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Upload official NITTE Faculty Mentors spreadsheet: Mentor ID / Faculty ID, Full Name, Official Email, Department, Assigned Class / Batch, Initial Password.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono mt-2">
+                        <span>Max file size: 25MB</span>
+                        <span>•</span>
+                        <span>Auto-creates LDAP Credentials</span>
+                        <span>•</span>
+                        <span>Direct Supabase Cloud Synchronization</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+                    <label className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-semibold cursor-pointer border border-slate-200 shadow-sm transition">
+                      <span>{mentorRosterFile ? mentorRosterFile.name : 'Choose Faculty Spreadsheet File'}</span>
+                      <input
+                        type="file"
+                        accept=".xlsx, .xls, .csv"
+                        onChange={handleMentorFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      onClick={handleMentorRosterSubmit}
+                      disabled={isUploadingMentorRoster || !parsedMentorRoster.length}
+                      className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-blue-600/20 disabled:opacity-50"
+                    >
+                      <Upload size={14} />
+                      <span>{isUploadingMentorRoster ? 'Ingesting...' : `Ingest ${parsedMentorRoster.length || 0} Faculty Records`}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {mentorUploadError && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center space-x-2">
+                    <AlertCircle size={15} />
+                    <span>{mentorUploadError}</span>
+                  </div>
+                )}
+
+                {/* Parsed Preview Table */}
+                {parsedMentorRoster.length > 0 && !mentorUploadResult && (
+                  <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                      <span>Preview of Parsed Faculty Mentor Roster ({parsedMentorRoster.length} Rows Detected)</span>
+                      <span className="text-[11px] text-slate-500 font-mono">Ready to Ingest</span>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 text-[11px]">
+                          <tr>
+                            <th className="py-2 px-3">#</th>
+                            <th className="py-2 px-3">Mentor ID</th>
+                            <th className="py-2 px-3">Faculty Name</th>
+                            <th className="py-2 px-3">Official Email</th>
+                            <th className="py-2 px-3">Department</th>
+                            <th className="py-2 px-3">Assigned Batch / Class</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-700">
+                          {parsedMentorRoster.slice(0, 10).map((r, i) => (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 font-mono text-slate-400">{i + 1}</td>
+                              <td className="py-2 px-3 font-mono font-bold text-blue-700">
+                                {r['Mentor ID'] || r['Faculty ID'] || r.id || `M-${101 + i}`}
+                              </td>
+                              <td className="py-2 px-3 font-semibold text-slate-900">
+                                {r['Faculty Name'] || r['Mentor Name'] || r.name || 'Faculty Member'}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-slate-600">
+                                {r['Official Email'] || r['Email'] || r.email || 'N/A'}
+                              </td>
+                              <td className="py-2 px-3 text-slate-700">
+                                {r['Department'] || r['Dept'] || r.dept || 'CSE'}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-slate-500">
+                                {r['Assigned Class / Batch'] || r['Assigned Batch'] || r.class || 'General Mentorship'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {parsedMentorRoster.length > 10 && (
+                        <div className="p-2 text-center text-[11px] text-slate-500 bg-slate-50 border-t border-slate-200">
+                          ... and {parsedMentorRoster.length - 10} more rows
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ingestion Results Card */}
+                {mentorUploadResult && (
+                  <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-emerald-800 font-bold">
+                        <CheckCircle2 size={16} className="text-emerald-600" />
+                        <span>Faculty Mentor Ingestion Complete: {mentorUploadResult.count || parsedMentorRoster.length} Mentors Active</span>
+                      </div>
+                      <button
+                        onClick={handleExportMentorCredentialsCsv}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                      >
+                        <Key size={13} />
+                        <span>Download Passwords CSV</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Faculty Mentor Cards Grid or Clean Empty State */}
             {(db.users?.mentors || []).length === 0 ? (
@@ -1567,7 +1910,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="max-w-md mx-auto">
                   <h3 className="text-base font-bold text-slate-900">No Faculty Mentors Active</h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    All faculty mentors have been removed. You can onboard individual faculty mentors, import a roster via Excel, or restore the official demo faculty mentors.
+                    No faculty mentors currently provisioned. You can onboard individual faculty mentors or upload a faculty roster via Excel spreadsheet.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1579,18 +1922,11 @@ export const AdminDashboard = ({ onLogout }) => {
                     <span>Onboard Faculty Mentor</span>
                   </button>
                   <button
-                    onClick={() => setIsImportDrawerOpen(true)}
+                    onClick={() => setIsMentorImportDrawerOpen(true)}
                     className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition flex items-center space-x-1.5 border border-slate-200 shadow-sm"
                   >
                     <Upload size={14} />
                     <span>Bulk Import Roster</span>
-                  </button>
-                  <button
-                    onClick={handleRestoreDefaultMentors}
-                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition flex items-center space-x-1.5 border border-slate-200 shadow-sm"
-                  >
-                    <RefreshCw size={14} />
-                    <span>Restore Default Mentors</span>
                   </button>
                 </div>
               </div>
@@ -2839,6 +3175,44 @@ export const AdminDashboard = ({ onLogout }) => {
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50 flex items-center space-x-1.5"
               >
                 {isRemovingAllMentors ? (
+                  <span>Removing...</span>
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    <span>Confirm Remove All</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7c. CONFIRM REMOVE ALL STUDENTS MODAL */}
+      {isRemoveAllStudentsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <AlertCircle size={24} />
+              <h3 className="text-base font-bold text-slate-900">Remove All Students?</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to remove <strong>all {(db.users?.students || []).length} students</strong> from both the Supabase cloud database and local storage? This action will completely purge the student roster.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsRemoveAllStudentsModalOpen(false)}
+                disabled={isRemovingAllStudents}
+                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmRemoveAllStudents}
+                disabled={isRemovingAllStudents}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50 flex items-center space-x-1.5"
+              >
+                {isRemovingAllStudents ? (
                   <span>Removing...</span>
                 ) : (
                   <>

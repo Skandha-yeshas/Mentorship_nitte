@@ -359,6 +359,36 @@ function fullStackDevPlugin() {
                 }
               }
 
+              // Direct authoritative Supabase Cloud upsert
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                const successRows = results.filter(r => r.status === 'SUCCESS');
+                if (successRows.length > 0) {
+                  await fetch(`${SUPABASE_URL}/rest/v1/students`, {
+                    method: 'POST',
+                    headers: {
+                      'apikey': SUPABASE_KEY,
+                      'Authorization': `Bearer ${SUPABASE_KEY}`,
+                      'Content-Type': 'application/json',
+                      'Prefer': 'return=representation,resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify(successRows.map(s => ({
+                      id: s.id,
+                      name: s.name,
+                      email: s.email,
+                      mentor_id: null,
+                      phone: '9876543210',
+                      branch: s.branch || 'CSE',
+                      sem: s.sem || 5,
+                      password: s.password
+                    })))
+                  });
+                }
+              } catch (e) {
+                console.warn('[Vite Dev] Supabase students upload notice:', e.message);
+              }
+
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({
                 success: true,
@@ -412,6 +442,34 @@ function fullStackDevPlugin() {
                 successCount++;
               }
 
+              // Direct authoritative Supabase Cloud upsert
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                const successRows = results.filter(r => r.status === 'SUCCESS');
+                if (successRows.length > 0) {
+                  await fetch(`${SUPABASE_URL}/rest/v1/mentors`, {
+                    method: 'POST',
+                    headers: {
+                      'apikey': SUPABASE_KEY,
+                      'Authorization': `Bearer ${SUPABASE_KEY}`,
+                      'Content-Type': 'application/json',
+                      'Prefer': 'return=representation,resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify(successRows.map(m => ({
+                      id: m.id,
+                      name: m.name,
+                      email: m.email,
+                      dept: m.dept || 'CSE',
+                      class: 'Assigned Mentees',
+                      password: m.password
+                    })))
+                  });
+                }
+              } catch (e) {
+                console.warn('[Vite Dev] Supabase mentors upload notice:', e.message);
+              }
+
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, count: successCount, results }));
             } catch (err) {
@@ -460,6 +518,33 @@ function fullStackDevPlugin() {
                 successCount++;
               }
 
+              // Direct authoritative Supabase Cloud upsert
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                const successRows = results.filter(r => r.status === 'SUCCESS');
+                if (successRows.length > 0) {
+                  await fetch(`${SUPABASE_URL}/rest/v1/ros`, {
+                    method: 'POST',
+                    headers: {
+                      'apikey': SUPABASE_KEY,
+                      'Authorization': `Bearer ${SUPABASE_KEY}`,
+                      'Content-Type': 'application/json',
+                      'Prefer': 'return=representation,resolution=merge-duplicates'
+                    },
+                    body: JSON.stringify(successRows.map(r => ({
+                      id: r.id,
+                      name: r.name,
+                      email: r.email,
+                      region: r.category,
+                      password: r.password
+                    })))
+                  });
+                }
+              } catch (e) {
+                console.warn('[Vite Dev] Supabase ros upload notice:', e.message);
+              }
+
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, count: successCount, results }));
             } catch (err) {
@@ -475,9 +560,35 @@ function fullStackDevPlugin() {
         if (req.url === '/api/admin/assign-students-to-mentor' && req.method === 'POST') {
           let body = '';
           req.on('data', chunk => { body += chunk; });
-          req.on('end', () => {
+          req.on('end', async () => {
             try {
-              const { mentorId, studentIdsToAssign = [] } = JSON.parse(body || '{}');
+              const { mentorId, studentIdsToAssign = [], studentIdsToUnassign = [] } = JSON.parse(body || '{}');
+              
+              // Direct Supabase assign / unassign
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+                if (studentIdsToAssign.length > 0) {
+                  await Promise.all(studentIdsToAssign.map(id =>
+                    fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(String(id).trim().toUpperCase())}`, {
+                      method: 'PATCH',
+                      headers: sbHeaders,
+                      body: JSON.stringify({ mentor_id: String(mentorId).trim().toUpperCase() })
+                    })
+                  ));
+                }
+                if (studentIdsToUnassign.length > 0) {
+                  await Promise.all(studentIdsToUnassign.map(id =>
+                    fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(String(id).trim().toUpperCase())}`, {
+                      method: 'PATCH',
+                      headers: sbHeaders,
+                      body: JSON.stringify({ mentor_id: null })
+                    })
+                  ));
+                }
+              } catch (e) {}
+
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ success: true, mentorId, count: studentIdsToAssign.length }));
             } catch (err) {
@@ -493,10 +604,20 @@ function fullStackDevPlugin() {
         if (req.url === '/api/admin/delete-student' && req.method === 'POST') {
           let body = '';
           req.on('data', chunk => { body += chunk; });
-          req.on('end', () => {
+          req.on('end', async () => {
             try {
               const { studentId } = JSON.parse(body || '{}');
-              res.setHeader('Content-Type', 'application/json');
+
+              // Direct Supabase delete
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                await fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(studentId)}`, {
+                  method: 'DELETE',
+                  headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+                });
+              } catch (e) {}
+
               // Forward to backend PostgreSQL server if running
               try {
                 fetch('http://localhost:5001/api/admin/delete-student', {
@@ -521,9 +642,25 @@ function fullStackDevPlugin() {
         if (req.url === '/api/admin/delete-mentor' && req.method === 'POST') {
           let body = '';
           req.on('data', chunk => { body += chunk; });
-          req.on('end', () => {
+          req.on('end', async () => {
             try {
               const { mentorId } = JSON.parse(body || '{}');
+
+              // Direct Supabase unassign & delete
+              try {
+                const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+                const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+                const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+                await fetch(`${SUPABASE_URL}/rest/v1/students?mentor_id=eq.${encodeURIComponent(mentorId)}`, {
+                  method: 'PATCH',
+                  headers: sbHeaders,
+                  body: JSON.stringify({ mentor_id: null })
+                });
+                await fetch(`${SUPABASE_URL}/rest/v1/mentors?id=eq.${encodeURIComponent(mentorId)}`, {
+                  method: 'DELETE',
+                  headers: sbHeaders
+                });
+              } catch (e) {}
 
               // Forward to backend PostgreSQL server if running
               try {
@@ -547,6 +684,21 @@ function fullStackDevPlugin() {
 
         // 9e. POST /api/admin/delete-all-mentors
         if (req.url === '/api/admin/delete-all-mentors' && req.method === 'POST') {
+          try {
+            const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+            const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+            const sbHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+            await fetch(`${SUPABASE_URL}/rest/v1/students?mentor_id=not.is.null`, {
+              method: 'PATCH',
+              headers: sbHeaders,
+              body: JSON.stringify({ mentor_id: null })
+            });
+            await fetch(`${SUPABASE_URL}/rest/v1/mentors?id=not.is.null`, {
+              method: 'DELETE',
+              headers: sbHeaders
+            });
+          } catch (e) {}
+
           try {
             fetch('http://localhost:5001/api/admin/delete-all-mentors', {
               method: 'POST',

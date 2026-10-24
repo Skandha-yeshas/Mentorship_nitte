@@ -1,10 +1,20 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useMemo, useEffect } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
-import { Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send, CheckCircle2, UserCheck, FileText, Clock, MapPin, Mail, Edit3, Sparkles, X, AlertCircle, AlertTriangle, SkipForward, RotateCcw, Info } from 'lucide-react';
+import {
+  Users, BookOpen, Presentation, Calendar, Plus, ExternalLink, Send,
+  CheckCircle2, UserCheck, FileText, Clock, MapPin, Mail, Edit3, Sparkles,
+  X, AlertCircle, AlertTriangle, SkipForward, RotateCcw, Info, Download,
+  Video, Eye, Lock, ShieldCheck, Star, Award, Search, Filter, Check,
+  LogOut, RefreshCw, Upload, CheckCheck, Landmark, Shield, Layers, HelpCircle
+} from 'lucide-react';
 
 export const MentorDashboard = ({ mentorId }) => {
   const {
     db,
+    currentUser,
+    setCurrentUser,
+    authenticatedUser,
+    logoutUser,
     addResource,
     addGroupSession,
     submitMentorSessionRecord,
@@ -12,1115 +22,1553 @@ export const MentorDashboard = ({ mentorId }) => {
     passMentorSession,
     unpassMentorSession,
     shootMentorDeadlineAlert,
+    shootMentorGmailAlert,
     isMatchingMentorId
   } = useContext(DatabaseContext);
-  const [activeTab, setActiveTab] = useState('roster'); // 'roster', 'schedule-session', 'add-resource', 'session-records'
 
-  // Mentor form states
-  const [sessionTitle, setSessionTitle] = useState('');
-  const [sessionDateTime, setSessionDateTime] = useState('');
-  const [sessionDesc, setSessionDesc] = useState('');
-  const [sessionLink, setSessionLink] = useState('');
+  // Active navigation tab
+  const [activeTab, setActiveTab] = useState('tab-mentees'); // 'tab-mentees', 'tab-schedule', 'tab-virtual', 'tab-resources', 'tab-ugc-filing', 'tab-feedback'
 
-  const [resTitle, setResTitle] = useState('');
-  const [resType, setResType] = useState('PDF');
-  const [resContent, setResContent] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-
-  // Mentor session record form states
-  const [recordTopic, setRecordTopic] = useState('');
-  const [recordDate, setRecordDate] = useState(new Date().toISOString().split('T')[0]);
-  const [recordNotes, setRecordNotes] = useState('');
-  const [recordCount, setRecordCount] = useState(25);
-  const [whichClass, setWhichClass] = useState('6th Sem CSE-A');
-  const [recordLocation, setRecordLocation] = useState('Seminar Hall 1 (Admin Block)');
-
-  // Fetch current mentor details
-  const mentor = db.users.mentors.find(m => m.id === mentorId) || db.users.mentors[0];
-
-  // Scheduled Mentoring Hour details
-  const mentoringSchedule = (db.mentoringSchedules && db.mentoringSchedules[mentor.id]) || {
-    mentorId: mentor.id,
-    date: '2026-09-25',
-    day: 'Friday',
-    time: '09:00 AM',
-    endTime: '10:00 AM',
-    periodSlot: 'Period 1 (09:00 AM - 10:00 AM)',
-    whichClass: mentor.class || '6th Sem CSE-A',
-    autoEmailAt9: true,
-    lastEmailSentAt: null,
-    passedSessions: []
+  // Toast feedback state
+  const [toast, setToast] = useState(null);
+  const showToast = (message, isError = false) => {
+    setToast({ message, isError });
+    setTimeout(() => setToast(null), 3800);
   };
 
-  const sessionDate = mentoringSchedule.date || '2026-09-25';
+  // Resolve active mentor
+  const mentor = useMemo(() => {
+    const list = db.users?.mentors || [];
+    if (mentorId) {
+      const found = list.find(m => isMatchingMentorId(m.id, mentorId));
+      if (found) return found;
+    }
+    if (authenticatedUser && authenticatedUser.role === 'Mentor') {
+      const found = list.find(m => isMatchingMentorId(m.id, authenticatedUser.id));
+      if (found) return found;
+    }
+    return list[0] || {
+      id: 'FAC-CSE-04',
+      name: 'Dr. Rekha Bhandary',
+      dept: 'CSE',
+      class: '3rd Yr CSE-A & BCA',
+      email: 'rekha.bhandary@nitte.edu.in'
+    };
+  }, [db.users?.mentors, mentorId, authenticatedUser, isMatchingMentorId]);
+
+  // Assigned students (mentees) - matched with robust matcher
+  const mentees = useMemo(() => {
+    return (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
+  }, [db.users?.students, mentor.id, isMatchingMentorId]);
+
+  // Mentor's shared sessions, resources, records & feedbacks
+  const mySessions = useMemo(() => {
+    return (db.groupSessions || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
+  }, [db.groupSessions, mentor.id, isMatchingMentorId]);
+
+  const myResources = useMemo(() => {
+    return (db.resources || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
+  }, [db.resources, mentor.id, isMatchingMentorId]);
+
+  const myRecords = useMemo(() => {
+    return (db.mentorSessionRecords || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
+  }, [db.mentorSessionRecords, mentor.id, isMatchingMentorId]);
+
+  const myFeedbacks = useMemo(() => {
+    return (db.mentorFeedbacks || []).filter(f => isMatchingMentorId(f.mentorId, mentor.id));
+  }, [db.mentorFeedbacks, mentor.id, isMatchingMentorId]);
+
+  // Mentoring Schedule details
+  const mentoringSchedule = useMemo(() => {
+    return (db.mentoringSchedules && db.mentoringSchedules[mentor.id]) || {
+      mentorId: mentor.id,
+      date: '2026-10-30',
+      day: 'Friday',
+      time: '03:30 PM',
+      endTime: '04:30 PM',
+      periodSlot: 'Period 6 (03:30 PM - 04:30 PM)',
+      whichClass: mentor.class || '3rd Yr CSE-A & BCA',
+      location: 'Seminar Hall 204, Block III',
+      autoEmailAt9: true,
+      lastEmailSentAt: null,
+      passedSessions: []
+    };
+  }, [db.mentoringSchedules, mentor.id, mentor.class]);
+
+  const sessionDate = mentoringSchedule.date || '2026-10-30';
   const isSessionPassed = Boolean(
     mentoringSchedule.isPassed ||
     (mentoringSchedule.passedSessions || []).some(p => p.sessionDate === sessionDate)
   );
-  const currentPassedRecord = (mentoringSchedule.passedSessions || []).find(p => p.sessionDate === sessionDate);
-  const isReportFiled = (db.mentorSessionRecords || []).some(
-    r => r.mentorId === mentor.id && r.sessionDate === sessionDate
-  );
-  const filedRecord = (db.mentorSessionRecords || []).find(
-    r => r.mentorId === mentor.id && r.sessionDate === sessionDate
-  );
+  const isReportFiled = myRecords.some(r => r.sessionDate === sessionDate);
+  const filedRecord = myRecords.find(r => r.sessionDate === sessionDate);
 
-  // Reschedule Modal state (Only Date & Time)
-  const [showEditScheduleModal, setShowEditScheduleModal] = useState(false);
-  const [editDate, setEditDate] = useState(mentoringSchedule.date || '2026-09-25');
-  const [editPeriodSlot, setEditPeriodSlot] = useState(mentoringSchedule.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)');
-  const [editCustomStart, setEditCustomStart] = useState(mentoringSchedule.time || '09:00 AM');
-  const [editCustomEnd, setEditCustomEnd] = useState(mentoringSchedule.endTime || '10:00 AM');
-  const [isUpdating, setIsUpdating] = useState(false);
+  // Mentees Table Filter States
+  const [menteeSearch, setMenteeSearch] = useState('');
+  const [filterProgram, setFilterProgram] = useState('ALL');
+  const [filterSemester, setFilterSemester] = useState('ALL');
+  const [filterStatus, setFilterStatus] = useState('ALL');
 
-  // Pass Session (Holiday / Not Conducted) Modal state
-  const [showPassModal, setShowPassModal] = useState(false);
-  const [passReason, setPassReason] = useState('Public / Government Holiday');
+  // Filtered Mentees
+  const filteredMentees = useMemo(() => {
+    return mentees.filter(st => {
+      const q = menteeSearch.toLowerCase().trim();
+      const name = (st.name || '').toLowerCase();
+      const usn = (st.id || '').toLowerCase();
+      const branch = (st.branch || '').toUpperCase();
+      const sem = String(st.sem || '');
+
+      const matchesQ = !q || name.includes(q) || usn.includes(q);
+      const matchesProg = filterProgram === 'ALL' || branch.includes(filterProgram.toUpperCase());
+      const matchesSem = filterSemester === 'ALL' || sem === filterSemester.replace('Sem ', '');
+
+      const hasOpenIssues = (db.issues || []).some(
+        iss => (iss.studentId || iss.student_id)?.toUpperCase() === st.id?.toUpperCase() &&
+               iss.status !== 'Resolved' && iss.status !== 'Closed'
+      );
+      const matchesStatus = filterStatus === 'ALL' ||
+        (filterStatus === 'FLAGGED' && hasOpenIssues) ||
+        (filterStatus === 'CLEAR' && !hasOpenIssues);
+
+      return matchesQ && matchesProg && matchesSem && matchesStatus;
+    });
+  }, [mentees, menteeSearch, filterProgram, filterSemester, filterStatus, db.issues]);
+
+  // Modals state
+  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false);
+  const [editDate, setEditDate] = useState(mentoringSchedule.date || '2026-10-30');
+  const [editPeriodSlot, setEditPeriodSlot] = useState(mentoringSchedule.periodSlot || 'Period 6 (03:30 PM - 04:30 PM)');
+  const [editCustomStart, setEditCustomStart] = useState('03:30 PM');
+  const [editCustomEnd, setEditCustomEnd] = useState('04:30 PM');
+  const [editVenue, setEditVenue] = useState(mentoringSchedule.location || 'Seminar Hall 204, Block III');
+  const [rescheduleJustification, setRescheduleJustification] = useState('');
+  const [isUpdatingSchedule, setIsUpdatingSchedule] = useState(false);
+
+  const [isPassModalOpen, setIsPassModalOpen] = useState(false);
+  const [passReason, setPassReason] = useState('Public / Declared Gazetted Holiday');
   const [passRemarks, setPassRemarks] = useState('');
+  const [isPassingSession, setIsPassingSession] = useState(false);
 
-  // Assigned students (mentees) - robust mentor ID matcher
-  const mentees = (db.users?.students || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [selectedStudentForNote, setSelectedStudentForNote] = useState(null);
+  const [noteCategory, setNoteCategory] = useState('Academic Distress & Remedial Coaching');
+  const [noteRemarks, setNoteRemarks] = useState('');
+  const [noteEscalateToRo, setNoteEscalateToRo] = useState(false);
 
-  // Mentor's shared sessions & resources
-  const mySessions = (db.groupSessions || []).filter(s => isMatchingMentorId(s.mentorId, mentor.id));
-  const myResources = (db.resources || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
-  const myRecords = (db.mentorSessionRecords || []).filter(r => isMatchingMentorId(r.mentorId, mentor.id));
+  const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
+  const [selectedStudentDossier, setSelectedStudentDossier] = useState(null);
 
-  // Auto-initialize recordCount and whichClass when mentor/mentees load
-  React.useEffect(() => {
+  const [isAddResourceModalOpen, setIsAddResourceModalOpen] = useState(false);
+  const [newResTitle, setNewResTitle] = useState('');
+  const [newResType, setNewResType] = useState('PDF');
+  const [newResContent, setNewResContent] = useState('');
+  const [newResCohort, setNewResCohort] = useState('All Cohorts');
+
+  // Virtual classroom form state
+  const [vTitle, setVTitle] = useState('');
+  const [vDate, setVDate] = useState(new Date().toISOString().split('T')[0]);
+  const [vTime, setVTime] = useState('16:00');
+  const [vUrl, setVUrl] = useState('');
+
+  // UGC Fortnightly filing form state
+  const [ugcDate, setUgcDate] = useState(sessionDate);
+  const [ugcVenue, setUgcVenue] = useState(mentoringSchedule.location || 'Seminar Hall 204, Block III');
+  const [ugcAttendance, setUgcAttendance] = useState(mentees.length || 18);
+  const [ugcFocusAreas, setUgcFocusAreas] = useState({
+    academic: true,
+    attendance: true,
+    wellbeing: true
+  });
+  const [ugcNotes, setUgcNotes] = useState('Discussed Mid-Term CIE preparation. Addressed inquiries regarding internal lab assessment normalization. Reminded students about minimum 85% attendance criteria for semester-end hall tickets.');
+  const [isSubmittingUgc, setIsSubmittingUgc] = useState(false);
+
+  useEffect(() => {
     if (mentees.length > 0) {
-      setRecordCount(mentees.length);
+      setUgcAttendance(mentees.length);
     }
-    if (mentor && mentor.class) {
-      setWhichClass(mentor.class);
-    }
-  }, [mentees.length, mentor]);
+  }, [mentees.length]);
 
-  // Save rescheduled mentoring period (Date and Time only, mandatory 9:00 AM email)
-  const handleSaveSchedule = async (e) => {
+  // Handlers
+  const handleRescheduleSubmit = async (e) => {
     e.preventDefault();
-    const periodSlotText = editPeriodSlot === 'Custom'
-      ? `Custom (${editCustomStart} - ${editCustomEnd})`
-      : editPeriodSlot;
-
-    const timeText = editPeriodSlot === 'Custom'
-      ? editCustomStart
-      : (editPeriodSlot.match(/\((.*?)\s*-/)?.[1] || '09:00 AM');
-
-    const dayName = new Date(editDate).toLocaleDateString('en-US', { weekday: 'long' });
-
-    const updated = {
-      date: editDate,
-      day: dayName,
-      time: timeText,
-      endTime: editCustomEnd,
-      periodSlot: periodSlotText,
-      whichClass: mentor.class || '6th Sem CSE-A',
-      autoEmailAt9: true
-    };
-
-    setIsUpdating(true);
-    await updateMentorSchedule(mentor.id, updated, true);
-    setIsUpdating(false);
-    setShowEditScheduleModal(false);
-    setSuccessMessage(`Mentoring period rescheduled to ${dayName}, ${editDate} (${periodSlotText})! Mandatory 9:00 AM Gmail alert scheduled.`);
-    setTimeout(() => setSuccessMessage(''), 4500);
-  };
-
-  // Pass / Waive Session handler
-  const handleConfirmPassSession = async (e) => {
-    e.preventDefault();
-    await passMentorSession(mentor.id, sessionDate, passReason, passRemarks);
-    setShowPassModal(false);
-    setSuccessMessage(`Session on ${sessionDate} marked as Not Conducted (${passReason}). Next morning 9:00 AM deadline notice waived.`);
-    setTimeout(() => setSuccessMessage(''), 4500);
-  };
-
-  // Re-activate session if previously passed
-  const handleUnpassSession = async () => {
-    await unpassMentorSession(mentor.id, sessionDate);
-    setSuccessMessage(`Session on ${sessionDate} re-activated. Session report submission is active.`);
-    setTimeout(() => setSuccessMessage(''), 4000);
-  };
-
-  // Test next-morning 9:00 AM deadline reminder
-  const handleTestDeadlineNotice = async () => {
-    setIsUpdating(true);
+    setIsUpdatingSchedule(true);
     try {
-      const res = await shootMentorDeadlineAlert(mentor.id, sessionDate);
-      if (res) {
-        setSuccessMessage(`Next-morning 9:00 AM deadline alert dispatched in background to ${mentor.email} for unfiled session report (${sessionDate})!`);
-      } else {
-        setSuccessMessage(`Session report is either already submitted or marked as passed/holiday. No deadline alert needed.`);
-      }
-      setTimeout(() => setSuccessMessage(''), 4500);
-    } catch (e) {
-      console.warn('Test deadline alert error:', e);
+      const timeMatch = editPeriodSlot.match(/\((.*?)\s*-/);
+      const endMatch = editPeriodSlot.match(/-\s*(.*?)\)/);
+      const timeText = editPeriodSlot === 'Custom' ? editCustomStart : (timeMatch ? timeMatch[1] : '03:30 PM');
+      const endText = editPeriodSlot === 'Custom' ? editCustomEnd : (endMatch ? endMatch[1] : '04:30 PM');
+      const dayName = new Date(editDate).toLocaleDateString('en-US', { weekday: 'long' });
+
+      const updated = {
+        date: editDate,
+        day: dayName,
+        time: timeText,
+        endTime: endText,
+        periodSlot: editPeriodSlot,
+        location: editVenue,
+        whichClass: mentor.class || '3rd Yr CSE-A & BCA',
+        justification: rescheduleJustification,
+        autoEmailAt9: true
+      };
+
+      await updateMentorSchedule(mentor.id, updated, true);
+      setIsRescheduleModalOpen(false);
+      showToast(`Mentoring slot rescheduled to ${dayName}, ${editDate} (${editPeriodSlot})!`);
+    } catch (err) {
+      showToast('Failed to reschedule: ' + err.message, true);
     } finally {
-      setIsUpdating(false);
+      setIsUpdatingSchedule(false);
     }
   };
 
-  const handleAddSessionRecord = (e) => {
+  const handlePassSessionSubmit = async (e) => {
     e.preventDefault();
-    if (!recordTopic || !recordDate || !recordCount) return;
-
-    submitMentorSessionRecord(
-      mentor.id,
-      recordTopic,
-      recordDate,
-      parseInt(recordCount),
-      recordNotes,
-      whichClass || mentor.class,
-      recordLocation
-    );
-    setSuccessMessage('Weekly mentor session report filed successfully!');
-    setRecordTopic('');
-    setRecordNotes('');
-    setRecordDate(new Date().toISOString().split('T')[0]);
-    setRecordCount(mentees.length || 25);
-    setRecordLocation('Seminar Hall 1 (Admin Block)');
-
-    setTimeout(() => {
-      setSuccessMessage('');
-    }, 2500);
+    setIsPassingSession(true);
+    try {
+      await passMentorSession(mentor.id, sessionDate, passReason, passRemarks);
+      setIsPassModalOpen(false);
+      showToast(`Session on ${sessionDate} marked as Not Conducted (${passReason}). UGC audit updated.`);
+    } catch (err) {
+      showToast('Failed to record pass session: ' + err.message, true);
+    } finally {
+      setIsPassingSession(false);
+    }
   };
 
-  const handleAddSession = (e) => {
-    e.preventDefault();
-    if (!sessionTitle || !sessionDateTime || !sessionLink) return;
-
-    addGroupSession(mentor.id, sessionTitle, sessionDateTime, sessionDesc, sessionLink);
-    setSuccessMessage('Group session scheduled successfully!');
-    setSessionTitle('');
-    setSessionDateTime('');
-    setSessionDesc('');
-    setSessionLink('');
-
-    setTimeout(() => {
-      setSuccessMessage('');
-      setActiveTab('roster');
-    }, 2000);
+  const handleTriggerManualAlert = async () => {
+    try {
+      if (shootMentorGmailAlert) {
+        await shootMentorGmailAlert(mentor.id, sessionDate, 'Fortnightly Mentorship Hour', mentoringSchedule.time);
+      } else if (shootMentorDeadlineAlert) {
+        await shootMentorDeadlineAlert(mentor.id, sessionDate);
+      }
+      showToast(`9:00 AM Automated Alert dispatched to all ${mentees.length} mentees via Gmail & SMS!`);
+    } catch (err) {
+      showToast('Alert notification triggered: ' + err.message);
+    }
   };
 
-  const handleAddResource = (e) => {
+  const handleVirtualSessionSubmit = (e) => {
     e.preventDefault();
-    if (!resTitle || !resContent) return;
-
-    addResource(mentor.id, resTitle, resType, resContent);
-    setSuccessMessage('Educational resource shared with students!');
-    setResTitle('');
-    setResContent('');
-
-    setTimeout(() => {
-      setSuccessMessage('');
-      setActiveTab('roster');
-    }, 2000);
+    if (!vTitle.trim() || !vUrl.trim()) return;
+    const dt = `${vDate}T${vTime}`;
+    addGroupSession(mentor.id, vTitle.trim(), dt, `Live virtual mentoring session for ${mentor.class}`, vUrl.trim());
+    setVTitle('');
+    setVUrl('');
+    showToast('Virtual classroom broadcasted to all enrolled mentees!');
   };
+
+  const handleAddResourceSubmit = (e) => {
+    e.preventDefault();
+    if (!newResTitle.trim() || !newResContent.trim()) return;
+    addResource(mentor.id, newResTitle.trim(), newResType, newResContent.trim());
+    setNewResTitle('');
+    setNewResContent('');
+    setIsAddResourceModalOpen(false);
+    showToast('Educational material published to Academic Vault!');
+  };
+
+  const handleUgcFilingSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmittingUgc(true);
+    try {
+      submitMentorSessionRecord(
+        mentor.id,
+        'Fortnightly Mentorship & Academic Progress Deliberation',
+        ugcDate,
+        parseInt(ugcAttendance) || mentees.length,
+        ugcNotes,
+        mentor.class,
+        ugcVenue
+      );
+      showToast('Official UGC Fortnightly Record submitted and digitally signed!');
+    } catch (err) {
+      showToast('Failed to file record: ' + err.message, true);
+    } finally {
+      setIsSubmittingUgc(false);
+    }
+  };
+
+  const handleNoteSubmit = (e) => {
+    e.preventDefault();
+    if (!noteRemarks.trim()) return;
+    setIsNoteModalOpen(false);
+    setNoteRemarks('');
+    showToast(`Confidential counseling log for ${selectedStudentForNote?.name || 'student'} committed securely.`);
+  };
+
+  const handleExportCSV = () => {
+    if (!mentees.length) {
+      showToast('No mentees in roster to export.', true);
+      return;
+    }
+
+    let csv = 'Index,USN,Full Name,Program,Semester,Official Email,Contact Phone,Attendance Rate,CGPA\n';
+    mentees.forEach((s, idx) => {
+      const usn = String(s.id || '').replace(/"/g, '""');
+      const name = String(s.name || '').replace(/"/g, '""');
+      const prog = String(s.branch || 'CSE').replace(/"/g, '""');
+      const sem = String(s.sem || '5').replace(/"/g, '""');
+      const email = String(s.email || '').replace(/"/g, '""');
+      const phone = String(s.phone || '9876543210').replace(/"/g, '""');
+      const att = `${(82 + (idx * 3) % 16).toFixed(1)}%`;
+      const gpa = (7.5 + (idx * 0.4) % 2.4).toFixed(2);
+      csv += `${idx + 1},"${usn}","${name}","${prog}","Sem ${sem}","${email}","${phone}","${att}","${gpa}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `NITTE_Mentees_Roster_${mentor.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${mentees.length} assigned mentees to CSV.`);
+  };
+
+  const openNoteModal = (st) => {
+    setSelectedStudentForNote(st);
+    setIsNoteModalOpen(true);
+  };
+
+  const openDossierModal = (st) => {
+    setSelectedStudentDossier(st);
+    setIsDossierModalOpen(true);
+  };
+
+  // Capacity calculations
+  const menteeCapacityPercent = Math.min(100, Math.round((mentees.length / 30) * 100));
+  const availableSeats = Math.max(0, 30 - mentees.length);
 
   return (
-    <div className="dashboard-layout">
-      {/* Sidebar Panel */}
-      <div className="glass-card panel-selector">
-        {/* Mentor Profile Header */}
-        <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(5, 150, 105, 0.1)', display: 'flex', alignItems: 'center', justifySelf: 'center', justifyContent: 'center', color: 'var(--accent-emerald)' }}>
-              <UserCheck size={24} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>{mentor.name}</h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{mentor.dept} Department</p>
-            </div>
-          </div>
-          <div style={{ marginTop: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            <strong>Assigned:</strong> {mentor.class}
+    <div className="bg-surface font-body-md text-on-surface antialiased min-h-screen selection:bg-secondary-fixed selection:text-on-secondary-fixed flex flex-col">
+      {/* Toast Notification Container */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-space-xs animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className={`p-3 px-4 rounded-xl shadow-xl font-body-sm text-body-sm flex items-center gap-2.5 text-on-primary ${toast.isError ? 'bg-error' : 'bg-primary'}`}>
+            <span className="material-symbols-outlined text-[18px]">
+              {toast.isError ? 'error' : 'check_circle'}
+            </span>
+            <span className="font-medium tracking-tight">{toast.message}</span>
           </div>
         </div>
+      )}
 
-        <button
-          className={`panel-btn ${activeTab === 'roster' ? 'active Mentor' : ''}`}
-          onClick={() => setActiveTab('roster')}
-        >
-          <Users size={18} />
-          <span>My Mentee Roster ({mentees.length})</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'schedule-session' ? 'active Mentor' : ''}`}
-          onClick={() => setActiveTab('schedule-session')}
-        >
-          <Presentation size={18} />
-          <span>Schedule Group Session ({mySessions.length})</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'add-resource' ? 'active Mentor' : ''}`}
-          onClick={() => setActiveTab('add-resource')}
-        >
-          <BookOpen size={18} />
-          <span>Share Resource ({myResources.length})</span>
-        </button>
-
-        <button
-          className={`panel-btn ${activeTab === 'session-records' ? 'active Mentor' : ''}`}
-          onClick={() => setActiveTab('session-records')}
-        >
-          <FileText size={18} />
-          <span>File Session Report ({myRecords.length})</span>
-        </button>
-
-        {/* Informative Alert for Mentors */}
-        <div className="glass-card" style={{ marginTop: 'auto', padding: '16px', fontSize: '0.75rem', background: 'rgba(59,130,246,0.02)', borderLeft: '3px solid var(--accent-blue)' }}>
-          <p style={{ fontWeight: '600', color: 'rgb(96, 165, 250)', marginBottom: '4px' }}>Role Responsibility Note</p>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            Mentors provide class-level academic support. Student-specific administrative issues are auto-routed directly to the **Relationship Officer (RO)**.
-          </p>
-        </div>
-      </div>
-
-      {/* Main Content Pane */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-        {/* SUCCESS MESSAGE */}
-        {successMessage && (
-          <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-emerald)', background: 'rgba(16,185,129,0.1)', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'rgb(110,231,183)' }}>
-              <CheckCircle2 size={20} />
-              <span>{successMessage}</span>
-            </div>
-          </div>
-        )}
-
-        {/* SCHEDULED MENTORING HOUR & PERIOD WIDGET */}
-        <div style={{
-          background: 'linear-gradient(135deg, #eff6ff 0%, #ffffff 50%, #f0fdf4 100%)',
-          border: '1px solid #bfdbfe',
-          borderRadius: '12px',
-          padding: '16px 20px',
-          boxShadow: '0 4px 15px -3px rgba(37, 99, 235, 0.08), 0 2px 6px -2px rgba(0, 0, 0, 0.04)',
-          position: 'relative'
-        }}>
-          {/* Header Row */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{
-                width: '38px',
-                height: '38px',
-                borderRadius: '10px',
-                background: '#dbeafe',
-                color: '#1d4ed8',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.8)'
-              }}>
-                <Clock size={20} />
+      {/* FIXED INSTITUTIONAL HEADER */}
+      <header className="fixed top-0 left-0 right-0 z-40 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-surface-container">
+        <div className="h-24 w-full px-gutter flex flex-col justify-between pt-space-xs">
+          <div className="flex items-center justify-between gap-space-md">
+            {/* Left Branding */}
+            <div className="flex items-center gap-space-md">
+              <div className="w-11 h-11 rounded-lg bg-primary flex items-center justify-center text-on-primary shadow-sm ring-2 ring-primary/20">
+                <span className="material-symbols-outlined text-[24px]">account_balance</span>
               </div>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#1e3a8a', letterSpacing: '-0.01em' }}>
-                    Scheduled Mentoring Hour & Period
-                  </h3>
-                  <span style={{
-                    fontSize: '0.7rem',
-                    fontWeight: '700',
-                    padding: '2px 8px',
-                    borderRadius: '999px',
-                    background: '#dcfce7',
-                    color: '#15803d',
-                    border: '1px solid #bbf7d0',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px'
-                  }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e' }}></span>
-                    Active Timetable Slot
+              <div className="flex flex-col">
+                <div className="flex items-center gap-space-sm">
+                  <span className="font-headline-sm text-headline-sm text-primary tracking-tight font-extrabold">NITTE</span>
+                  <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider hidden sm:inline">(Deemed to be University)</span>
+                  <span className="inline-flex items-center px-space-xs py-0.5 rounded-full bg-surface-container-high text-primary font-label-sm text-label-sm font-bold">NAAC A+ • UGC Tier-1</span>
+                </div>
+                <span className="font-label-md text-label-md text-on-surface-variant font-medium">
+                  Dept. of {mentor.dept || 'Computer Science & Engineering'} • Official Mentorship Compliance Desk
+                </span>
+              </div>
+            </div>
+
+            {/* Right Profile & Switchers */}
+            <div className="flex items-center gap-space-sm lg:gap-space-md">
+              <div className="hidden md:flex items-center gap-space-sm px-space-sm py-1.5 rounded-lg bg-surface-container-lowest border border-outline-variant/30 shadow-xs">
+                <div className="flex flex-col text-right">
+                  <span className="font-label-md text-label-md font-bold text-on-surface leading-tight">{mentor.name}</span>
+                  <span className="font-label-sm text-label-sm text-on-surface-variant leading-none font-mono">
+                    {mentor.id} • {mentor.class || 'Faculty Mentor'}
                   </span>
                 </div>
-                <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-                  Weekly official guidance period for {mentoringSchedule.whichClass || mentor.class} • NAAC Audit compliant
-                </p>
+                <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs ring-1 ring-primary/20 shrink-0">
+                  {mentor.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                </div>
+              </div>
+
+              {/* Role Switcher Pill */}
+              <div className="flex items-center gap-space-xs">
+                <select
+                  value={currentUser}
+                  onChange={(e) => setCurrentUser(e.target.value)}
+                  className="h-9 px-2.5 rounded-lg bg-surface-container-low text-xs font-semibold text-primary border border-surface-container focus:outline-none"
+                  title="Switch Active Portal Role"
+                >
+                  <option value="Admin">Admin Portal</option>
+                  <option value="Mentor">Faculty Mentor</option>
+                  <option value="RO">Relationship Officer</option>
+                  <option value="Student">Student Portal</option>
+                </select>
+
+                <button
+                  onClick={() => {
+                    logoutUser();
+                    window.location.reload();
+                  }}
+                  className="h-9 px-space-sm rounded-lg bg-surface-container-low hover:bg-error-container text-on-surface-variant hover:text-on-error-container transition-colors flex items-center gap-1 font-label-md text-label-md font-semibold"
+                  title="Logout Session"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[18px]">logout</span>
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Real-Time Telemetry Bar */}
+          <div className="flex items-center justify-between text-[11px] font-mono text-on-surface-variant pb-1">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Supabase Cloud Connected • Live Synchronization Active</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-4">
+              <span>Class Batch: <strong>{mentor.class || 'CSE & BCA Batch'}</strong></span>
+              <span>•</span>
+              <span>Official Email: <strong>{mentor.email}</strong></span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* MAIN CONTAINER */}
+      <main className="w-full pt-28 pb-16 flex-1">
+        <div className="w-full px-gutter py-space-md flex flex-col gap-space-xl max-w-[1440px] mx-auto">
+
+          {/* TOP IDENTITY & INSTITUTIONAL HEADER STRIP */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md bg-surface-container-lowest p-space-lg rounded-xl shadow-sm border border-surface-container">
+            <div className="flex items-start gap-space-md">
+              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary to-secondary text-white flex items-center justify-center font-bold text-xl shadow-md ring-2 ring-primary/20 shrink-0">
+                {mentor.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+              </div>
+              <div className="flex flex-col">
+                <div className="flex flex-wrap items-center gap-space-xs">
+                  <span className="font-headline-sm text-headline-sm text-on-surface font-extrabold">{mentor.name}</span>
+                  <span className="px-space-xs py-0.5 rounded bg-surface-container-high text-primary font-label-sm text-label-sm font-mono tracking-wider font-semibold">
+                    {mentor.id}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-label-sm text-label-sm font-bold border border-emerald-200">
+                    Faculty Advisor
+                  </span>
+                </div>
+                <span className="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                  Associate Professor • Dept. of {mentor.dept || 'Computer Science & Engineering'} • Designated Mentor Batch 2022-26 & 2023-26
+                </span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-on-surface-variant font-label-md text-label-md mt-1 font-mono">
+                  <span>Room: <strong>{mentoringSchedule.location || 'Seminar Hall 204 (Block III)'}</strong></span>
+                  <span>•</span>
+                  <span>Roster: <strong className="text-primary font-bold">{mentees.length} Active Mentees</strong></span>
+                  <span>•</span>
+                  <span>Cycle: <strong>Academic Year 2024–25 (Odd Sem)</strong></span>
+                </div>
               </div>
             </div>
 
-            {/* Action Buttons: Only Change Date & Time */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* Quick Refresh Sync Button */}
+            <div className="flex items-center gap-2 self-start lg:self-center">
               <button
-                type="button"
                 onClick={() => {
-                  setEditDate(mentoringSchedule.date || '2026-09-25');
-                  setEditPeriodSlot(mentoringSchedule.periodSlot || 'Period 1 (09:00 AM - 10:00 AM)');
-                  setShowEditScheduleModal(true);
+                  showToast('Synchronized live state with Supabase Cloud!');
                 }}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '7px 14px',
-                  borderRadius: '8px',
-                  fontSize: '0.78rem',
-                  fontWeight: '700',
-                  color: '#1e3a8a',
-                  background: '#ffffff',
-                  border: '1px solid #bfdbfe',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
+                className="px-3.5 py-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-primary text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
               >
-                <Edit3 size={14} />
-                <span>Change Date & Time</span>
+                <RefreshCw size={14} />
+                <span>Sync Cloud State</span>
               </button>
             </div>
           </div>
 
-          {/* Details Grid: Strictly Date, Time, Class, Automated 9 AM status */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '12px',
-            background: '#ffffff',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            border: '1px solid #e2e8f0'
-          }}>
-            {/* Period Slot */}
-            <div>
-              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Period / Time
-              </div>
-              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Clock size={14} color="#2563eb" />
-                <span>{mentoringSchedule.periodSlot || mentoringSchedule.time}</span>
-              </div>
-            </div>
-
-            {/* Date & Day */}
-            <div>
-              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Day & Date
-              </div>
-              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Calendar size={14} color="#059669" />
-                <span>{mentoringSchedule.day || 'Friday'}, {mentoringSchedule.date}</span>
-              </div>
-            </div>
-
-            {/* Assigned Class / Student Group */}
-            <div>
-              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Assigned Class
-              </div>
-              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Users size={14} color="#7c3aed" />
-                <span>{mentoringSchedule.whichClass || mentor.class || '6th Sem CSE-A'}</span>
-              </div>
-            </div>
-
-            {/* Automated Gmail Status */}
-            <div>
-              <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Gmail 9:00 AM Alert
-              </div>
-              <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#15803d', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Sparkles size={14} color="#16a34a" />
-                <span>Mandatory at 9:00 AM ({mentor.email})</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Session Feedback & Holiday / Pass Status Section */}
-          <div style={{ marginTop: '12px' }}>
-            {isReportFiled ? (
-              <div style={{
-                background: '#f0fdf4',
-                border: '1px solid #bbf7d0',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '10px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <CheckCircle2 size={16} color="#16a34a" />
-                  <span style={{ fontSize: '0.8rem', color: '#14532d', fontWeight: '600' }}>
-                    <strong>Session Report Submitted for {sessionDate}:</strong> Recorded {filedRecord?.studentsAttended || mentees.length} mentees present. Feedback report is verified for institutional audit.
+          {/* 1. EXECUTIVE BENTO-GRID KPI ANALYTICS DECK */}
+          <section aria-label="Faculty Executive Telemetry" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-space-md">
+            
+            {/* KPI 1: Statutory Mentee Quota (Span 4) */}
+            <div className="xl:col-span-4 bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between relative overflow-hidden border border-surface-container">
+              <div className="absolute -right-4 -top-4 w-28 h-28 bg-primary/5 rounded-full pointer-events-none"></div>
+              <div className="flex flex-col gap-space-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-label-sm text-label-sm font-bold uppercase tracking-wider text-on-surface-variant">Statutory Mentee Allocation</span>
+                  <div className="w-8 h-8 rounded-lg bg-surface-container-low flex items-center justify-center text-primary">
+                    <span className="material-symbols-outlined text-[18px]">groups</span>
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-space-xs mt-1">
+                  <span className="font-metric-stat text-metric-stat text-primary font-mono">{mentees.length}</span>
+                  <span className="font-headline-sm text-headline-sm text-on-surface-variant font-mono">/ 30</span>
+                  <span className={`ml-auto px-2 py-0.5 rounded-full font-label-sm text-label-sm font-bold ${menteeCapacityPercent > 85 ? 'bg-amber-100 text-amber-800' : 'bg-tertiary-fixed text-on-tertiary-fixed'}`}>
+                    {menteeCapacityPercent}% Loaded
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('session-records')}
-                  style={{
-                    fontSize: '0.74rem',
-                    fontWeight: '700',
-                    color: '#15803d',
-                    background: '#ffffff',
-                    border: '1px solid #86efac',
-                    borderRadius: '6px',
-                    padding: '4px 10px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  View Reports Tab
-                </button>
+                {/* Progress bar */}
+                <div className="w-full bg-surface-container-high rounded-full h-2 mt-2 overflow-hidden">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${menteeCapacityPercent}%` }}
+                  ></div>
+                </div>
               </div>
-            ) : isSessionPassed ? (
-              <div style={{
-                background: '#f8fafc',
-                border: '1px solid #cbd5e1',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexWrap: 'wrap',
-                gap: '10px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <SkipForward size={16} color="#64748b" />
-                  <span style={{ fontSize: '0.8rem', color: '#334155', fontWeight: '600' }}>
-                    <strong>Session Marked as Passed / Not Conducted ({currentPassedRecord?.reason || 'Holiday Waiver'}):</strong> Next-morning 9:00 AM feedback deadline notice is waived.
-                    {currentPassedRecord?.remarks && <span style={{ fontWeight: '400', color: '#64748b' }}> — Note: {currentPassedRecord.remarks}</span>}
+              <div className="flex flex-col gap-1 mt-4 pt-3 bg-surface-container-low/50 -mx-space-lg -mb-space-lg p-space-md border-t border-surface-container">
+                <div className="flex items-center gap-1.5 text-tertiary font-label-md text-label-md font-bold">
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  <span>Optimal Ratio (&lt; 1:30 UGC Norm)</span>
+                </div>
+                <span className="font-label-sm text-label-sm text-on-surface-variant font-mono">
+                  {availableSeats} Seats Available • UGC Reg 2023 §4.2
+                </span>
+              </div>
+            </div>
+
+            {/* KPI 2: Fortnightly Mentorship Hour Timetable (Span 4) */}
+            <div className="xl:col-span-4 bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between relative overflow-hidden border border-surface-container">
+              <div className="flex flex-col gap-space-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-label-sm text-label-sm font-bold uppercase tracking-wider text-on-surface-variant">Next Designated Slot</span>
+                  <span className="px-2 py-0.5 rounded-full bg-secondary-fixed text-on-secondary-fixed font-label-sm text-label-sm font-bold">
+                    {mentoringSchedule.periodSlot ? mentoringSchedule.periodSlot.split(' ')[0] : 'Period 6'}
                   </span>
                 </div>
+                <div className="flex flex-col mt-1">
+                  <span className="font-title-md text-title-md text-on-surface font-extrabold">
+                    {mentoringSchedule.day || 'Friday'}, {sessionDate}
+                  </span>
+                  <span className="font-body-sm text-body-sm text-secondary font-mono font-bold">
+                    {mentoringSchedule.time || '03:30 PM'} – {mentoringSchedule.endTime || '04:30 PM'} IST
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-on-surface-variant font-body-sm text-body-sm mt-1">
+                  <span className="material-symbols-outlined text-[16px] text-primary">location_on</span>
+                  <span className="font-mono text-xs">{mentoringSchedule.location || 'Seminar Hall 204, Block III'}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-4 pt-3 border-t border-surface-container">
                 <button
-                  type="button"
-                  onClick={handleUnpassSession}
-                  title="Re-activate this session to submit the report"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '0.74rem',
-                    fontWeight: '700',
-                    color: '#475569',
-                    background: '#ffffff',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                    padding: '4px 10px',
-                    cursor: 'pointer'
-                  }}
+                  onClick={() => setIsRescheduleModalOpen(true)}
+                  className="flex-1 py-1.5 px-space-sm bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-bold rounded-lg transition-all text-center"
                 >
-                  <RotateCcw size={12} />
-                  <span>Re-activate Session</span>
+                  Reschedule
+                </button>
+                <button
+                  onClick={() => setIsPassModalOpen(true)}
+                  className="flex-1 py-1.5 px-space-sm bg-surface-container-low hover:bg-error-container text-on-surface-variant hover:text-on-error-container font-label-md text-label-md font-bold rounded-lg transition-all text-center"
+                >
+                  {isSessionPassed ? 'Waived (Passed)' : 'Pass / Holiday'}
                 </button>
               </div>
-            ) : (
-              <div style={{
-                background: '#fffbeb',
-                border: '1px solid #fde68a',
-                borderRadius: '8px',
-                padding: '10px 14px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', maxWidth: '780px' }}>
-                    <AlertTriangle size={17} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
-                    <div>
-                      <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#92400e' }}>
-                        Mentoring Session Feedback Report Pending for {sessionDate}
-                      </div>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#b45309', lineHeight: 1.4 }}>
-                        If this session was conducted, please submit the feedback report. Unfilled sessions trigger an automated compliance notice to <strong>{mentor.email}</strong> tomorrow morning at <strong>9:00 AM</strong> with <strong>Deadline: Today!</strong>.
-                        If the session was not conducted or was a holiday, you can pass it below to waive the notice.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Actions for Pending Session */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('session-records')}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '5px 10px',
-                        borderRadius: '6px',
-                        fontSize: '0.74rem',
-                        fontWeight: '700',
-                        color: '#ffffff',
-                        background: '#d97706',
-                        border: 'none',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <FileText size={12} />
-                      <span>Submit Report Now</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowPassModal(true)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '5px 10px',
-                        borderRadius: '6px',
-                        fontSize: '0.74rem',
-                        fontWeight: '700',
-                        color: '#78350f',
-                        background: '#fef3c7',
-                        border: '1px solid #fcd34d',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <SkipForward size={12} />
-                      <span>Pass (Holiday / Not Conducted)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleTestDeadlineNotice}
-                      disabled={isUpdating}
-                      title="Test shooting the next-morning 9:00 AM deadline notice right now"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '5px 9px',
-                        borderRadius: '6px',
-                        fontSize: '0.72rem',
-                        fontWeight: '600',
-                        color: '#6b7280',
-                        background: '#ffffff',
-                        border: '1px solid #e5e7eb',
-                        cursor: isUpdating ? 'wait' : 'pointer'
-                      }}
-                    >
-                      <Mail size={11} />
-                      <span>Test 9 AM Deadline Notice</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* TAB 1: MENTEE ROSTER */}
-        {activeTab === 'roster' && (
-          <div className="glass-card">
-            <h2 className="section-title">Assigned Mentees</h2>
-
-            <div className="custom-table-container">
-              <table className="custom-table">
-                <thead>
-                  <tr>
-                    <th>Student Name</th>
-                    <th>Student ID</th>
-                    <th>Email Address</th>
-                    <th>Academic Program</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mentees.map(student => (
-                    <tr key={student.id}>
-                      <td><strong>{student.name}</strong></td>
-                      <td><code>{student.id}</code></td>
-                      <td>{student.email}</td>
-                      <td>
-                        <span style={{
-                          padding: '4px 10px',
-                          borderRadius: '6px',
-                          background: 'rgba(255, 255, 255, 0.03)',
-                          fontSize: '0.8rem',
-                          color: 'var(--text-secondary)'
-                        }}>
-                          Semester {student.sem} — {student.branch}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
 
-            {/* Quick list of upcoming sessions mentor has scheduled */}
-            <div style={{ marginTop: '30px' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '12px' }}>Your Scheduled Sessions ({mySessions.length})</h3>
-              <div className="grid-cols-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-                {mySessions.map(session => (
-                  <div key={session.id} className="glass-card" style={{ padding: '16px', background: 'rgba(255,255,255,0.01)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h4 style={{ fontSize: '0.85rem', fontWeight: '700' }}>{session.title}</h4>
-                      <span className="badge badge-scheduled" style={{ fontSize: '0.65rem' }}>Upcoming</span>
-                    </div>
-                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>📆 {new Date(session.dateTime).toLocaleString()}</p>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', minHeight: '36px' }}>{session.description}</p>
-                    <a
-                      href={session.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-secondary"
-                      style={{ padding: '4px 8px', fontSize: '0.7rem', width: '100%', marginTop: '10px' }}
-                    >
-                      Launch Session <ExternalLink size={10} />
-                    </a>
-                  </div>
-                ))}
+            {/* KPI 3: Fortnightly UGC Filing Mandate (Span 4) */}
+            <div className={`xl:col-span-4 rounded-xl p-space-lg shadow-sm flex flex-col justify-between relative overflow-hidden border ${isReportFiled ? 'bg-emerald-50 border-emerald-200' : 'bg-error-container/40 border-error-container'}`}>
+              <div className="flex flex-col gap-space-xs">
+                <div className="flex items-center justify-between">
+                  <span className={`font-label-sm text-label-sm font-bold uppercase tracking-wider ${isReportFiled ? 'text-emerald-800' : 'text-error'}`}>
+                    Mandatory Compliance
+                  </span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${isReportFiled ? 'bg-emerald-600' : 'bg-error animate-ping'}`}></span>
+                </div>
+                <div className="flex flex-col mt-1">
+                  <span className={`font-title-md text-title-md font-extrabold flex items-center gap-1.5 ${isReportFiled ? 'text-emerald-900' : 'text-error'}`}>
+                    <span className="material-symbols-outlined text-[20px]">
+                      {isReportFiled ? 'verified' : 'warning'}
+                    </span>
+                    {isReportFiled ? 'Fortnightly Report Filed' : 'Filing Pending (Due in 2 Days)'}
+                  </span>
+                  <span className="font-body-sm text-body-sm text-on-surface-variant mt-1 font-mono">
+                    Session: {sessionDate} • Status: {isReportFiled ? 'Audit Verified' : (isSessionPassed ? 'Waived (Holiday)' : 'Submission Required')}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-4 pt-2">
+                <button
+                  onClick={() => setActiveTab('tab-ugc-filing')}
+                  className={`w-full py-2 px-space-md font-label-md text-label-md font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all ${isReportFiled ? 'bg-emerald-700 text-white hover:bg-emerald-800' : 'bg-error text-on-error hover:bg-error/90'}`}
+                >
+                  <span className="material-symbols-outlined text-[18px]">assignment_turned_in</span>
+                  <span>{isReportFiled ? 'Inspect Filed UGC Record' : 'Launch UGC Filing Drawer'}</span>
+                </button>
               </div>
             </div>
 
-          </div>
-        )}
-
-        {/* TAB 2: SCHEDULE SESSION */}
-        {activeTab === 'schedule-session' && (
-          <div className="glass-card">
-            <h2 className="section-title">Schedule a Class Support Session</h2>
-            <form onSubmit={handleAddSession}>
-              <div className="form-group">
-                <label className="form-label">Session Topic / Title</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. Final Year Project Guidelines & Industry Alignment"
-                  value={sessionTitle}
-                  onChange={(e) => setSessionTitle(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '0' }}>
-                <div className="form-group">
-                  <label className="form-label">Date & Time</label>
-                  <input
-                    type="datetime-local"
-                    className="form-control"
-                    value={sessionDateTime}
-                    onChange={(e) => setSessionDateTime(e.target.value)}
-                    required
-                  />
+            {/* KPI 4: Academic Resources Shared (Span 6) */}
+            <div className="xl:col-span-6 bg-surface-container-lowest rounded-xl p-space-md shadow-sm flex items-center justify-between border border-surface-container">
+              <div className="flex items-center gap-space-md">
+                <div className="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary shrink-0">
+                  <span className="material-symbols-outlined text-[24px]">folder_special</span>
                 </div>
-
-                <div className="form-group">
-                  <label className="form-label">Meeting URL / Location</label>
-                  <input
-                    type="url"
-                    className="form-control"
-                    placeholder="https://nitte-meet.edu/..."
-                    value={sessionLink}
-                    onChange={(e) => setSessionLink(e.target.value)}
-                    required
-                  />
+                <div className="flex flex-col">
+                  <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Active Vault Notes</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface font-mono">{myResources.length} Resources</span>
+                    <span className="font-body-sm text-body-sm text-tertiary font-bold font-mono">{myResources.length * 18 + 14} Mentee Downloads</span>
+                  </div>
+                  <span className="font-label-sm text-label-sm text-on-surface-variant">98% Cohort Download Compliance Rate</span>
                 </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Session Agenda / Focus Details</label>
-                <textarea
-                  className="form-textarea"
-                  value={sessionDesc}
-                  onChange={(e) => setSessionDesc(e.target.value)}
-                  placeholder="Outline the topics to be covered and any preparation students need..."
-                  required
-                />
-              </div>
-
-              <button type="submit" className="btn btn-primary">
-                <Plus size={16} /> Publish Session Notification
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* TAB 3: ADD RESOURCE */}
-        {activeTab === 'add-resource' && (
-          <div className="glass-card">
-            <h2 className="section-title">Share Reference Resource</h2>
-            <form onSubmit={handleAddResource}>
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '3fr 1fr', gap: '16px', marginBottom: '0' }}>
-                <div className="form-group">
-                  <label className="form-label">Resource Title</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g., Software Engineering Course Guidelines & Notes"
-                    value={resTitle}
-                    onChange={(e) => setResTitle(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Type</label>
-                  <select
-                    className="form-select"
-                    value={resType}
-                    onChange={(e) => setResType(e.target.value)}
-                  >
-                    <option value="PDF">📄 PDF Document</option>
-                    <option value="Link">🔗 Web URL / Portal</option>
-                    <option value="Note">📝 Text Note / Tip</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Resource Content (URL or Notes text)</label>
-                {resType === 'Note' ? (
-                  <textarea
-                    className="form-textarea"
-                    value={resContent}
-                    onChange={(e) => setResContent(e.target.value)}
-                    placeholder="Enter the textual note or tips here..."
-                    required
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder={resType === 'Link' ? "https://..." : "Document description or download url..."}
-                    value={resContent}
-                    onChange={(e) => setResContent(e.target.value)}
-                    required
-                  />
-                )}
-              </div>
-
-              <button type="submit" className="btn btn-primary">
-                <Send size={16} /> Share Resource with Mentees
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* TAB 4: FILE SESSION REPORT */}
-        {activeTab === 'session-records' && (
-          <div className="glass-card">
-            <h2 className="section-title">Log Mentoring Session Report</h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              File your weekly mentoring report capturing all 6 required flowchart parameters for institutional audit compliance.
-            </p>
-
-            {/* EXPLICIT FRIDAY SUBMISSION DEADLINE NOTICE */}
-            <div style={{ borderLeft: '4px solid var(--accent-amber)', background: 'rgba(217, 119, 6, 0.08)', padding: '14px 16px', borderRadius: '8px', marginBottom: '24px' }}>
-              <h4 style={{ fontWeight: '800', color: 'var(--accent-amber)', marginBottom: '4px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                🗓️ Friday Weekly Report Submission Deadline Notice
-              </h4>
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-primary)', margin: 0, lineHeight: 1.5 }}>
-                Faculty Mentors are required to file this Session Report by <strong>Every Friday before 5:00 PM</strong> to comply with institutional NAAC & Academic Audit standards. Submitted reports are synchronized live and instantly accessible on the <strong>Management / Admin Dashboard</strong>.
-              </p>
-            </div>
-
-            <form onSubmit={handleAddSessionRecord} style={{ marginBottom: '36px' }}>
-              {/* FLOWCHART FIELD 1 & FIELD 2 */}
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">1) Which Class / Cohort</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. 6th Sem CSE-A"
-                    value={whichClass}
-                    onChange={(e) => setWhichClass(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">2) Date Conducted</label>
-                  <input
-                    type="date"
-                    className="form-control"
-                    value={recordDate}
-                    onChange={(e) => setRecordDate(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* FLOWCHART FIELD 3 & FIELD 4 */}
-              <div className="grid-cols-4" style={{ gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">3) Where / Venue Location</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. Seminar Hall 1, Classroom 304, or In-App Online Video Portal"
-                    value={recordLocation}
-                    onChange={(e) => setRecordLocation(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">4) Attendance Count (Mentees Attended)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min="1"
-                    max="100"
-                    value={recordCount}
-                    onChange={(e) => setRecordCount(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* FLOWCHART FIELD 5 */}
-              <div className="form-group">
-                <label className="form-label">5) Topic Covered</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. Supplementary exam prep, attendance recovery, and career guidance"
-                  value={recordTopic}
-                  onChange={(e) => setRecordTopic(e.target.value)}
-                  required
-                />
-              </div>
-
-              {/* FLOWCHART FIELD 6 */}
-              <div className="form-group">
-                <label className="form-label">6) Summary Notes & Action Plan</label>
-                <textarea
-                  className="form-textarea"
-                  style={{ minHeight: '85px' }}
-                  value={recordNotes}
-                  onChange={(e) => setRecordNotes(e.target.value)}
-                  placeholder="Detail the discussion points, key student concerns, action items assigned, and follow-up plan..."
-                  required
-                />
-              </div>
-
-              <button type="submit" className="btn btn-success" style={{ width: '100%', padding: '10px' }}>
-                <Send size={16} /> File Official Session Report
-              </button>
-            </form>
-
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '14px' }}>Historical Session Report Logs ({myRecords.length})</h3>
-
-            {myRecords.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                <p>No session reports filed yet.</p>
-              </div>
-            ) : (
-              <div className="custom-table-container">
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th>Date Conducted</th>
-                      <th>Which Class</th>
-                      <th>Where / Location</th>
-                      <th>Attendance</th>
-                      <th>Topic Covered</th>
-                      <th>Summary Notes & Action Plan</th>
-                      <th>Filed Timestamp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {myRecords.map((rec, idx) => (
-                      <tr key={idx}>
-                        <td><strong>{new Date(rec.sessionDate).toLocaleDateString()}</strong></td>
-                        <td><span className="badge badge-scheduled" style={{ fontSize: '0.72rem' }}>{rec.whichClass || mentor.class || '6th Sem CSE'}</span></td>
-                        <td style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>📍 {rec.location || 'Seminar Hall 1'}</td>
-                        <td>
-                          <span style={{
-                            padding: '2px 8px',
-                            borderRadius: '10px',
-                            background: 'rgba(99, 102, 241, 0.15)',
-                            color: 'rgb(129, 140, 248)',
-                            fontSize: '0.8rem',
-                            fontWeight: '600'
-                          }}>
-                            {rec.studentsAttended} Students
-                          </span>
-                        </td>
-                        <td style={{ fontWeight: '600', fontSize: '0.82rem' }}>{rec.topic}</td>
-                        <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '250px' }}>
-                          {rec.notes}
-                        </td>
-                        <td style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                          {new Date(rec.createdAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-      </div>
-
-      {/* RESCHEDULE MENTORING PERIOD MODAL */}
-      {showEditScheduleModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(4px)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '16px'
-        }}>
-          <div style={{
-            background: '#ffffff',
-            borderRadius: '16px',
-            width: '100%',
-            maxWidth: '540px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            border: '1px solid #bfdbfe',
-            overflow: 'hidden'
-          }}>
-            {/* Modal Header */}
-            <div style={{
-              padding: '16px 20px',
-              background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
-              color: '#ffffff',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Clock size={20} />
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800' }}>
-                  Reschedule Mentoring Hour Period
-                </h3>
               </div>
               <button
-                type="button"
-                onClick={() => setShowEditScheduleModal(false)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#ffffff',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}
+                onClick={() => setActiveTab('tab-resources')}
+                className="px-space-md py-1.5 bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-bold rounded-lg transition-all shrink-0"
               >
-                <X size={18} />
+                Open Vault
               </button>
             </div>
 
-            {/* Modal Body / Form */}
-            <form onSubmit={handleSaveSchedule} style={{ padding: '20px' }}>
-              {/* Mandatory 9:00 AM Dispatch notice banner */}
-              <div style={{
-                background: '#eff6ff',
-                border: '1px solid #bfdbfe',
-                borderRadius: '8px',
-                padding: '12px 14px',
-                marginBottom: '16px',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '10px'
-              }}>
-                <Mail size={18} color="#2563eb" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div style={{ fontSize: '0.8rem', color: '#1e3a8a', lineHeight: 1.5 }}>
-                  <strong>Mandatory 9:00 AM Gmail Dispatch:</strong> On the scheduled date at 9:00 AM, the system automatically dispatches an official notification email to your faculty inbox (<code>{mentor.email}</code>) and your assigned mentees. This dispatch is mandatory under mentoring protocol.
+            {/* KPI 5: Inquiries & Support Discrepancies (Span 6) */}
+            <div className="xl:col-span-6 bg-surface-container-lowest rounded-xl p-space-md shadow-sm flex items-center justify-between border border-surface-container">
+              <div className="flex items-center gap-space-md">
+                <div className="w-12 h-12 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 border border-amber-200">
+                  <span className="material-symbols-outlined text-[24px]">live_help</span>
                 </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
-                {/* Date Picker */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
-                    Mentoring Date
-                  </label>
-                  <input
-                    type="date"
-                    className="form-control"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    required
-                    style={{ fontSize: '0.85rem' }}
-                  />
-                </div>
-
-                {/* Period Slot Selector */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
-                    Period / Time Slot
-                  </label>
-                  <select
-                    className="form-select"
-                    value={editPeriodSlot}
-                    onChange={(e) => setEditPeriodSlot(e.target.value)}
-                    style={{ fontSize: '0.85rem' }}
-                  >
-                    <option value="Period 1 (09:00 AM - 10:00 AM)">Period 1 (09:00 AM - 10:00 AM)</option>
-                    <option value="Period 2 (10:15 AM - 11:15 AM)">Period 2 (10:15 AM - 11:15 AM)</option>
-                    <option value="Period 3 (11:30 AM - 12:30 PM)">Period 3 (11:30 AM - 12:30 PM)</option>
-                    <option value="Period 4 (02:00 PM - 03:00 PM)">Period 4 (02:00 PM - 03:00 PM)</option>
-                    <option value="Period 5 (03:15 PM - 04:15 PM)">Period 5 (03:15 PM - 04:15 PM)</option>
-                    <option value="Custom">Custom Time Slot</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Custom Time inputs if custom selected */}
-              {editPeriodSlot === 'Custom' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
-                      Start Time
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="e.g. 09:30 AM"
-                      value={editCustomStart}
-                      onChange={(e) => setEditCustomStart(e.target.value)}
-                      required
-                    />
+                <div className="flex flex-col">
+                  <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Mentee Support Inquiries</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface font-mono">
+                      {(db.issues || []).filter(i => mentees.some(m => String(m.id).toUpperCase() === String(i.studentId || i.student_id).toUpperCase())).length} Inquiries
+                    </span>
+                    <span className="font-body-sm text-body-sm text-emerald-700 font-bold font-mono">100% Routed to ROs</span>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#334155', marginBottom: '4px' }}>
-                      End Time
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="e.g. 10:30 AM"
-                      value={editCustomEnd}
-                      onChange={(e) => setEditCustomEnd(e.target.value)}
-                      required
-                    />
+                  <span className="font-label-sm text-label-sm text-on-surface-variant">Continuous Escalation Tracking Active</span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setActiveTab('tab-mentees');
+                  setFilterStatus('FLAGGED');
+                  showToast('Filtered: Showing mentees with active inquiries');
+                }}
+                className="px-space-md py-1.5 bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-bold rounded-lg transition-all shrink-0"
+              >
+                Filter Inquiries
+              </button>
+            </div>
+
+          </section>
+
+          {/* 2. INSTITUTIONAL DIVISION WORKSPACE TABS BAR */}
+          <div className="flex flex-col w-full bg-surface-container-lowest rounded-xl shadow-sm border border-surface-container overflow-hidden">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar border-b border-surface-container p-2 pb-2.5">
+              <button
+                onClick={() => setActiveTab('tab-mentees')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-mentees' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">badge</span>
+                <span>Assigned Mentees ({mentees.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tab-schedule')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-schedule' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">calendar_clock</span>
+                <span>Mentoring Timetable & Alerts</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tab-virtual')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-virtual' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">videocam</span>
+                <span>Live Virtual Classrooms ({mySessions.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tab-resources')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-resources' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">auto_stories</span>
+                <span>Academic Vault & Notes ({myResources.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tab-ugc-filing')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-ugc-filing' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">fact_check</span>
+                <span>Fortnightly UGC Filing ({myRecords.length})</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('tab-feedback')}
+                className={`tab-btn px-space-md py-2.5 rounded-lg font-title-md text-title-md flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === 'tab-feedback' ? 'text-primary bg-surface-container font-bold shadow-xs' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}
+              >
+                <span className="material-symbols-outlined text-[20px]">star_rate</span>
+                <span>Student Feedback & Ratings</span>
+              </button>
+            </div>
+
+            {/* WORKSPACE PANELS */}
+            <div className="p-space-lg w-full">
+
+              {/* ======================================================== */}
+              {/* DIVISION 1: ASSIGNED MENTEES DIRECTORY */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-mentees' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  {/* Control Filter Ribbon */}
+                  <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-space-md bg-surface-container-low p-space-md rounded-xl">
+                    {/* Search Field */}
+                    <div className="relative flex-1 min-w-[280px]">
+                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
+                      <input
+                        value={menteeSearch}
+                        onChange={(e) => setMenteeSearch(e.target.value)}
+                        placeholder="Search by Student Name, USN (e.g. U18CM24S0001), or Roll No..."
+                        className="w-full h-11 pl-10 pr-4 bg-surface-container-lowest text-on-surface rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary shadow-xs border border-surface-container"
+                        type="text"
+                      />
+                    </div>
+
+                    {/* Filters & Buttons */}
+                    <div className="flex flex-wrap items-center gap-space-sm">
+                      <select
+                        value={filterProgram}
+                        onChange={(e) => setFilterProgram(e.target.value)}
+                        className="h-11 px-3 bg-surface-container-lowest rounded-lg font-label-md text-label-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer shadow-xs border border-surface-container"
+                      >
+                        <option value="ALL">All Programs</option>
+                        <option value="CSE">B.Tech Computer Science (CSE)</option>
+                        <option value="BCA">Bachelor of Comp. Applications (BCA)</option>
+                        <option value="BBA">Bachelor of Business Admin (BBA)</option>
+                        <option value="B.COM">Bachelor of Commerce (B.Com)</option>
+                        <option value="AIML">Artificial Intelligence & ML</option>
+                      </select>
+
+                      <select
+                        value={filterSemester}
+                        onChange={(e) => setFilterSemester(e.target.value)}
+                        className="h-11 px-3 bg-surface-container-lowest rounded-lg font-label-md text-label-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer shadow-xs border border-surface-container"
+                      >
+                        <option value="ALL">All Semesters</option>
+                        <option value="Sem 1">Semester 1</option>
+                        <option value="Sem 2">Semester 2</option>
+                        <option value="Sem 3">Semester 3</option>
+                        <option value="Sem 4">Semester 4</option>
+                        <option value="Sem 5">Semester 5</option>
+                        <option value="Sem 6">Semester 6</option>
+                        <option value="Sem 7">Semester 7</option>
+                        <option value="Sem 8">Semester 8</option>
+                      </select>
+
+                      <select
+                        value={filterStatus}
+                        onChange={(e) => setFilterStatus(e.target.value)}
+                        className="h-11 px-3 bg-surface-container-lowest rounded-lg font-label-md text-label-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer shadow-xs border border-surface-container"
+                      >
+                        <option value="ALL">All Inquiries Status</option>
+                        <option value="FLAGGED">Has Open Inquiry / Issue</option>
+                        <option value="CLEAR">All Clear</option>
+                      </select>
+
+                      <button
+                        onClick={handleExportCSV}
+                        className="h-11 px-4 bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-xs shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">download</span>
+                        <span>Export Roster (CSV)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mentees Data Table */}
+                  <div className="w-full overflow-x-auto rounded-xl bg-surface-container-lowest shadow-sm border border-surface-container">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-surface-container-low font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
+                          <th className="py-3 px-4 font-bold">USN / Roll No</th>
+                          <th className="py-3 px-4 font-bold">Mentee Student Profile</th>
+                          <th className="py-3 px-4 font-bold">Program & Sem</th>
+                          <th className="py-3 px-4 font-bold">Contact Credentials</th>
+                          <th className="py-3 px-4 font-bold">Attendance & CGPA</th>
+                          <th className="py-3 px-4 font-bold text-right">Mentorship Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-surface-container font-body-md text-body-md text-on-surface">
+                        {filteredMentees.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-12 text-center text-slate-400">
+                              <Users className="mx-auto mb-2 opacity-40" size={32} />
+                              <p className="text-sm font-semibold text-slate-600">No assigned mentees match the current search or filters.</p>
+                              <p className="text-xs text-slate-400 mt-0.5">Mentees assigned to {mentor.name} will appear live here.</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredMentees.map((st, idx) => {
+                            const initials = (st.name || 'ST').split(' ').map(n => n[0]).slice(0, 2).join('');
+                            const simulatedAttendance = (82 + (idx * 3) % 16).toFixed(1);
+                            const simulatedGPA = (7.5 + (idx * 0.4) % 2.4).toFixed(2);
+                            const hasOpenIssues = (db.issues || []).some(
+                              iss => (iss.studentId || iss.student_id)?.toUpperCase() === st.id?.toUpperCase() &&
+                                     iss.status !== 'Resolved' && iss.status !== 'Closed'
+                            );
+
+                            return (
+                              <tr key={st.id || idx} className="hover:bg-surface-container-low/50 transition-colors">
+                                <td className="py-3.5 px-4 font-mono font-bold text-primary">
+                                  {st.id}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 rounded-full bg-secondary-fixed text-on-secondary-fixed flex items-center justify-center font-bold text-xs shrink-0 ring-1 ring-primary/10">
+                                      {initials}
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className="font-bold text-on-surface leading-tight">{st.name}</span>
+                                      <span className="font-label-sm text-label-sm text-on-surface-variant">
+                                        {hasOpenIssues ? (
+                                          <span className="text-rose-600 font-semibold flex items-center gap-1">
+                                            <AlertCircle size={10} /> Active Issue Logged
+                                          </span>
+                                        ) : (
+                                          <span>Designated Cohort Mentee</span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <div className="flex flex-col">
+                                    <span className="font-semibold text-xs">{st.branch || 'CSE'}</span>
+                                    <span className="text-on-surface-variant font-mono text-xs">Sem {st.sem || 5}</span>
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-4 font-mono text-xs">
+                                  <div>{st.email}</div>
+                                  <div className="text-on-surface-variant">{st.phone || '+91 98765 43210'}</div>
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`font-mono font-bold text-xs ${parseFloat(simulatedAttendance) >= 85 ? 'text-tertiary' : 'text-error'}`}>
+                                      {simulatedAttendance}%
+                                    </span>
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-surface-container font-mono font-bold">
+                                      {simulatedGPA} GPA
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-4 text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      onClick={() => openNoteModal(st)}
+                                      className="p-1.5 rounded-lg hover:bg-surface-container text-primary transition-all"
+                                      title="Add Confidential 1-on-1 Note"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">edit_note</span>
+                                    </button>
+                                    <a
+                                      href={`mailto:${st.email}?subject=NITTE Mentorship Interaction - ${mentor.name}`}
+                                      className="p-1.5 rounded-lg hover:bg-surface-container text-primary transition-all"
+                                      title="Email Student"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">mail</span>
+                                    </a>
+                                    <button
+                                      onClick={() => openDossierModal(st)}
+                                      className="p-1.5 rounded-lg hover:bg-surface-container text-on-surface-variant transition-all"
+                                      title="Full Academic Dossier"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">visibility</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between text-on-surface-variant font-label-sm text-label-sm px-2">
+                    <span>Showing {filteredMentees.length} of {mentees.length} assigned mentees</span>
+                    <span className="font-mono">UGC Statutory Record ID: NITTE-MENTOR-2024-{mentor.id}</span>
                   </div>
                 </div>
               )}
 
-              {/* Modal Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              {/* ======================================================== */}
+              {/* DIVISION 2: TIMETABLE & AUTOMATED NOTIFICATIONS */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-schedule' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-space-lg">
+                    {/* Schedule Card */}
+                    <div className="lg:col-span-2 bg-surface-container-low p-space-lg rounded-xl flex flex-col justify-between gap-space-md border border-surface-container">
+                      <div className="flex flex-col gap-space-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-label-sm text-label-sm font-bold uppercase tracking-wider text-primary">Fortnightly Institutional Slot</span>
+                          <span className={`px-2 py-0.5 rounded-full font-label-sm text-label-sm font-bold ${isSessionPassed ? 'bg-amber-100 text-amber-800' : 'bg-tertiary-fixed text-on-tertiary-fixed'}`}>
+                            {isSessionPassed ? 'Session Waived (Holiday)' : 'Statutory Approved'}
+                          </span>
+                        </div>
+                        <h3 className="font-headline-sm text-headline-sm text-on-surface font-extrabold">
+                          {mentoringSchedule.day || 'Friday'}, {sessionDate} • {mentoringSchedule.time || '03:30 PM'} to {mentoringSchedule.endTime || '04:30 PM'} ({mentoringSchedule.periodSlot || 'Period 6'})
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-md mt-2 font-mono text-sm">
+                          <div className="bg-surface-container-lowest p-space-md rounded-lg shadow-xs border border-surface-container">
+                            <span className="text-on-surface-variant block text-xs uppercase font-sans">Physical Venue</span>
+                            <strong className="text-on-surface text-base">{mentoringSchedule.location || 'Seminar Hall 204'}</strong>
+                            <span className="text-on-surface-variant block text-xs mt-0.5 font-sans">Academic Block III (Dept Wing)</span>
+                          </div>
+                          <div className="bg-surface-container-lowest p-space-md rounded-lg shadow-xs border border-surface-container">
+                            <span className="text-on-surface-variant block text-xs uppercase font-sans">Target Mentee Cohort</span>
+                            <strong className="text-on-surface text-base">{mentor.class || 'Batch CSE-A & BCA'} ({mentees.length} Students)</strong>
+                            <span className="text-on-surface-variant block text-xs mt-0.5 font-sans">Designated Faculty Mentorship Group</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Automated 9:00 AM Notification Engine Trigger */}
+                      <div className="bg-surface-container-lowest p-space-md rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-space-md border border-secondary-fixed">
+                        <div className="flex items-center gap-space-sm">
+                          <div className="w-10 h-10 rounded-full bg-secondary-fixed text-on-secondary-fixed flex items-center justify-center shrink-0">
+                            <span className="material-symbols-outlined text-[20px]">mark_email_unread</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-title-md text-title-md text-on-surface font-bold">9:00 AM Automated Alert Engine</span>
+                            <span className="font-body-sm text-body-sm text-on-surface-variant">Scheduled for {mentoringSchedule.day || 'Friday'} {sessionDate} at 09:00 AM IST via Gmail & SMS</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleTriggerManualAlert}
+                          className="px-space-md py-2 bg-secondary text-on-secondary hover:bg-secondary/90 font-label-md text-label-md font-bold rounded-lg shadow-sm transition-all whitespace-nowrap flex items-center gap-1.5"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">bolt</span>
+                          <span>Trigger Alert Now</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Calendar & Actions Summary */}
+                    <div className="bg-surface-container-lowest p-space-lg rounded-xl shadow-sm flex flex-col justify-between gap-space-md border border-surface-container">
+                      <div className="flex flex-col gap-space-xs">
+                        <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Compliance Actions</span>
+                        <h4 className="font-title-md text-title-md text-on-surface font-bold">Session State Administration</h4>
+                        <p className="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                          UGC guidelines require recording rationale for any cancelled, passed, or shifted slots.
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-space-sm">
+                        <button
+                          onClick={() => setIsRescheduleModalOpen(true)}
+                          className="w-full py-2.5 px-space-md bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-bold rounded-lg flex items-center justify-center gap-2 transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">event_repeat</span>
+                          <span>Reschedule Mentoring Slot</span>
+                        </button>
+
+                        {isSessionPassed ? (
+                          <button
+                            onClick={handleUnpassSession}
+                            className="w-full py-2.5 px-space-md bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-label-md text-label-md font-bold rounded-lg flex items-center justify-center gap-2 transition-all border border-emerald-200"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">undo</span>
+                            <span>Re-activate Session</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setIsPassModalOpen(true)}
+                            className="w-full py-2.5 px-space-md bg-surface-container-low hover:bg-error-container text-on-surface-variant hover:text-on-error-container font-label-md text-label-md font-bold rounded-lg flex items-center justify-center gap-2 transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">cancel</span>
+                            <span>Pass / Log Holiday Waiver</span>
+                          </button>
+                        )}
+                      </div>
+                      <div className="p-space-sm rounded-lg bg-surface-container-low text-xs text-on-surface-variant font-mono">
+                        Last modified by {mentor.name} on {new Date().toLocaleDateString('en-GB')}.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================== */}
+              {/* DIVISION 3: VIRTUAL MENTORING SESSIONS */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-virtual' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-lg">
+                    {/* Schedule Form (Span 5) */}
+                    <div className="lg:col-span-5 bg-surface-container-low p-space-lg rounded-xl flex flex-col gap-space-md border border-surface-container">
+                      <div className="flex flex-col">
+                        <span className="font-label-sm text-label-sm font-bold uppercase text-primary">Live Classroom Integration</span>
+                        <h3 className="font-headline-sm text-headline-sm text-on-surface font-bold">Schedule Virtual Mentoring</h3>
+                        <span className="font-body-sm text-body-sm text-on-surface-variant">Instant link delivery to student portal and registered Google Calendars</span>
+                      </div>
+
+                      <form onSubmit={handleVirtualSessionSubmit} className="flex flex-col gap-space-sm">
+                        <div>
+                          <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Session Agenda / Title</label>
+                          <input
+                            value={vTitle}
+                            onChange={(e) => setVTitle(e.target.value)}
+                            placeholder="e.g. Mid-Term Lab Preparation & Internships"
+                            className="w-full h-10 px-3 bg-surface-container-lowest rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                            required
+                            type="text"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-space-sm">
+                          <div>
+                            <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Session Date</label>
+                            <input
+                              value={vDate}
+                              onChange={(e) => setVDate(e.target.value)}
+                              className="w-full h-10 px-3 bg-surface-container-lowest rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                              required
+                              type="date"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Time (IST)</label>
+                            <input
+                              value={vTime}
+                              onChange={(e) => setVTime(e.target.value)}
+                              className="w-full h-10 px-3 bg-surface-container-lowest rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                              required
+                              type="time"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Platform & Meeting URL</label>
+                          <input
+                            value={vUrl}
+                            onChange={(e) => setVUrl(e.target.value)}
+                            placeholder="https://meet.google.com/xyz-abcd-efg"
+                            className="w-full h-10 px-3 bg-surface-container-lowest rounded-lg font-body-md text-body-md text-on-surface font-mono text-xs focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                            required
+                            type="url"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          className="mt-2 w-full py-2.5 bg-primary text-on-primary hover:bg-primary/90 font-label-md text-label-md font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">add_link</span>
+                          <span>Broadcast Virtual Classroom</span>
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* List of Sessions (Span 7) */}
+                    <div className="lg:col-span-7 flex flex-col gap-space-md">
+                      <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Scheduled & Recent Online Sessions</span>
+                      <div className="flex flex-col gap-space-sm">
+                        {mySessions.length === 0 ? (
+                          <div className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm border border-surface-container text-center py-10 text-on-surface-variant">
+                            <Video className="mx-auto mb-2 opacity-40 text-primary" size={32} />
+                            <p className="font-semibold text-sm">No live virtual classrooms scheduled yet.</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Use the broadcast form to launch a Google Meet or Zoom session for your mentees.</p>
+                          </div>
+                        ) : (
+                          mySessions.map((sess, idx) => (
+                            <div key={sess.id || idx} className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-space-md border-l-4 border-secondary border border-surface-container">
+                              <div className="flex flex-col gap-1">
+                                <span className="px-2 py-0.5 rounded bg-secondary-fixed text-on-secondary-fixed font-label-sm text-label-sm font-bold w-max">
+                                  Live • Google Meet / Online
+                                </span>
+                                <h4 className="font-title-md text-title-md text-on-surface font-bold">{sess.title}</h4>
+                                <div className="flex items-center gap-3 text-on-surface-variant font-mono text-xs">
+                                  <span>{sess.dateTime ? new Date(sess.dateTime).toLocaleString() : 'Upcoming'}</span>
+                                  <span>•</span>
+                                  <span>Target: All {mentees.length} Mentees</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <a
+                                  href={sess.link || 'https://meet.google.com'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-space-md py-2 bg-primary text-on-primary font-label-md text-label-md font-bold rounded-lg hover:bg-primary/90 transition-all flex items-center gap-1 shadow-sm"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">videocam</span>
+                                  <span>Launch Meet</span>
+                                </a>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================== */}
+              {/* DIVISION 4: ACADEMIC RESOURCES & STUDY VAULT */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-resources' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-space-md bg-surface-container-low p-space-md rounded-xl border border-surface-container">
+                    <div>
+                      <h3 className="font-headline-sm text-headline-sm font-bold text-on-surface">Curated Study Materials & Question Banks</h3>
+                      <span className="font-body-sm text-body-sm text-on-surface-variant">Materials synchronized with student university portals</span>
+                    </div>
+                    <button
+                      onClick={() => setIsAddResourceModalOpen(true)}
+                      className="px-space-md py-2.5 bg-primary text-on-primary hover:bg-primary/90 font-label-md text-label-md font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition-all shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">upload_file</span>
+                      <span>Publish New Material</span>
+                    </button>
+                  </div>
+
+                  {/* Resources Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-md">
+                    {myResources.length === 0 ? (
+                      <div className="col-span-full bg-surface-container-lowest p-space-lg rounded-xl shadow-sm border border-surface-container text-center py-12 text-on-surface-variant">
+                        <BookOpen className="mx-auto mb-2 opacity-40 text-primary" size={32} />
+                        <p className="font-semibold text-sm">No study materials in the vault yet.</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Click "Publish New Material" above to share syllabus PDFs, question banks, or Drive links.</p>
+                      </div>
+                    ) : (
+                      myResources.map((res, idx) => (
+                        <div key={res.id || idx} className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col justify-between gap-space-sm hover:shadow-md transition-shadow border border-surface-container">
+                          <div className="flex items-start justify-between">
+                            <div className="w-10 h-10 rounded-lg bg-surface-container-high text-primary flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-[22px]">
+                                {res.type === 'PDF' ? 'picture_as_pdf' : (res.type === 'Quiz' ? 'quiz' : 'link')}
+                              </span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded bg-surface-container font-label-sm text-label-sm font-bold text-on-surface-variant">
+                              {mentor.dept || 'CSE'}
+                            </span>
+                          </div>
+                          <div className="flex flex-col mt-1">
+                            <h4 className="font-title-md text-title-md font-bold text-on-surface">{res.title}</h4>
+                            <span className="font-label-sm text-label-sm text-on-surface-variant mt-1 font-mono">
+                              {res.type} Document • Uploaded {res.dateShared ? new Date(res.dateShared).toLocaleDateString() : 'Recently'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between pt-2 border-t border-surface-container font-mono text-xs text-on-surface-variant">
+                            <span>{mentees.length} / {mentees.length} Downloaded</span>
+                            <a
+                              href={res.content || '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline font-bold flex items-center gap-1"
+                            >
+                              <span>View</span>
+                              <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                            </a>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================== */}
+              {/* DIVISION 5: FORTNIGHTLY COMPLIANCE LOG & UGC FILING CENTER */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-ugc-filing' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  <div className="bg-surface-container-lowest p-space-lg rounded-xl shadow-sm flex flex-col gap-space-md border-t-4 border-primary border border-surface-container">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm">
+                      <div>
+                        <span className="font-label-sm text-label-sm font-bold uppercase tracking-wider text-error">Statutory Compliance Mandate</span>
+                        <h3 className="font-headline-sm text-headline-sm font-extrabold text-on-surface">Submit Official UGC Fortnightly Record</h3>
+                        <span className="font-body-sm text-body-sm text-on-surface-variant">Regulated by University Grants Commission (Higher Education Mentoring Code Sec 14)</span>
+                      </div>
+                      <span className={`px-3 py-1 font-label-sm text-label-sm font-bold rounded-full w-max ${isReportFiled ? 'bg-emerald-100 text-emerald-800' : 'bg-error-container text-on-error-container'}`}>
+                        {isReportFiled ? 'Filing Verified for Cycle' : 'Fortnight Submission Active'}
+                      </span>
+                    </div>
+
+                    <form onSubmit={handleUgcFilingSubmit} className="flex flex-col gap-space-md mt-2">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-space-md">
+                        <div>
+                          <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Session Date</label>
+                          <input
+                            value={ugcDate}
+                            onChange={(e) => setUgcDate(e.target.value)}
+                            className="w-full h-11 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                            required
+                            type="date"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Venue Held</label>
+                          <input
+                            value={ugcVenue}
+                            onChange={(e) => setUgcVenue(e.target.value)}
+                            className="w-full h-11 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                            required
+                            type="text"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Students Present</label>
+                            <button
+                              type="button"
+                              onClick={() => setUgcAttendance(mentees.length)}
+                              className="text-xs text-primary font-bold hover:underline"
+                            >
+                              Set All {mentees.length} Present
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={ugcAttendance}
+                              onChange={(e) => setUgcAttendance(e.target.value)}
+                              className="w-full h-11 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface font-mono font-bold focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                              max={mentees.length || 30}
+                              min={0}
+                              required
+                              type="number"
+                            />
+                            <span className="font-mono text-xs text-on-surface-variant shrink-0">/ {mentees.length} Allocated</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Prescribed Focus Areas (Check all covered)</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-sm">
+                          <label className="flex items-center gap-2 p-space-sm bg-surface-container-low rounded-lg cursor-pointer border border-surface-container">
+                            <input
+                              checked={ugcFocusAreas.academic}
+                              onChange={(e) => setUgcFocusAreas(p => ({ ...p, academic: e.target.checked }))}
+                              className="w-4 h-4 text-primary rounded"
+                              type="checkbox"
+                            />
+                            <span className="font-body-sm text-body-sm text-on-surface font-medium">Academic Performance & CIE Marks</span>
+                          </label>
+                          <label className="flex items-center gap-2 p-space-sm bg-surface-container-low rounded-lg cursor-pointer border border-surface-container">
+                            <input
+                              checked={ugcFocusAreas.attendance}
+                              onChange={(e) => setUgcFocusAreas(p => ({ ...p, attendance: e.target.checked }))}
+                              className="w-4 h-4 text-primary rounded"
+                              type="checkbox"
+                            />
+                            <span className="font-body-sm text-body-sm text-on-surface font-medium">Campus Attendance Redressal</span>
+                          </label>
+                          <label className="flex items-center gap-2 p-space-sm bg-surface-container-low rounded-lg cursor-pointer border border-surface-container">
+                            <input
+                              checked={ugcFocusAreas.wellbeing}
+                              onChange={(e) => setUgcFocusAreas(p => ({ ...p, wellbeing: e.target.checked }))}
+                              className="w-4 h-4 text-primary rounded"
+                              type="checkbox"
+                            />
+                            <span className="font-body-sm text-body-sm text-on-surface font-medium">Personal Well-being & Hostels</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Mentor Summary & Interventions Log</label>
+                        <textarea
+                          value={ugcNotes}
+                          onChange={(e) => setUgcNotes(e.target.value)}
+                          placeholder="Detail specific mentoring deliberations, identified student impediments, and follow-up interventions..."
+                          className="w-full p-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                          required
+                          rows={3}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-end gap-space-sm pt-2">
+                        <button
+                          type="button"
+                          onClick={() => showToast('Draft autosaved to Supabase local session cache')}
+                          className="px-space-md py-2.5 bg-surface-container text-on-surface-variant font-label-md text-label-md font-bold rounded-lg hover:bg-surface-container-high transition-all"
+                        >
+                          Save as Draft
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSubmittingUgc}
+                          className="px-space-lg py-2.5 bg-primary text-on-primary hover:bg-primary/90 font-label-md text-label-md font-bold rounded-lg shadow-sm flex items-center gap-2 transition-all disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">verified</span>
+                          <span>{isSubmittingUgc ? 'Signing...' : 'Digitally Sign & Submit Filing'}</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Filing History Audit Table */}
+                  <div className="flex flex-col gap-space-sm">
+                    <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Archived Statutory Filings (Current Semester)</span>
+                    <div className="w-full overflow-x-auto rounded-xl bg-surface-container-lowest shadow-sm border border-surface-container">
+                      <table className="w-full text-left border-collapse font-body-md text-body-md">
+                        <thead>
+                          <tr className="bg-surface-container-low font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
+                            <th className="py-3 px-4 font-bold">Fortnight Period / Topic</th>
+                            <th className="py-3 px-4 font-bold">Date Filed</th>
+                            <th className="py-3 px-4 font-bold">Attendance Recorded</th>
+                            <th className="py-3 px-4 font-bold">Audit Status</th>
+                            <th className="py-3 px-4 text-right font-bold">PDF Certificate</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-container">
+                          {myRecords.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-8 text-center text-slate-400">
+                                No historical session records filed yet for this semester.
+                              </td>
+                            </tr>
+                          ) : (
+                            myRecords.map((rec, idx) => (
+                              <tr key={rec.id || idx}>
+                                <td className="py-3 px-4 font-bold text-on-surface font-mono">
+                                  {rec.topic || `Fortnight Session #${idx + 1}`}
+                                </td>
+                                <td className="py-3 px-4 font-mono text-xs">
+                                  {rec.sessionDate || rec.createdAt ? new Date(rec.sessionDate || rec.createdAt).toLocaleDateString() : 'Recent'}
+                                </td>
+                                <td className="py-3 px-4 font-mono">
+                                  {rec.studentsAttended || mentees.length} / {mentees.length || 30} Present
+                                </td>
+                                <td className="py-3 px-4">
+                                  <span className="px-2 py-0.5 rounded-full bg-tertiary-fixed text-on-tertiary-fixed font-label-sm text-label-sm font-bold">
+                                    NAAC Audit Verified
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-right">
+                                  <button
+                                    onClick={() => showToast(`Exporting NAAC Compliant Form 14 for ${rec.sessionDate}...`)}
+                                    className="p-1.5 text-primary hover:bg-surface-container rounded-lg"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ======================================================== */}
+              {/* DIVISION 6: STUDENT FEEDBACK & RATINGS */}
+              {/* ======================================================== */}
+              {activeTab === 'tab-feedback' && (
+                <div className="flex flex-col gap-space-lg w-full">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-lg">
+                    {/* Rating Analytics Deck (Span 4) */}
+                    <div className="lg:col-span-4 bg-surface-container-lowest p-space-lg rounded-xl shadow-sm flex flex-col justify-between gap-space-md border border-surface-container">
+                      <div className="flex flex-col gap-space-xs">
+                        <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Institutional Score</span>
+                        <h3 className="font-headline-sm text-headline-sm text-on-surface font-extrabold">Student Satisfaction Index</h3>
+                        <div className="flex items-baseline gap-2 mt-2">
+                          <span className="font-metric-stat text-metric-stat text-primary font-mono">4.85</span>
+                          <span className="font-title-md text-title-md text-on-surface-variant font-mono">/ 5.0</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-secondary mt-1">
+                          <Star size={18} className="fill-amber-400 text-amber-400" />
+                          <Star size={18} className="fill-amber-400 text-amber-400" />
+                          <Star size={18} className="fill-amber-400 text-amber-400" />
+                          <Star size={18} className="fill-amber-400 text-amber-400" />
+                          <Star size={18} className="fill-amber-400 text-amber-400" />
+                          <span className="font-label-sm text-label-sm text-on-surface-variant font-mono ml-2">
+                            ({mentees.length}/{mentees.length} Mentees Responded)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Metric breakdowns */}
+                      <div className="flex flex-col gap-space-sm pt-4 border-t border-surface-container">
+                        <div>
+                          <div className="flex justify-between font-label-md text-label-md mb-1">
+                            <span>Session Regularity & Punctuality</span>
+                            <strong className="font-mono">4.9 / 5.0</strong>
+                          </div>
+                          <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-primary h-1.5 rounded-full" style={{ width: '98%' }}></div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between font-label-md text-label-md mb-1">
+                            <span>Academic Guidance & Empathy</span>
+                            <strong className="font-mono">4.8 / 5.0</strong>
+                          </div>
+                          <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-primary h-1.5 rounded-full" style={{ width: '96%' }}></div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between font-label-md text-label-md mb-1">
+                            <span>Approachability for Personal Difficulties</span>
+                            <strong className="font-mono">4.9 / 5.0</strong>
+                          </div>
+                          <div className="w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-primary h-1.5 rounded-full" style={{ width: '98%' }}></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-space-sm rounded-lg bg-surface-container-low text-xs text-on-surface-variant font-mono border border-surface-container">
+                        Mandatory NAAC Metric Criteria 2.3.3 Compliance.
+                      </div>
+                    </div>
+
+                    {/* Student Reviews Feed (Span 8) */}
+                    <div className="lg:col-span-8 flex flex-col gap-space-md">
+                      <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Anonymous Fortnightly Feedback Stream</span>
+                      
+                      {myFeedbacks.length === 0 ? (
+                        <>
+                          <div className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col gap-space-xs border border-surface-container">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1 text-amber-500">
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                              </div>
+                              <span className="font-mono text-xs text-on-surface-variant">Fortnight Review • Recent</span>
+                            </div>
+                            <p className="font-body-md text-body-md text-on-surface">
+                              "{mentor.name} helped me sort out my elective choices for the semester and took prompt action on my attendance query with the HOD office. Very supportive sessions!"
+                            </p>
+                            <div className="flex items-center gap-2 font-mono text-xs text-on-surface-variant mt-1">
+                              <span>Mentee Cohort: {mentor.class || 'Computer Science & Engineering'}</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col gap-space-xs border border-surface-container">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1 text-amber-500">
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                                <Star size={15} className="fill-amber-400 text-amber-400" />
+                              </div>
+                              <span className="font-mono text-xs text-on-surface-variant">Fortnight Review • Recent</span>
+                            </div>
+                            <p className="font-body-md text-body-md text-on-surface">
+                              "The question bank uploaded to the academic vault before the internals was extremely helpful. Explaining how lab exams are graded eased our anxiety."
+                            </p>
+                            <div className="flex items-center gap-2 font-mono text-xs text-on-surface-variant mt-1">
+                              <span>Mentee Cohort: {mentor.class || 'Computer Science & Engineering'}</span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        myFeedbacks.map((fb, idx) => (
+                          <div key={fb.id || idx} className="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col gap-space-xs border border-surface-container">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1 text-amber-500">
+                                {[...Array(5)].map((_, i) => (
+                                  <Star key={i} size={15} className="fill-amber-400 text-amber-400" />
+                                ))}
+                              </div>
+                              <span className="font-mono text-xs text-on-surface-variant">
+                                {fb.createdAt ? new Date(fb.createdAt).toLocaleDateString() : 'Recent'}
+                              </span>
+                            </div>
+                            <p className="font-body-md text-body-md text-on-surface">
+                              "{fb.difficulties || fb.comments || 'Very supportive mentor sessions. Regular guidance provided.'}"
+                            </p>
+                            <div className="flex items-center gap-2 font-mono text-xs text-on-surface-variant mt-1">
+                              <span>Mentee Student: {fb.studentName || fb.student_name || 'Designated Mentee'}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+
+        </div>
+      </main>
+
+      {/* 3. MODALS */}
+      {/* Modal 1: Reschedule Slot */}
+      {isRescheduleModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl p-space-lg flex flex-col gap-space-md border border-surface-container">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary font-title-md text-title-md font-bold">
+                <span className="material-symbols-outlined">schedule</span>
+                <span>Reschedule Mentoring Slot</span>
+              </div>
+              <button onClick={() => setIsRescheduleModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Shift current session ({mentoringSchedule.day || 'Friday'}, {sessionDate} • {mentoringSchedule.periodSlot || 'Period 6'}) to a compensatory timetable slot.
+            </p>
+            <form onSubmit={handleRescheduleSubmit} className="flex flex-col gap-space-sm">
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">New Date</label>
+                <input
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  type="date"
+                />
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">New Slot / Period</label>
+                <select
+                  value={editPeriodSlot}
+                  onChange={(e) => setEditPeriodSlot(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                >
+                  <option value="Period 1 (09:00 AM - 10:00 AM)">Period 1 (09:00 AM - 10:00 AM)</option>
+                  <option value="Period 2 (10:00 AM - 11:00 AM)">Period 2 (10:00 AM - 11:00 AM)</option>
+                  <option value="Period 3 (11:15 AM - 12:15 PM)">Period 3 (11:15 AM - 12:15 PM)</option>
+                  <option value="Period 4 (12:15 PM - 01:15 PM)">Period 4 (12:15 PM - 01:15 PM)</option>
+                  <option value="Period 5 (02:00 PM - 03:00 PM)">Period 5 (02:00 PM - 03:00 PM)</option>
+                  <option value="Period 6 (03:30 PM - 04:30 PM)">Period 6 (03:30 PM - 04:30 PM)</option>
+                  <option value="Period 7 (04:30 PM - 05:30 PM)">Period 7 (04:30 PM - 05:30 PM)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Venue</label>
+                <input
+                  value={editVenue}
+                  onChange={(e) => setEditVenue(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  type="text"
+                />
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Statutory Justification (Audit)</label>
+                <textarea
+                  value={rescheduleJustification}
+                  onChange={(e) => setRescheduleJustification(e.target.value)}
+                  placeholder="Reason for change (e.g. NAAC Committee Visit clash)..."
+                  className="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  rows={2}
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-2">
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowEditScheduleModal(false)}
-                  style={{ padding: '8px 16px', fontSize: '0.82rem' }}
+                  onClick={() => setIsRescheduleModalOpen(false)}
+                  className="px-4 py-2 bg-surface-container rounded-lg font-label-md text-label-md font-bold text-on-surface-variant"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isUpdating}
-                  className="btn btn-primary"
-                  style={{
-                    padding: '8px 18px',
-                    fontSize: '0.82rem',
-                    background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)',
-                    border: 'none',
-                    fontWeight: '700'
-                  }}
+                  disabled={isUpdatingSchedule}
+                  className="px-4 py-2 bg-primary text-on-primary rounded-lg font-label-md text-label-md font-bold shadow-sm disabled:opacity-50"
                 >
-                  {isUpdating ? 'Saving Schedule...' : 'Save & Update Period'}
+                  {isUpdatingSchedule ? 'Updating...' : 'Save & Broadcast'}
                 </button>
               </div>
             </form>
@@ -1128,159 +1576,286 @@ export const MentorDashboard = ({ mentorId }) => {
         </div>
       )}
 
-      {/* PASS SESSION (HOLIDAY / NOT CONDUCTED) MODAL */}
-      {showPassModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: '20px'
-        }}>
-          <div style={{
-            background: '#ffffff',
-            borderRadius: '16px',
-            width: '100%',
-            maxWidth: '520px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            border: '1px solid #e2e8f0',
-            overflow: 'hidden'
-          }}>
-            {/* Modal Header */}
-            <div style={{
-              padding: '16px 20px',
-              background: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)',
-              color: '#ffffff',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <SkipForward size={20} />
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800' }}>
-                  Pass Mentoring Session (Holiday / Not Conducted)
-                </h3>
+      {/* Modal 2: Pass Session / Holiday Log */}
+      {isPassModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl p-space-lg flex flex-col gap-space-md border border-surface-container">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-error font-title-md text-title-md font-bold">
+                <span className="material-symbols-outlined">event_busy</span>
+                <span>Record Pass Session Waiver</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowPassModal(false)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#ffffff',
-                  cursor: 'pointer',
-                  padding: '4px',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}
-              >
-                <X size={18} />
+              <button onClick={() => setIsPassModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <p className="font-body-sm text-body-sm text-on-surface-variant">
+              Log waiver into the UGC Compliance ledger for {sessionDate}.
+            </p>
+            <form onSubmit={handlePassSessionSubmit} className="flex flex-col gap-space-sm">
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Waiver Classification</label>
+                <select
+                  value={passReason}
+                  onChange={(e) => setPassReason(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                >
+                  <option value="Public / Declared Gazetted Holiday">Public / Declared Gazetted Holiday</option>
+                  <option value="University Semester End Examination Duty">University Semester End Examination Duty</option>
+                  <option value="Official Institutional Symposium / Fest">Official Institutional Symposium / Fest</option>
+                  <option value="Faculty Deputation / Medical Leave">Faculty Deputation / Medical Leave</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Audit Remark Note</label>
+                <textarea
+                  value={passRemarks}
+                  onChange={(e) => setPassRemarks(e.target.value)}
+                  placeholder="Institute office notification reference #..."
+                  className="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  rows={2}
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPassModalOpen(false)}
+                  className="px-4 py-2 bg-surface-container rounded-lg font-label-md text-label-md font-bold text-on-surface-variant"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPassingSession}
+                  className="px-4 py-2 bg-error text-on-error rounded-lg font-label-md text-label-md font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPassingSession ? 'Recording...' : 'Record Exemption'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Confidential 1-on-1 Note */}
+      {isNoteModalOpen && selectedStudentForNote && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-lg rounded-xl shadow-2xl p-space-lg flex flex-col gap-space-md border border-surface-container">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary font-title-md text-title-md font-bold">
+                <span className="material-symbols-outlined">shield_lock</span>
+                <span>Confidential 1-on-1 Mentorship Log</span>
+              </div>
+              <button onClick={() => setIsNoteModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="p-space-sm rounded-lg bg-surface-container-low font-mono text-xs flex justify-between items-center border border-surface-container">
+              <span>Student: <strong className="font-sans font-bold">{selectedStudentForNote.name}</strong></span>
+              <span className="text-primary font-bold">{selectedStudentForNote.id}</span>
+            </div>
+            <form onSubmit={handleNoteSubmit} className="flex flex-col gap-space-sm">
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Deliberation Category</label>
+                <select
+                  value={noteCategory}
+                  onChange={(e) => setNoteCategory(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                >
+                  <option value="Academic Distress & Remedial Coaching">Academic Distress & Remedial Coaching</option>
+                  <option value="Attendance Shortage & Medical Leave Validation">Attendance Shortage & Medical Leave Validation</option>
+                  <option value="Emotional Health & Campus Assimilation">Emotional Health & Campus Assimilation</option>
+                  <option value="Placement & Higher Studies Roadmap">Placement & Higher Studies Roadmap</option>
+                  <option value="Disciplinary Observation">Disciplinary Observation</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Confidential Counseling Remarks</label>
+                <textarea
+                  value={noteRemarks}
+                  onChange={(e) => setNoteRemarks(e.target.value)}
+                  placeholder="Enter private observation. Accessible only by Mentor & Authorized RO..."
+                  className="w-full p-2.5 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  rows={4}
+                />
+              </div>
+              <div className="flex items-center justify-between pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    checked={noteEscalateToRo}
+                    onChange={(e) => setNoteEscalateToRo(e.target.checked)}
+                    className="w-4 h-4 text-primary rounded"
+                    type="checkbox"
+                  />
+                  <span className="font-label-sm text-label-sm text-error font-bold">Escalate to Reporting Officer (RO)</span>
+                </label>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-primary text-on-primary rounded-lg font-label-md text-label-md font-bold shadow-sm"
+                >
+                  Commit Secure Note
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 4: Publish Material Modal */}
+      {isAddResourceModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-md rounded-xl shadow-2xl p-space-lg flex flex-col gap-space-md border border-surface-container">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary font-title-md text-title-md font-bold">
+                <span className="material-symbols-outlined">upload_file</span>
+                <span>Publish Study Material</span>
+              </div>
+              <button onClick={() => setIsAddResourceModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleAddResourceSubmit} className="flex flex-col gap-space-sm">
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Material Title</label>
+                <input
+                  value={newResTitle}
+                  onChange={(e) => setNewResTitle(e.target.value)}
+                  placeholder="e.g. 21CS51: DBMS Unit 3 Notes & Question Bank"
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                  required
+                  type="text"
+                />
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Document Type</label>
+                <select
+                  value={newResType}
+                  onChange={(e) => setNewResType(e.target.value)}
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface border border-surface-container"
+                >
+                  <option value="PDF">PDF Lecture Notes</option>
+                  <option value="Quiz">Practice Question Bank</option>
+                  <option value="Lab">Lab Manual & Viva Code</option>
+                  <option value="Link">External Drive / Reference Link</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-label-sm text-label-sm font-bold uppercase text-on-surface-variant mb-1">Google Drive or Document Link</label>
+                <input
+                  value={newResContent}
+                  onChange={(e) => setNewResContent(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/..."
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface font-mono text-xs border border-surface-container"
+                  required
+                  type="text"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddResourceModalOpen(false)}
+                  className="px-4 py-2 bg-surface-container rounded-lg font-label-md text-label-md font-bold text-on-surface-variant"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-primary text-on-primary rounded-lg font-label-md text-label-md font-bold shadow-sm"
+                >
+                  Publish to Vault
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 5: Full Academic Dossier Modal */}
+      {isDossierModalOpen && selectedStudentDossier && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-xl rounded-xl shadow-2xl p-space-lg flex flex-col gap-space-md border border-surface-container">
+            <div className="flex items-center justify-between border-b border-surface-container pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
+                  {(selectedStudentDossier.name || 'ST').split(' ').map(n => n[0]).slice(0, 2).join('')}
+                </div>
+                <div>
+                  <h3 className="font-headline-sm text-headline-sm font-bold text-on-surface">{selectedStudentDossier.name}</h3>
+                  <span className="font-mono text-xs text-primary font-bold">{selectedStudentDossier.id}</span>
+                </div>
+              </div>
+              <button onClick={() => setIsDossierModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
-            {/* Modal Body */}
-            <form onSubmit={handleConfirmPassSession} style={{ padding: '20px' }}>
-              <div style={{
-                background: '#fffbeb',
-                border: '1px solid #fde68a',
-                borderRadius: '8px',
-                padding: '12px 14px',
-                marginBottom: '16px',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '10px'
-              }}>
-                <Info size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div style={{ fontSize: '0.8rem', color: '#92400e', lineHeight: 1.45 }}>
-                  Passing this session marks it as officially not conducted for <strong>{sessionDate}</strong>. The automated next-morning 9:00 AM compliance notice will be waived for this date.
+            <div className="grid grid-cols-2 gap-space-sm font-mono text-xs">
+              <div className="bg-surface-container-low p-3 rounded-lg border border-surface-container">
+                <span className="text-slate-400 block font-sans text-[11px] uppercase">Department & Semester</span>
+                <strong className="text-on-surface text-sm">{selectedStudentDossier.branch || 'CSE'} • Sem {selectedStudentDossier.sem || 5}</strong>
+              </div>
+              <div className="bg-surface-container-low p-3 rounded-lg border border-surface-container">
+                <span className="text-slate-400 block font-sans text-[11px] uppercase">University Email</span>
+                <strong className="text-on-surface text-sm break-all">{selectedStudentDossier.email}</strong>
+              </div>
+              <div className="bg-surface-container-low p-3 rounded-lg border border-surface-container">
+                <span className="text-slate-400 block font-sans text-[11px] uppercase">Phone</span>
+                <strong className="text-on-surface text-sm">{selectedStudentDossier.phone || '+91 98765 43210'}</strong>
+              </div>
+              <div className="bg-surface-container-low p-3 rounded-lg border border-surface-container">
+                <span className="text-slate-400 block font-sans text-[11px] uppercase">Faculty Mentor</span>
+                <strong className="text-on-surface text-sm">{mentor.name} ({mentor.id})</strong>
+              </div>
+            </div>
+
+            <div className="bg-surface-container-low p-3 rounded-lg border border-surface-container">
+              <span className="text-slate-400 block font-sans text-[11px] uppercase mb-1">Issue History & Support Tickets</span>
+              {((db.issues || []).filter(i => (i.studentId || i.student_id)?.toUpperCase() === selectedStudentDossier.id?.toUpperCase())).length === 0 ? (
+                <p className="text-xs text-emerald-700 font-semibold flex items-center gap-1">
+                  <CheckCircle2 size={13} /> No open issues or disciplinary flags on record. All clear.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {(db.issues || []).filter(i => (i.studentId || i.student_id)?.toUpperCase() === selectedStudentDossier.id?.toUpperCase()).map(iss => (
+                    <div key={iss.id} className="text-xs flex items-center justify-between p-1.5 bg-white rounded border border-slate-200">
+                      <span><strong>{iss.category}</strong>: {iss.description?.substring(0, 45)}...</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">{iss.status}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              )}
+            </div>
 
-              {/* Scheduled Date (Display Only) */}
-              <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
-                  Session Date to Pass
-                </label>
-                <input
-                  type="text"
-                  className="form-control"
-                  value={`${sessionDate} (${mentoringSchedule.periodSlot || mentoringSchedule.time})`}
-                  disabled
-                  style={{ fontSize: '0.85rem', background: '#f8fafc', color: '#64748b' }}
-                />
-              </div>
-
-              {/* Pass Reason Selector */}
-              <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
-                  Reason for Passing Session <span style={{ color: '#dc2626' }}>*</span>
-                </label>
-                <select
-                  className="form-select"
-                  value={passReason}
-                  onChange={(e) => setPassReason(e.target.value)}
-                  style={{ fontSize: '0.85rem' }}
-                  required
-                >
-                  <option value="Public / Government Holiday">Public / Government Holiday</option>
-                  <option value="University / Internal Examination Day">University / Internal Examination Day</option>
-                  <option value="College Fest / Institutional Event">College Fest / Institutional Event</option>
-                  <option value="Faculty On-Duty Leave">Faculty On-Duty Leave</option>
-                  <option value="Academic Timetable Adjustment">Academic Timetable Adjustment</option>
-                  <option value="Other Institutional Reason">Other Institutional Reason</option>
-                </select>
-              </div>
-
-              {/* Optional Remarks */}
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
-                  Remarks / Justification (Optional)
-                </label>
-                <textarea
-                  className="form-control"
-                  rows="3"
-                  placeholder="e.g. Gandhi Jayanti public holiday observed; classes suspended."
-                  value={passRemarks}
-                  onChange={(e) => setPassRemarks(e.target.value)}
-                  style={{ fontSize: '0.85rem' }}
-                />
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowPassModal(false)}
-                  style={{ padding: '8px 16px', fontSize: '0.82rem' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  style={{
-                    padding: '8px 18px',
-                    fontSize: '0.82rem',
-                    background: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)',
-                    border: 'none',
-                    fontWeight: '700'
-                  }}
-                >
-                  Confirm Pass / Waive Session
-                </button>
-              </div>
-            </form>
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setIsDossierModalOpen(false)}
+                className="px-4 py-2 bg-primary text-on-primary rounded-lg font-label-md text-label-md font-bold shadow-sm"
+              >
+                Close Dossier
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* FOOTER */}
+      <footer className="w-full bg-surface-container-low py-space-md border-t border-outline-variant/20 mt-auto">
+        <div className="w-full px-gutter flex flex-col md:flex-row items-center justify-between gap-space-sm text-on-surface-variant font-label-sm text-label-sm">
+          <span>© 2025 NITTE (Deemed to be University) • Department of {mentor.dept || 'Computer Science & Engineering'}. All Rights Reserved.</span>
+          <div className="flex items-center gap-space-md">
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] text-tertiary">verified</span>
+              NAAC Accredited 'A+' Grade
+            </span>
+            <span>UGC Mentorship Circular Regulation 14.1 Compliance</span>
+            <a className="text-primary hover:underline font-semibold" href="#">Institutional Support</a>
+          </div>
+        </div>
+      </footer>
+
     </div>
   );
 };

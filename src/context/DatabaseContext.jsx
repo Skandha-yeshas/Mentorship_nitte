@@ -91,48 +91,24 @@ export const getYoutubeEmbedUrl = (url) => {
 // Clean one-time purge of any old demo caches
 if (typeof window !== 'undefined') {
   try {
-    const isCleaned = localStorage.getItem('nitte_clean_state_v3');
+    const isCleaned = localStorage.getItem('nitte_clean_state_v5');
     if (!isCleaned) {
-      localStorage.removeItem('nitte_saved_issues');
-      localStorage.removeItem('nitte_saved_meetings');
-      localStorage.removeItem('nitte_saved_mentor_feedbacks');
-      localStorage.removeItem('nitte_saved_recordings');
-      localStorage.removeItem('demo_limit_bypassed');
-      localStorage.removeItem('auth_user_session');
-      localStorage.setItem('nitte_clean_state_v3', 'true');
+      localStorage.removeItem('nitte_saved_students');
+      localStorage.setItem('nitte_saved_students', JSON.stringify([]));
+      localStorage.setItem('nitte_clean_state_v5', 'true');
     }
   } catch (e) { }
 }
 
-export const DEFAULT_STUDENTS = [
-  { id: 'S101', name: 'Aarav Mehta', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543210', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S102', name: 'Bhavana Rao', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543211', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S103', name: 'Chaitra Hegde', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543212', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S104', name: 'Daniel Dsouza', email: 'skandhayashas2906@gmail.com', mentorId: 'M101', phone: '9876543213', branch: 'CSE', sem: 5, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S105', name: 'Esha Sharma', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543214', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S106', name: 'Farhan Khan', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543215', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S107', name: 'Gautam Shenoy', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543216', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' },
-  { id: 'S108', name: 'Harshita Pai', email: 'skandhayashas2906@gmail.com', mentorId: 'M102', phone: '9876543217', branch: 'ISE', sem: 3, password: 'Nit#Stu2026', role: 'Student' }
-];
+export const DEFAULT_STUDENTS = [];
 
-export const DEFAULT_FACULTY_MENTORS = [
-  { id: 'M101', name: 'Dr. Radhakrishnan', email: 'radhakrishnan@nitte.edu', dept: 'CSE', class: '5th Sem CSE - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M102', name: 'Dr. Preethi Hegde', email: 'preethi.hegde@nitte.edu', dept: 'CSE', class: '3rd Sem CSE - Sec B', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M103', name: 'Prof. Ramesh Rao', email: 'ramesh.rao@nitte.edu', dept: 'BCA', class: '3rd Sem BCA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M104', name: 'Dr. Deepa Shenoy', email: 'deepa.shenoy@nitte.edu', dept: 'BBA', class: '1st Sem BBA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M105', name: 'Prof. Raghavendra Pai', email: 'raghavendra.pai@nitte.edu', dept: 'BCOM', class: '5th Sem BCOM - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M106', name: 'Prof. Suresh Kumar', email: 'suresh.kumar@nitte.edu', dept: 'ECE', class: '3rd Sem ECE - Sec B', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M107', name: 'Dr. Kavitha Bhat', email: 'kavitha.bhat@nitte.edu', dept: 'AIML', class: '7th Sem AIML - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M108', name: 'Prof. Santosh Prabhu', email: 'santosh.prabhu@nitte.edu', dept: 'ISE', class: '5th Sem ISE - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M109', name: 'Prof. Anitha Rao', email: 'anitha.rao@nitte.edu', dept: 'MCA', class: '1st Sem MCA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' },
-  { id: 'M110', name: 'Dr. Prakash Shetty', email: 'prakash.shetty@nitte.edu', dept: 'MBA', class: '3rd Sem MBA - Sec A', password: 'Nit#Mnt2026', role: 'Mentor' }
-];
+export const DEFAULT_FACULTY_MENTORS = [];
 
 // Clean Database State
 const MOCK_DB = {
   users: {
-    students: DEFAULT_STUDENTS,
-    mentors: DEFAULT_FACULTY_MENTORS,
+    students: [],
+    mentors: [],
     ros: ALL_CATEGORIES.map((cat, idx) => ({
       id: `RO-${String(idx + 1).padStart(2, '0')}`,
       name: `RO - ${cat.split(' - ')[1]}`,
@@ -440,6 +416,35 @@ export const DatabaseProvider = ({ children }) => {
       };
     });
 
+    // Direct Supabase Cloud persistence
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbHeaders = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      };
+      if (studentIdsToAssign && studentIdsToAssign.length > 0) {
+        studentIdsToAssign.forEach(id => {
+          fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(String(id).trim().toUpperCase())}`, {
+            method: 'PATCH',
+            headers: sbHeaders,
+            body: JSON.stringify({ mentor_id: cleanMentorId })
+          }).catch(() => {});
+        });
+      }
+      if (studentIdsToUnassign && studentIdsToUnassign.length > 0) {
+        studentIdsToUnassign.forEach(id => {
+          fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(String(id).trim().toUpperCase())}`, {
+            method: 'PATCH',
+            headers: sbHeaders,
+            body: JSON.stringify({ mentor_id: null })
+          }).catch(() => {});
+        });
+      }
+    } catch (e) { }
+
     // Fire background persistence to Vite middleware / backend if active
     fetch('/api/admin/assign-students-to-mentor', {
       method: 'POST',
@@ -482,16 +487,79 @@ export const DatabaseProvider = ({ children }) => {
       };
     });
 
-    // Notify backend / Vite proxy
+    // Delete directly from Supabase Cloud
     try {
-      await fetch('/api/admin/delete-student', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId: cleanId })
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/students?id=eq.${encodeURIComponent(cleanId)}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
+        }
       });
     } catch (e) { }
 
+    // Notify backend / Vite proxy
+    try {
+      fetch('/api/admin/delete-student', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: cleanId })
+      }).catch(() => {});
+    } catch (e) { }
+
     return { success: true, studentId: cleanId };
+  };
+
+  const removeAllStudents = async () => {
+    // 1. Direct Supabase Cloud remove all students
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/students?id=not.is.null`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
+        }
+      });
+    } catch (e) { }
+
+    // 2. Clear local storage
+    try {
+      localStorage.setItem('nitte_saved_students', JSON.stringify([]));
+    } catch (e) { }
+
+    // 3. Update React state
+    setDb(prev => {
+      const updatedMentors = (prev.users?.mentors || []).map(m => ({
+        ...m,
+        class: '0 Assigned Mentees'
+      }));
+      try {
+        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+      } catch (e) { }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          students: [],
+          mentors: updatedMentors
+        }
+      };
+    });
+
+    // 4. Notify backend
+    try {
+      fetch('/api/admin/delete-all-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    } catch (e) { }
+
+    return { success: true };
   };
 
   const removeMentor = async (mentorId) => {
@@ -535,6 +603,26 @@ export const DatabaseProvider = ({ children }) => {
       };
     });
 
+    // Direct Supabase Cloud delete and unassign
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbHeaders = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      };
+      await fetch(`${SUPABASE_URL}/rest/v1/students?mentor_id=eq.${encodeURIComponent(cleanId)}`, {
+        method: 'PATCH',
+        headers: sbHeaders,
+        body: JSON.stringify({ mentor_id: null })
+      });
+      await fetch(`${SUPABASE_URL}/rest/v1/mentors?id=eq.${encodeURIComponent(cleanId)}`, {
+        method: 'DELETE',
+        headers: sbHeaders
+      });
+    } catch (e) { }
+
     // Notify backend / Vite proxy
     try {
       await fetch('/api/admin/delete-mentor', {
@@ -577,6 +665,26 @@ export const DatabaseProvider = ({ children }) => {
       };
     });
 
+    // Direct Supabase Cloud remove all mentors and unassign
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbHeaders = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      };
+      await fetch(`${SUPABASE_URL}/rest/v1/students?mentor_id=not.is.null`, {
+        method: 'PATCH',
+        headers: sbHeaders,
+        body: JSON.stringify({ mentor_id: null })
+      });
+      await fetch(`${SUPABASE_URL}/rest/v1/mentors?id=not.is.null`, {
+        method: 'DELETE',
+        headers: sbHeaders
+      });
+    } catch (e) { }
+
     // Notify backend / Vite proxy
     try {
       await fetch('/api/admin/delete-all-mentors', {
@@ -591,16 +699,8 @@ export const DatabaseProvider = ({ children }) => {
   const restoreDefaultMentors = () => {
     try {
       localStorage.removeItem('nitte_deleted_mentor_ids');
-      localStorage.setItem('nitte_saved_mentors', JSON.stringify(DEFAULT_FACULTY_MENTORS));
     } catch (e) { }
-    setDb(prev => ({
-      ...prev,
-      users: {
-        ...prev.users,
-        mentors: DEFAULT_FACULTY_MENTORS
-      }
-    }));
-    return { success: true, count: DEFAULT_FACULTY_MENTORS.length };
+    return { success: true, count: (db.users?.mentors || []).length };
   };
 
   const removeRo = async (roId) => {
@@ -647,7 +747,7 @@ export const DatabaseProvider = ({ children }) => {
         if (Array.isArray(parsed) && parsed.length > 0) {
           base.users = {
             ...base.users,
-            students: structureAndDeduplicateStudents([...DEFAULT_STUDENTS, ...parsed])
+            students: structureAndDeduplicateStudents([...parsed])
           };
         }
       }
@@ -745,58 +845,39 @@ export const DatabaseProvider = ({ children }) => {
           } catch (e) { }
         }
 
-        // Preserve and sync students with passwords intact
-        let mergedStudents = structureAndDeduplicateStudents([
-          ...DEFAULT_STUDENTS,
-          ...(prev.users?.students || []),
-          ...((data.users && data.users.students) ? data.users.students : [])
-        ]);
-        try {
-          const cachedStudents = localStorage.getItem('nitte_saved_students');
-          if (cachedStudents) {
-            const parsed = JSON.parse(cachedStudents);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              mergedStudents = structureAndDeduplicateStudents([
-                ...mergedStudents,
-                ...parsed
-              ]);
+        // Authoritative students sync from server
+        let mergedStudents = [];
+        if (data.users && Array.isArray(data.users.students)) {
+          mergedStudents = structureAndDeduplicateStudents(data.users.students);
+          try {
+            localStorage.setItem('nitte_saved_students', JSON.stringify(mergedStudents));
+          } catch (e) { }
+        } else {
+          try {
+            const cachedStudents = localStorage.getItem('nitte_saved_students');
+            if (cachedStudents) {
+              const parsed = JSON.parse(cachedStudents);
+              if (Array.isArray(parsed)) mergedStudents = structureAndDeduplicateStudents(parsed);
             }
-          }
-          localStorage.setItem('nitte_saved_students', JSON.stringify(mergedStudents));
-        } catch (e) { }
+          } catch (e) { }
+        }
 
-        // Preserve and sync mentors with passwords intact
+        // Authoritative mentors sync from server
         let mergedMentors = [];
-        try {
-          const cachedMentors = localStorage.getItem('nitte_saved_mentors');
-          const deletedIds = new Set(
-            JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]').map(id => String(id).toUpperCase())
-          );
-
-          if (cachedMentors !== null) {
-            const parsed = JSON.parse(cachedMentors);
-            if (Array.isArray(parsed)) {
-              mergedMentors = structureAndDeduplicateMentors(parsed);
+        if (data.users && Array.isArray(data.users.mentors)) {
+          mergedMentors = structureAndDeduplicateMentors(data.users.mentors);
+          try {
+            localStorage.setItem('nitte_saved_mentors', JSON.stringify(mergedMentors));
+          } catch (e) { }
+        } else {
+          try {
+            const cachedMentors = localStorage.getItem('nitte_saved_mentors');
+            if (cachedMentors) {
+              const parsed = JSON.parse(cachedMentors);
+              if (Array.isArray(parsed)) mergedMentors = structureAndDeduplicateMentors(parsed);
             }
-          }
-
-          if (data.users && Array.isArray(data.users.mentors)) {
-            const serverMentors = data.users.mentors.filter(m => !deletedIds.has(String(m.id || '').toUpperCase()));
-            if (cachedMentors === null) {
-              mergedMentors = structureAndDeduplicateMentors(serverMentors);
-            } else if (mergedMentors.length > 0) {
-              const localIdSet = new Set(mergedMentors.map(m => String(m.id).toUpperCase()));
-              const newFromServer = serverMentors.filter(m => !localIdSet.has(String(m.id).toUpperCase()));
-              mergedMentors = structureAndDeduplicateMentors([...mergedMentors, ...newFromServer]);
-            }
-          }
-
-          if (cachedMentors === null && mergedMentors.length === 0) {
-            mergedMentors = DEFAULT_FACULTY_MENTORS;
-          }
-
-          localStorage.setItem('nitte_saved_mentors', JSON.stringify(mergedMentors));
-        } catch (e) { }
+          } catch (e) { }
+        }
 
         // Save server issues into local storage cache, preserving local feedback & shiftedToLocalStorage status
         if (data.issues && data.issues.length) {
@@ -920,12 +1001,12 @@ export const DatabaseProvider = ({ children }) => {
 
         if (stuRes.status === 'fulfilled' && stuRes.value.ok) {
           const raw = await stuRes.value.json();
-          if (Array.isArray(raw) && raw.length > 0) {
+          if (Array.isArray(raw)) {
             cloudStudents = raw.map(s => ({
               id: s.id,
               name: s.name,
               email: s.email,
-              mentorId: s.mentor_id || s.mentorId || 'M101',
+              mentorId: s.mentor_id || s.mentorId || null,
               phone: s.phone || '',
               branch: s.branch || 'CSE',
               sem: s.sem || 5,
@@ -937,7 +1018,7 @@ export const DatabaseProvider = ({ children }) => {
 
         if (mntRes.status === 'fulfilled' && mntRes.value.ok) {
           const raw = await mntRes.value.json();
-          if (Array.isArray(raw) && raw.length > 0) {
+          if (Array.isArray(raw)) {
             cloudMentors = raw.map(m => ({
               id: m.id,
               name: m.name,
@@ -952,7 +1033,7 @@ export const DatabaseProvider = ({ children }) => {
 
         if (rosRes.status === 'fulfilled' && rosRes.value.ok) {
           const raw = await rosRes.value.json();
-          if (Array.isArray(raw) && raw.length > 0) {
+          if (Array.isArray(raw)) {
             cloudRos = raw.map(r => ({
               id: r.id,
               name: r.name,
@@ -1133,39 +1214,40 @@ export const DatabaseProvider = ({ children }) => {
           currentSchedules = MOCK_DB.mentoringSchedules;
         }
 
-        // Merge students: Supabase Cloud + Local Cache + Prev
-        let currentStudents = structureAndDeduplicateStudents([
-          ...DEFAULT_STUDENTS,
-          ...(prev.users?.students || []),
-          ...(cloudStudents || [])
-        ]);
-        try {
-          const savedStudents = localStorage.getItem('nitte_saved_students');
-          if (savedStudents !== null) {
-            const parsed = JSON.parse(savedStudents);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              currentStudents = structureAndDeduplicateStudents([...currentStudents, ...parsed]);
-            }
-          }
-          localStorage.setItem('nitte_saved_students', JSON.stringify(currentStudents));
-        } catch (e) { }
+        // Authoritative students sync: Supabase Cloud is primary source of truth
+        let currentStudents;
+        if (cloudStudents !== null) {
+          currentStudents = structureAndDeduplicateStudents(cloudStudents);
+          try {
+            localStorage.setItem('nitte_saved_students', JSON.stringify(currentStudents));
+          } catch (e) { }
+        } else {
+          // Cloud offline fallback
+          let cached = [];
+          try {
+            const raw = localStorage.getItem('nitte_saved_students');
+            if (raw) cached = JSON.parse(raw);
+          } catch (e) { }
+          currentStudents = structureAndDeduplicateStudents(cached.length ? cached : [...(prev.users?.students || [])]);
+        }
 
-        // Merge mentors: Supabase Cloud + Local Cache + Prev
-        let currentMentors = structureAndDeduplicateMentors([
-          ...DEFAULT_FACULTY_MENTORS,
-          ...(prev.users?.mentors || []),
-          ...(cloudMentors || [])
-        ]);
-        try {
-          const savedMentors = localStorage.getItem('nitte_saved_mentors');
-          if (savedMentors !== null) {
-            const parsed = JSON.parse(savedMentors);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              currentMentors = structureAndDeduplicateMentors([...currentMentors, ...parsed]);
-            }
-          }
-          localStorage.setItem('nitte_saved_mentors', JSON.stringify(currentMentors));
-        } catch (e) { }
+        // Authoritative mentors sync: Supabase Cloud is primary source of truth
+        let currentMentors;
+        if (cloudMentors !== null) {
+          currentMentors = structureAndDeduplicateMentors(cloudMentors);
+          try {
+            localStorage.setItem('nitte_saved_mentors', JSON.stringify(currentMentors));
+          } catch (e) { }
+        } else {
+          let cachedM = [];
+          try {
+            const rawM = localStorage.getItem('nitte_saved_mentors');
+            if (rawM) cachedM = JSON.parse(rawM);
+          } catch (e) { }
+          currentMentors = structureAndDeduplicateMentors(
+            cachedM.length ? cachedM : [...(prev.users?.mentors || [])]
+          );
+        }
 
         // ROs from Cloud or Prev or Fallback
         const currentRos = (cloudRos && cloudRos.length > 0)
@@ -3272,7 +3354,6 @@ Office of Student Welfare & Academic Mentorship
     const studentPassword = password ? String(password).trim() : 'Nit#Stu2026';
 
     const allKnownStudents = [
-      ...DEFAULT_STUDENTS,
       ...(db.users?.students || [])
     ];
 
@@ -3291,7 +3372,7 @@ Office of Student Welfare & Academic Mentorship
       email: cleanEmail,
       branch: (branch || 'CSE').trim().toUpperCase(),
       sem: parseInt(sem) || 4,
-      mentorId: 'M101',
+      mentorId: null,
       password: studentPassword,
       role: 'Student',
       createdAt: new Date().toISOString()
@@ -3330,7 +3411,7 @@ Office of Student Welfare & Academic Mentorship
           id: rawId,
           name: (name || '').trim(),
           email: cleanEmail,
-          mentor_id: 'M101',
+          mentor_id: null,
           phone: '9876543210',
           branch: (branch || 'CSE').trim().toUpperCase(),
           sem: parseInt(sem) || 4,
@@ -3342,7 +3423,6 @@ Office of Student Welfare & Academic Mentorship
     // ALWAYS ensure the student is saved to state and localStorage WITH password so they can log in immediately
     setDb(prev => {
       const updated = structureAndDeduplicateStudents([
-        ...DEFAULT_STUDENTS,
         ...(prev.users?.students || []),
         newStudent
       ]);
@@ -3395,14 +3475,14 @@ Office of Student Welfare & Academic Mentorship
     };
 
     const tryStudent = async () => {
-      let allStudents = [...DEFAULT_STUDENTS, ...(db.users?.students || [])];
+      let allStudents = [...(db.users?.students || [])];
       if (typeof window !== 'undefined') {
         try {
           const cached = localStorage.getItem('nitte_saved_students');
           if (cached) {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              allStudents = structureAndDeduplicateStudents([...DEFAULT_STUDENTS, ...parsed, ...allStudents]);
+              allStudents = structureAndDeduplicateStudents([...parsed, ...allStudents]);
             }
           }
         } catch (e) { }
@@ -3704,68 +3784,29 @@ Office of Student Welfare & Academic Mentorship
   };
 
   const bulkUploadStudents = async (students) => {
-    try {
-      const res = await fetch('/api/admin/bulk-upload-students', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ students })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.results && Array.isArray(data.results)) {
-          const registered = data.results
-            .filter(r => r.status === 'SUCCESS')
-            .map(r => ({
-              id: r.id,
-              name: r.name,
-              email: r.email,
-              branch: r.branch || 'CSE',
-              sem: r.sem || 5,
-              mentorId: r.mentorId || 'M-101',
-              password: r.password
-            }));
+    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
 
-          setDb(prev => {
-            const current = structureAndDeduplicateStudents([
-              ...(prev.users?.students || []),
-              ...registered
-            ]);
-            try {
-              localStorage.setItem('nitte_saved_students', JSON.stringify(current));
-            } catch (e) { }
-            return {
-              ...prev,
-              users: {
-                ...prev.users,
-                students: current
-              }
-            };
-          });
-        }
-        return {
-          ...data,
-          successCount: data.count || data.results?.filter(r => r.status === 'SUCCESS').length || students.length,
-          totalProcessed: students.length
-        };
-      }
-    } catch (err) {
-      console.warn('[DatabaseContext] Backend bulk-upload-students offline, running client dispatch:', err.message);
-    }
-
-    // Local resilient processing with direct email dispatches
     const results = [];
     const addedStudents = [];
 
     for (let i = 0; i < (students || []).length; i++) {
       const s = students[i];
-      const rawId = extractRosterField(s, ['student id', 'studentid', 'student usn', 'studentusn', 'usn', 'id', 'roll no', 'rollno', 'student_id'], `u18cm24s${String(i + 1).padStart(4, '0')}`);
-      const rawName = extractRosterField(s, ['student name', 'studentname', 'name', 'full name', 'fullname', 'student_name'], `Student ${i + 1}`);
-      const rawEmail = extractRosterField(s, ['student gmail', 'studentgmail', 'student email', 'studentemail', 'gmail', 'email', 'email address', 'emailaddress', 'mail', 'student_gmail', 'student_email'], 'skandhayashas2906@gmail.com');
+      if (!s || typeof s !== 'object') continue;
+
+      const rawId = extractRosterField(s, ['student id', 'studentid', 'student usn', 'studentusn', 'usn', 'id', 'roll no', 'rollno', 'student_id'], '');
+      const rawName = extractRosterField(s, ['student name', 'studentname', 'name', 'full name', 'fullname', 'student_name'], '');
+
+      // Skip rows with no ID and no Name (empty Excel rows or blank lines)
+      if (!rawId && !rawName) continue;
+
+      const studentId = String(rawId || `4NM23CS${String(addedStudents.length + 1).padStart(3, '0')}`).trim().toUpperCase();
+      const name = String(rawName || `Student ${studentId}`).trim();
+      const defaultEmail = `${studentId.toLowerCase()}@nitte.edu.in`;
+      const rawEmail = extractRosterField(s, ['student gmail', 'studentgmail', 'student email', 'studentemail', 'gmail', 'email', 'email address', 'emailaddress', 'mail', 'student_gmail', 'student_email'], defaultEmail);
       const branch = extractRosterField(s, ['branch', 'department', 'dept', 'course'], 'CSE');
       const sem = parseInt(extractRosterField(s, ['semester', 'sem'], '5')) || 5;
-      const studentId = String(rawId).trim().toUpperCase();
-      const name = String(rawName).trim();
-      const email = String(rawEmail).trim().toLowerCase();
+      const email = String(rawEmail || defaultEmail).trim().toLowerCase();
       const generatedPassword = s.password && String(s.password).trim() ? String(s.password).trim() : `Nit#${Math.floor(1000 + Math.random() * 9000)}`;
 
       const newStudent = {
@@ -3774,92 +3815,82 @@ Office of Student Welfare & Academic Mentorship
         email,
         branch,
         sem,
-        mentorId: 'M-101',
+        mentorId: s.mentorId || s.mentor_id || null,
         phone: s.phone || '9876543210',
         password: generatedPassword
       };
 
       addedStudents.push(newStudent);
-
-      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
-      const emailHtml = generateStudentOnboardingEmailHtml({
-        name,
-        studentId,
-        email,
-        branch,
-        sem,
-        generatedPassword,
-        portalBaseUrl
-      });
-      const emailText = generateStudentOnboardingEmailText({
-        name,
-        studentId,
-        email,
-        branch,
-        sem,
-        generatedPassword,
-        portalBaseUrl
-      });
-
-      let emailStatus = 'DELIVERED_GMAIL';
-      try {
-        await fetch('/api/gmail/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: email,
-            replyTo: 'skandhayashu2906@gmail.com',
-            fromName: 'NITTE Admin Desk',
-            subject: `[NITTE PORTAL CREDENTIALS] Welcome ${name} - Student Account (${studentId})`,
-            html: emailHtml,
-            text: emailText,
-            recipientName: name,
-            eventType: 'BULK_STUDENT_ONBOARDING'
-          })
-        });
-      } catch (e) {
-        console.warn('Email dispatch warning:', e.message);
-        emailStatus = 'DISPATCHED_LOCAL';
-      }
-
       results.push({
         status: 'SUCCESS',
-        index: i + 1,
+        index: results.length + 1,
         id: studentId,
         name,
         email,
         branch,
         sem,
         password: generatedPassword,
-        emailStatus
+        emailStatus: 'QUEUED'
       });
     }
 
-    // Direct Supabase Cloud batch upsert
+    if (addedStudents.length === 0) {
+      return {
+        success: false,
+        message: 'No valid student records found in the uploaded file.',
+        count: 0,
+        results: []
+      };
+    }
+
+    // Direct Supabase Cloud batch upsert - PRIMARY AND AUTHORITATIVE
     try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      fetch(`${SUPABASE_URL}/rest/v1/students`, {
+      let knownMentorIds = new Set((db.users?.mentors || []).map(m => String(m.id).toUpperCase()));
+      try {
+        const mRes = await fetch(`${SUPABASE_URL}/rest/v1/mentors?select=id`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (mRes.ok) {
+          const mList = await mRes.json();
+          if (Array.isArray(mList)) {
+            mList.forEach(m => knownMentorIds.add(String(m.id).toUpperCase()));
+          }
+        }
+      } catch (e) { }
+
+      const sbPayload = addedStudents.map(st => ({
+        id: st.id,
+        name: st.name,
+        email: st.email,
+        mentor_id: (st.mentorId && knownMentorIds.has(String(st.mentorId).toUpperCase())) ? st.mentorId : null,
+        phone: st.phone || '9876543210',
+        branch: st.branch,
+        sem: st.sem,
+        password: st.password
+      }));
+
+      const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/students`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_KEY,
           'Authorization': `Bearer ${SUPABASE_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
+          'Prefer': 'return=representation,resolution=merge-duplicates'
         },
-        body: JSON.stringify(addedStudents.map(st => ({
-          id: st.id,
-          name: st.name,
-          email: st.email,
-          mentor_id: st.mentorId || 'M101',
-          phone: st.phone || '9876543210',
-          branch: st.branch,
-          sem: st.sem,
-          password: st.password
-        })))
-      }).catch(() => {});
-    } catch (e) { }
+        body: JSON.stringify(sbPayload)
+      });
 
+      if (sbRes.ok) {
+        console.log(`[DatabaseContext] Successfully uploaded ${sbPayload.length} students to Supabase Cloud!`);
+      } else {
+        const errText = await sbRes.text();
+        console.warn('[DatabaseContext] Supabase student upload notice:', errText);
+      }
+    } catch (e) {
+      console.warn('[DatabaseContext] Direct Supabase upload error:', e.message);
+    }
+
+    // Save to local React state and browser cache
     setDb(prev => {
       const updatedList = structureAndDeduplicateStudents([
         ...(prev.users?.students || []),
@@ -3877,6 +3908,50 @@ Office of Student Welfare & Academic Mentorship
       };
     });
 
+    // Send onboarding emails in background
+    (async () => {
+      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+      for (const st of addedStudents) {
+        try {
+          const emailHtml = generateStudentOnboardingEmailHtml({
+            name: st.name,
+            studentId: st.id,
+            email: st.email,
+            branch: st.branch,
+            sem: st.sem,
+            generatedPassword: st.password,
+            portalBaseUrl
+          });
+          const emailText = generateStudentOnboardingEmailText({
+            name: st.name,
+            studentId: st.id,
+            email: st.email,
+            branch: st.branch,
+            sem: st.sem,
+            generatedPassword: st.password,
+            portalBaseUrl
+          });
+          await fetch('/api/gmail/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: st.email,
+              replyTo: 'skandhayashu2906@gmail.com',
+              fromName: 'NITTE Admin Desk',
+              subject: `[NITTE PORTAL CREDENTIALS] Welcome ${st.name} - Student Account (${st.id})`,
+              html: emailHtml,
+              text: emailText,
+              recipientName: st.name,
+              eventType: 'BULK_STUDENT_ONBOARDING'
+            })
+          });
+        } catch (e) { }
+      }
+    })();
+
+    // Refresh state from Supabase Cloud
+    await fetchDbState();
+
     return {
       success: true,
       message: `Successfully processed ${results.length} student records.`,
@@ -3888,52 +3963,8 @@ Office of Student Welfare & Academic Mentorship
   };
 
   const bulkUploadMentors = async (mentors) => {
-    try {
-      const res = await fetch('/api/admin/bulk-upload-mentors', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mentors })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.results && Array.isArray(data.results)) {
-          const registered = data.results
-            .filter(r => r.status === 'SUCCESS')
-            .map(r => ({
-              id: r.id,
-              name: r.name,
-              email: r.email,
-              dept: r.dept || 'CSE',
-              class: r.class || 'Assigned Mentees',
-              password: r.password
-            }));
-
-          setDb(prev => {
-            const current = structureAndDeduplicateMentors([
-              ...(prev.users?.mentors || []),
-              ...registered
-            ]);
-            try {
-              localStorage.setItem('nitte_saved_mentors', JSON.stringify(current));
-              const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
-              const newSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
-              registered.forEach(m => { if (m.id) newSet.delete(String(m.id).toUpperCase()); });
-              localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(newSet)));
-            } catch (e) { }
-            return {
-              ...prev,
-              users: {
-                ...prev.users,
-                mentors: current
-              }
-            };
-          });
-        }
-        return data;
-      }
-    } catch (err) {
-      console.warn('[DatabaseContext] Backend bulk-upload-mentors offline, running client dispatch:', err.message);
-    }
+    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
 
     const results = [];
     const addedMentors = [];
@@ -3971,28 +4002,37 @@ Office of Student Welfare & Academic Mentorship
       });
     });
 
-    // Direct Supabase Cloud batch upsert for mentors
+    // Direct Supabase Cloud batch upsert - PRIMARY AND AUTHORITATIVE
     try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      fetch(`${SUPABASE_URL}/rest/v1/mentors`, {
+      const sbPayload = addedMentors.map(m => ({
+        id: m.id,
+        name: m.name,
+        email: m.email,
+        dept: m.dept,
+        class: m.class,
+        password: m.password
+      }));
+
+      const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/mentors`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_KEY,
           'Authorization': `Bearer ${SUPABASE_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
+          'Prefer': 'return=representation,resolution=merge-duplicates'
         },
-        body: JSON.stringify(addedMentors.map(m => ({
-          id: m.id,
-          name: m.name,
-          email: m.email,
-          dept: m.dept,
-          class: m.class,
-          password: m.password
-        })))
-      }).catch(() => {});
-    } catch (e) { }
+        body: JSON.stringify(sbPayload)
+      });
+
+      if (sbRes.ok) {
+        console.log(`[DatabaseContext] Successfully uploaded ${sbPayload.length} mentors to Supabase Cloud!`);
+      } else {
+        const errText = await sbRes.text();
+        console.warn('[DatabaseContext] Supabase mentor upload notice:', errText);
+      }
+    } catch (e) {
+      console.warn('[DatabaseContext] Direct Supabase mentor upload error:', e.message);
+    }
 
     setDb(prev => {
       const updatedList = structureAndDeduplicateMentors([
@@ -4015,6 +4055,30 @@ Office of Student Welfare & Academic Mentorship
       };
     });
 
+    // Send mentor onboarding emails in background
+    (async () => {
+      for (const m of addedMentors) {
+        try {
+          await fetch('/api/gmail/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: m.email,
+              replyTo: 'skandhayashu2906@gmail.com',
+              fromName: 'NITTE Admin Desk',
+              subject: `[NITTE PORTAL CREDENTIALS] Welcome Prof. ${m.name} - Faculty Mentor Onboarding`,
+              html: `<p>Dear <strong>${m.name}</strong>,</p><p>Your Faculty Mentor credentials: ID: <code>${m.id}</code>, Email: <code>${m.email}</code>, Password: <code>${m.password}</code></p>`,
+              text: `Welcome ${m.name}! ID: ${m.id}, Password: ${m.password}`,
+              eventType: 'BULK_MENTOR_ONBOARDING',
+              recipientName: m.name
+            })
+          });
+        } catch (e) { }
+      }
+    })();
+
+    await fetchDbState();
+
     return {
       success: true,
       message: `Successfully processed ${results.length} mentor records.`,
@@ -4031,20 +4095,8 @@ Office of Student Welfare & Academic Mentorship
   };
 
   const bulkUploadRos = async (ros) => {
-    try {
-      const res = await fetch('/api/admin/bulk-upload-ros', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ros })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        await fetchDbState();
-        return data;
-      }
-    } catch (err) {
-      console.warn('[DatabaseContext] Backend bulk-upload-ros offline, falling back to local processing:', err.message);
-    }
+    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
 
     const results = [];
     const addedRos = [];
@@ -4081,27 +4133,29 @@ Office of Student Welfare & Academic Mentorship
       });
     });
 
-    // Direct Supabase Cloud batch upsert for ROs
+    // Direct Supabase Cloud batch upsert for ROs - PRIMARY AND AUTHORITATIVE
     try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      fetch(`${SUPABASE_URL}/rest/v1/ros`, {
+      const sbPayload = addedRos.map(r => ({
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        region: r.category,
+        password: r.password
+      }));
+
+      await fetch(`${SUPABASE_URL}/rest/v1/ros`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_KEY,
           'Authorization': `Bearer ${SUPABASE_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
+          'Prefer': 'return=representation,resolution=merge-duplicates'
         },
-        body: JSON.stringify(addedRos.map(r => ({
-          id: r.id,
-          name: r.name,
-          email: r.email,
-          region: r.category,
-          password: r.password
-        })))
-      }).catch(() => {});
-    } catch (e) { }
+        body: JSON.stringify(sbPayload)
+      });
+    } catch (e) {
+      console.warn('[DatabaseContext] Direct Supabase RO upload error:', e.message);
+    }
 
     setDb(prev => {
       const existing = prev.users?.ros || [];
@@ -4122,6 +4176,8 @@ Office of Student Welfare & Academic Mentorship
         }
       };
     });
+
+    await fetchDbState();
 
     return {
       success: true,
@@ -4183,6 +4239,7 @@ Office of Student Welfare & Academic Mentorship
       assignStudentsToMentor,
       isMatchingMentorId,
       removeStudent,
+      removeAllStudents,
       removeMentor,
       removeAllMentors,
       restoreDefaultMentors,

@@ -1009,3 +1009,77 @@ textarea {
 .active-speaker-ring {
   animation: pulseGlow 2.5s infinite ease-in-out;
 }
+
+/* Stitch UI / Material Design 3 Palette & Utility Classes for Mentor & Admin Portals */
+.bg-primary { background-color: #00236f; }
+.bg-primary-container { background-color: #1e3a8a; }
+.text-primary { color: #00236f; }
+.ring-primary\/20 { --tw-ring-color: rgba(0, 35, 111, 0.2); }
+.text-on-primary { color: #ffffff; }
+
+.bg-secondary { background-color: #0051d5; }
+.text-secondary { color: #0051d5; }
+.bg-secondary-container { background-color: #316bf3; }
+.text-on-secondary { color: #ffffff; }
+.bg-secondary-fixed { background-color: #dbe1ff; }
+.text-on-secondary-fixed { color: #00174b; }
+.border-secondary-fixed { border-color: #dbe1ff; }
+
+.bg-surface { background-color: #f8f9ff; }
+.bg-surface-container { background-color: #e5eeff; }
+.bg-surface-container-low { background-color: #eff4ff; }
+.bg-surface-container-high { background-color: #dce9ff; }
+.bg-surface-container-highest { background-color: #d3e4fe; }
+.bg-surface-container-lowest { background-color: #ffffff; }
+.text-on-surface { color: #0b1c30; }
+.text-on-surface-variant { color: #444651; }
+.border-surface-container { border-color: #e5eeff; }
+.border-outline-variant\/20 { border-color: rgba(197, 197, 211, 0.2); }
+.border-outline-variant\/30 { border-color: rgba(197, 197, 211, 0.3); }
+
+.bg-tertiary { background-color: #003120; }
+.text-tertiary { color: #004a32; }
+.bg-tertiary-fixed { background-color: #85f8c4; }
+.text-on-tertiary-fixed { color: #002114; }
+
+.bg-error { background-color: #ba1a1a; }
+.text-error { color: #ba1a1a; }
+.bg-error-container { background-color: #ffdad6; }
+.text-on-error { color: #ffffff; }
+.text-on-error-container { color: #93000a; }
+
+.p-space-xs { padding: 0.25rem; }
+.p-space-sm { padding: 0.5rem; }
+.p-space-md { padding: 1rem; }
+.p-space-lg { padding: 1.5rem; }
+.p-space-xl { padding: 2rem; }
+
+.px-space-xs { padding-left: 0.25rem; padding-right: 0.25rem; }
+.px-space-sm { padding-left: 0.5rem; padding-right: 0.5rem; }
+.px-space-md { padding-left: 1rem; padding-right: 1rem; }
+.px-space-lg { padding-left: 1.5rem; padding-right: 1.5rem; }
+
+.py-space-xs { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.py-space-sm { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+.py-space-md { padding-top: 1rem; padding-bottom: 1rem; }
+.py-space-lg { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+
+.gap-space-xs { gap: 0.25rem; }
+.gap-space-sm { gap: 0.5rem; }
+.gap-space-md { gap: 1rem; }
+.gap-space-lg { gap: 1.5rem; }
+.gap-space-xl { gap: 2rem; }
+
+.px-gutter { padding-left: 1rem; padding-right: 1rem; }
+@media (min-width: 640px) {
+  .px-gutter { padding-left: 1.5rem; padding-right: 1.5rem; }
+}
+
+.font-headline-sm { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.font-headline-md { font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.015em; }
+.font-title-md { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.005em; }
+.font-body-md { font-size: 14px; line-height: 22px; font-weight: 400; }
+.font-body-sm { font-size: 13px; line-height: 18px; font-weight: 400; }
+.font-label-md { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; }
+.font-label-sm { font-size: 11px; line-height: 14px; font-weight: 700; letter-spacing: 0.04em; }
+.font-metric-stat { font-size: 36px; line-height: 40px; font-weight: 800; letter-spacing: -0.03em; }

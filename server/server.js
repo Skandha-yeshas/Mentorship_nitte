@@ -266,30 +266,34 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
   let failureCount = 0;
 
   for (let i = 0; i < students.length; i++) {
-    const s = students[i];
+    if (!s || typeof s !== 'object') continue;
     const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'] || s['Roll No'] || s['Roll Number'] || s['ID'];
     const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || s['Student'];
-    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'] || s['Mail'];
+
+    // Skip empty or blank lines
+    if (!rawId && !rawName) continue;
+
+    const studentId = String(rawId || `4NM23CS${String(i + 1).padStart(3, '0')}`).trim().toUpperCase();
+    const name = String(rawName || `Student ${studentId}`).trim();
+    const defaultEmail = `${studentId.toLowerCase()}@nitte.edu.in`;
+    const rawEmail = s.email || s.studentEmail || s.Email || s.gmail || s['Gmail'] || s['Student Email'] || s['Email Address'] || s['Student Gmail'] || s['Mail'] || defaultEmail;
     const branch = s.branch || s.Branch || s.department || s.Dept || 'CSE';
     const sem = parseInt(s.sem || s.Sem || s.semester || s.Semester) || 5;
     const phone = s.phone || s.Phone || s.mobile || '9876543210';
-    const mentorId = s.mentorId || s.mentor_id || 'M101';
-
-    if (!rawId || !rawName || !rawEmail) {
-      results.push({
-        status: 'FAILED',
-        index: i + 1,
-        id: rawId || 'N/A',
-        name: rawName || 'N/A',
-        email: rawEmail || 'N/A',
-        reason: 'Missing required Student ID, Name, or Email.'
-      });
-      failureCount++;
-      continue;
+    let mentorId = (s.mentorId || s.mentor_id || '').trim() || null;
+    if (mentorId) {
+      try {
+        const checkMentor = await query('SELECT id FROM mentors WHERE UPPER(id) = $1', [mentorId.toUpperCase()]);
+        if (!checkMentor.rows || checkMentor.rows.length === 0) {
+          mentorId = null;
+        } else {
+          mentorId = checkMentor.rows[0].id;
+        }
+      } catch (e) {
+        mentorId = null;
+      }
     }
 
-    const studentId = String(rawId).trim().toUpperCase();
-    const name = String(rawName).trim();
     const email = String(rawEmail).trim().toLowerCase();
     const generatedPassword = s.password && String(s.password).trim() ? String(s.password).trim() : generateComputerPassword();
 
@@ -303,7 +307,8 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
            email = EXCLUDED.email,
            branch = EXCLUDED.branch,
            sem = EXCLUDED.sem,
-           password = EXCLUDED.password`,
+           password = EXCLUDED.password,
+           mentor_id = COALESCE(EXCLUDED.mentor_id, students.mentor_id)`,
         [studentId, name, email, mentorId, phone, branch, sem, generatedPassword]
       );
 
@@ -522,6 +527,17 @@ app.post('/api/admin/delete-student', async (req, res) => {
     if (!studentId) return res.status(400).json({ error: 'Student ID is required.' });
     await query('DELETE FROM students WHERE id = $1', [studentId]);
     res.json({ success: true, studentId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ADMIN BULK STUDENT REMOVAL (CLEAR ALL STUDENTS)
+app.post('/api/admin/delete-all-students', async (req, res) => {
+  try {
+    await query('DELETE FROM students');
+    await logSystemEvent('Admin removed all students from database.', 'Admin', 'ADMIN');
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
