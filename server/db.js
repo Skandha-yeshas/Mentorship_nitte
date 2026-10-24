@@ -391,19 +391,42 @@ const getActivePool = () => {
     pool = new Pool({
       connectionString,
       ssl: isLocalhost ? false : { rejectUnauthorized: false },
-      connectionTimeoutMillis: 10000
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 30000
     });
-    pool.on('error', () => { isPgAvailable = false; });
+    pool.on('error', (err) => {
+      console.warn('[PostgreSQL Pool Notice]', err?.message || err);
+      if (err?.code === 'ECONNRESET' || err?.code === '57P01' || err?.message?.includes('closed')) {
+        pool = null;
+      }
+    });
   }
   return pool;
 };
 
-// Generic DB Query Helper
+// Generic DB Query Helper with auto-reconnection
 export const query = async (text, params) => {
-  if (!isPgAvailable) {
-    return { rows: [], rowCount: 0 };
+  try {
+    const currentPool = getActivePool();
+    const result = await currentPool.query(text, params);
+    isPgAvailable = true;
+    return result;
+  } catch (err) {
+    console.warn('[PostgreSQL Query Error]', err.message);
+    if (err.message.includes('closed') || err.message.includes('ended') || err.code === 'ECONNRESET') {
+      try {
+        pool = null;
+        const freshPool = getActivePool();
+        const retryResult = await freshPool.query(text, params);
+        isPgAvailable = true;
+        return retryResult;
+      } catch (retryErr) {
+        console.error('[PostgreSQL Retry Failed]', retryErr.message);
+        throw retryErr;
+      }
+    }
+    throw err;
   }
-  return getActivePool().query(text, params);
 };
 
 export const isDbConnected = () => isPgAvailable;

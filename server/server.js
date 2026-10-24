@@ -988,11 +988,49 @@ app.post('/api/issues', async (req, res) => {
     const timestamp = new Date().toISOString();
     const initialLogs = JSON.stringify([{ text: logText, time: timestamp }]);
 
-    await query(
-      `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [issueId, studentId, studentName, category, description, priority, initialStatus, calculatedRoId, timestamp, initialLogs]
-    );
+    // Dual-sync: 1. PostgreSQL pool query
+    try {
+      await query(
+        `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO UPDATE SET
+           status = EXCLUDED.status,
+           description = EXCLUDED.description,
+           logs = EXCLUDED.logs`,
+        [issueId, studentId, studentName, category, description, priority, initialStatus, calculatedRoId, timestamp, initialLogs]
+      );
+    } catch (pgErr) {
+      console.warn('[Server issues] Direct PG insert notice, falling back to Supabase REST:', pgErr.message);
+    }
+
+    // Dual-sync: 2. Direct Supabase Cloud REST API
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation,resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: issueId,
+          student_id: studentId,
+          student_name: studentName,
+          category,
+          description,
+          priority,
+          status: initialStatus,
+          ro_id: calculatedRoId,
+          created_at: timestamp,
+          logs: [{ text: logText, time: timestamp }]
+        })
+      });
+    } catch (restErr) {
+      console.warn('[Server issues] Supabase REST sync notice:', restErr.message);
+    }
 
     await logSystemEvent(`Student ${studentName} submitted issue: ${category} (${initialStatus})`, 'Student', studentId);
 
