@@ -137,6 +137,12 @@ export const AdminDashboard = ({ onLogout }) => {
   const [mfSearchTerm, setMfSearchTerm] = useState('');
   const [selectedFeedbackModal, setSelectedFeedbackModal] = useState(null);
 
+  // Mentor Session Records State
+  const [mlSearchTerm, setMlSearchTerm] = useState('');
+  const [mlMentorFilter, setMlMentorFilter] = useState('ALL');
+  const [mlStatusFilter, setMlStatusFilter] = useState('ALL'); // 'ALL' | 'Submitted' | 'Draft'
+  const [selectedMentorReportModal, setSelectedMentorReportModal] = useState(null);
+
   // Relationship Officer (RO) Management State
   const [roSearchTerm, setRoSearchTerm] = useState('');
   const [roCategoryFilter, setRoCategoryFilter] = useState('ALL');
@@ -502,7 +508,7 @@ export const AdminDashboard = ({ onLogout }) => {
     if (!interventionModalIssue) return;
     const issueId = interventionModalIssue.id || interventionModalIssue.issue_id;
     if (interventionType === 'resolve') {
-      const notes = interventionDirectiveText.trim() || 'Direct Executive Dean Settlement authorized under UGC Grievance Redressal Clause 14.';
+      const notes = interventionDirectiveText.trim() || 'Direct Executive Resolution authorized.';
       await adminResolveIssue(issueId, notes);
       showToast(`Binding Executive Settlement logged for Ticket #${issueId}.`);
     } else if (interventionType === 'reassign') {
@@ -983,12 +989,12 @@ export const AdminDashboard = ({ onLogout }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `nitte_ugc_compliance_report_${Date.now()}.csv`);
+    link.setAttribute('download', `nitte_grievance_report_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast('Generating official UGC Compliance Executive Report (CSV)...');
+    showToast('Generating grievance report (CSV)...');
   };
 
   const handleExportMentorFeedbacksCsv = () => {
@@ -1009,6 +1015,66 @@ export const AdminDashboard = ({ onLogout }) => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     showToast('Exported student mentor feedbacks to CSV.');
+  };
+
+  // Filtered Mentor Session Records for Admin Inspection
+  const filteredMentorRecords = useMemo(() => {
+    const list = db.mentorSessionRecords || [];
+    return list.filter(r => {
+      const q = mlSearchTerm.toLowerCase().trim();
+      const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, r.mentorId || r.mentor_id));
+      const mentorName = (r.mentorName || mentor?.name || '').toLowerCase();
+      const mentorId = (r.mentorId || r.mentor_id || '').toLowerCase();
+      const topic = (r.topic || '').toLowerCase();
+      const notes = (r.notes || '').toLowerCase();
+      const whichClass = (r.whichClass || r.which_class || r.assignedBatch || '').toLowerCase();
+      const location = (r.location || '').toLowerCase();
+
+      const matchesQ = !q || mentorName.includes(q) || mentorId.includes(q) || topic.includes(q) || notes.includes(q) || whichClass.includes(q) || location.includes(q);
+      const matchesMentor = mlMentorFilter === 'ALL' || isMatchingMentorId(r.mentorId || r.mentor_id, mlMentorFilter);
+
+      const recordStatus = r.status === 'Draft' ? 'Draft' : 'Submitted';
+      const matchesStatus = mlStatusFilter === 'ALL' || recordStatus === mlStatusFilter;
+
+      return matchesQ && matchesMentor && matchesStatus;
+    });
+  }, [db.mentorSessionRecords, db.users?.mentors, mlSearchTerm, mlMentorFilter, mlStatusFilter, isMatchingMentorId]);
+
+  const handleExportMentorRecordsCsv = () => {
+    if (!filteredMentorRecords.length) {
+      showToast('No mentor session records found to export.');
+      return;
+    }
+
+    let csv = 'Record ID,Session Date,Faculty Mentor ID,Faculty Mentor Name,Department,Batch / Class,Students Attended,Topic / Focus,Filing Status,Location,Deliberations Notes,Created At\n';
+    filteredMentorRecords.forEach(r => {
+      const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, r.mentorId || r.mentor_id));
+      const id = String(r.id || '').replace(/"/g, '""');
+      const date = String(r.sessionDate || r.date || '').replace(/"/g, '""');
+      const mId = String(r.mentorId || r.mentor_id || '').replace(/"/g, '""');
+      const mName = String(r.mentorName || mentor?.name || 'Faculty Mentor').replace(/"/g, '""');
+      const dept = String(mentor?.dept || 'CSE').replace(/"/g, '""');
+      const cls = String(r.whichClass || r.which_class || r.assignedBatch || mentor?.class || '3rd Yr CSE').replace(/"/g, '""');
+      const att = String(r.studentsAttended !== undefined ? r.studentsAttended : (r.menteesAttendedCount || 0));
+      const topic = String(r.topic || 'Fortnightly Mentorship').replace(/"/g, '""');
+      const status = String(r.status === 'Draft' ? 'Draft' : 'Submitted').replace(/"/g, '""');
+      const loc = String(r.location || 'Seminar Hall').replace(/"/g, '""');
+      const notes = String(r.notes || '').replace(/"/g, '""');
+      const createdAt = String(r.createdAt || r.created_at || '').replace(/"/g, '""');
+
+      csv += `"${id}","${date}","${mId}","${mName}","${dept}","${cls}",${att},"${topic}","${status}","${loc}","${notes}","${createdAt}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `NITTE_Faculty_Mentoring_Records_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${filteredMentorRecords.length} session records to CSV.`);
   };
 
   return (
@@ -1043,7 +1109,7 @@ export const AdminDashboard = ({ onLogout }) => {
               className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm transition"
             >
               <Download size={14} className="text-blue-600" />
-              <span>Export UGC Audit (CSV)</span>
+              <span>Export Grievance Report (CSV)</span>
             </button>
 
             {/* Branch / Registry Manager Trigger */}
@@ -1188,7 +1254,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   <div>
                     <div className="flex items-center space-x-2">
                       <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider">Level 3 Executive Escalation</span>
-                      <span className="text-xs text-rose-700 font-mono font-semibold">UGC Redressal SLA Deadline &lt; 8 Hours</span>
+                      <span className="text-xs text-rose-700 font-mono font-semibold">Resolution SLA &lt; 8 Hours</span>
                     </div>
                     <h2 className="text-base font-bold text-slate-900 mt-1">
                       Ticket #{escalations[0].id}: {escalations[0].category} — {escalations[0].studentName}
@@ -1219,8 +1285,8 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="flex items-center space-x-3">
                   <CheckCircle2 size={24} className="text-emerald-600" />
                   <div>
-                    <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">UGC Compliance Grade A+</span>
-                    <h3 className="text-sm font-bold text-slate-900">All Escalated Grievances Resolved Within Mandated SLA Timelines</h3>
+                    <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">All Cases Resolved</span>
+                    <h3 className="text-sm font-bold text-slate-900">All Escalated Grievances Resolved Within SLA Timelines</h3>
                   </div>
                 </div>
                 <span className="text-xs text-emerald-700 font-mono font-semibold bg-white px-3 py-1 rounded-lg border border-emerald-200">100% Redressed</span>
@@ -1341,7 +1407,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 </div>
                 <div className="flex items-baseline space-x-2">
                   <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{resolutionRate}%</span>
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">UGC Grade A+</span>
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Optimal Resolution</span>
                 </div>
                 <div className="mt-3.5 flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-slate-100">
                   <span>Average SLA: <strong className="text-slate-800 font-mono font-semibold">31.8 hrs</strong></span>
@@ -1384,7 +1450,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     <ShieldCheck size={16} className="text-amber-500" />
                     Zero Anti-Ragging Violations Reported
                   </span>
-                  <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">UGC Clean</span>
+                  <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Zero Violations</span>
                 </div>
               </div>
 
@@ -1722,7 +1788,7 @@ export const AdminDashboard = ({ onLogout }) => {
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900 tracking-tight">Faculty Mentorship Governance & Capacity Engine</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Enforce mandatory UGC Mentorship Ratio (&lt; 1:30) and monitor fortnightly session reports</p>
+                <p className="text-xs text-slate-500 mt-0.5">Manage mentor allocations and monitor session reports</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {(db.users?.mentors || []).length > 0 && (
@@ -2292,56 +2358,204 @@ export const AdminDashboard = ({ onLogout }) => {
         )}
 
         {/* ================= TAB 4: MENTOR LOGS (FACULTY SESSION RECORDS) ================= */}
-        {activeTab === 'mentor-logs' && (
-          <section className="space-y-6">
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 tracking-tight">Faculty Fortnightly Mentoring Session Records</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Mandatory 6-field academic counselling reports logged across departments</p>
-              </div>
-              <span className="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 font-mono text-xs font-bold border border-blue-200">
-                {(db.mentorSessionRecords || []).length} Records Filed
-              </span>
-            </div>
+        {activeTab === 'mentor-logs' && (() => {
+          const allRecords = db.mentorSessionRecords || [];
+          const submittedCount = allRecords.filter(r => r.status !== 'Draft').length;
+          const draftCount = allRecords.filter(r => r.status === 'Draft').length;
+          const uniqueMentorIds = new Set(allRecords.map(r => r.mentorId || r.mentor_id).filter(Boolean));
 
-            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-200">
-                    <tr>
-                      <th className="py-3 px-4">Session Date</th>
-                      <th className="py-3 px-4">Faculty Mentor</th>
-                      <th className="py-3 px-4">Batch / Class</th>
-                      <th className="py-3 px-4">Attendance</th>
-                      <th className="py-3 px-4">Academic Topics Discussed</th>
-                      <th className="py-3 px-4">Action Items & Next Steps</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {(db.mentorSessionRecords || []).length > 0 ? (
-                      (db.mentorSessionRecords || []).map((rec, idx) => (
-                        <tr key={rec.id || idx} className="hover:bg-slate-50 transition">
-                          <td className="py-3 px-4 font-mono font-medium text-slate-900">{rec.date || 'Oct 24, 2026'}</td>
-                          <td className="py-3 px-4 font-bold text-slate-900">{rec.mentorName || 'Faculty Mentor'}</td>
-                          <td className="py-3 px-4 font-medium text-blue-700">{rec.assignedBatch || 'BCA Sem 3'}</td>
-                          <td className="py-3 px-4 font-mono font-bold text-emerald-700">{rec.menteesAttendedCount || 24} Mentees</td>
-                          <td className="py-3 px-4 max-w-xs truncate text-slate-600">{rec.topicsDiscussed || 'Mid-term CIA exam preparation, attendance condonation, and career internship guidance.'}</td>
-                          <td className="py-3 px-4 max-w-xs truncate text-slate-600">{rec.actionItems || 'Coordinate with HOD for special tutorial classes in Mathematics.'}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
-                          No mentoring session records logged for current fortnightly cycle.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+          return (
+            <section className="space-y-6">
+              {/* Telemetry Metric Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Total Session Reports</span>
+                    <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{allRecords.length}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">Logged across cohorts</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <FileText size={20} />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wider">Submitted Reports</span>
+                    <div className="text-2xl font-bold text-emerald-700 mt-1 font-mono">{submittedCount}</div>
+                    <div className="text-[11px] text-emerald-600/80 mt-0.5">Submitted by mentors</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CheckCircle2 size={20} />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-amber-700 font-semibold uppercase tracking-wider">Drafts Saved</span>
+                    <div className="text-2xl font-bold text-amber-700 mt-1 font-mono">{draftCount}</div>
+                    <div className="text-[11px] text-amber-600/80 mt-0.5">Pending submission</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <Clock size={20} />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Active Faculty Reporting</span>
+                    <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{uniqueMentorIds.size}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">Advisors with session logs</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <UserCheck size={20} />
+                  </div>
+                </div>
               </div>
-            </div>
-          </section>
-        )}
+
+              {/* Filter & Search Toolbar */}
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="relative flex-1">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={mlSearchTerm}
+                      onChange={(e) => setMlSearchTerm(e.target.value)}
+                      placeholder="Search by mentor name, USN, topic, class, notes, or venue..."
+                      className="w-full bg-slate-50 text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
+                    />
+                  </div>
+
+                  <select
+                    value={mlMentorFilter}
+                    onChange={(e) => setMlMentorFilter(e.target.value)}
+                    className="bg-slate-50 text-xs px-3 py-2 rounded-xl border border-slate-200 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="ALL">All Faculty Mentors</option>
+                    {(db.users?.mentors || []).map(m => (
+                      <option key={m.id} value={m.id}>{m.name} ({m.dept || 'Dept'})</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={mlStatusFilter}
+                    onChange={(e) => setMlStatusFilter(e.target.value)}
+                    className="bg-slate-50 text-xs px-3 py-2 rounded-xl border border-slate-200 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="ALL">All Statuses</option>
+                    <option value="Submitted">Submitted Only</option>
+                    <option value="Draft">Drafts Only</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleExportMentorRecordsCsv}
+                  className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 shadow-sm transition flex items-center justify-center space-x-1.5 shrink-0"
+                >
+                  <Download size={13} />
+                  <span>Export Records (CSV)</span>
+                </button>
+              </div>
+
+              {/* Records Table */}
+              {filteredMentorRecords.length === 0 ? (
+                <div className="p-12 text-center rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400">
+                    <FileText size={24} />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900">No Mentoring Session Records Found</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    {allRecords.length === 0
+                      ? "Faculty mentors have not yet submitted any reports. When mentors submit or draft session reports, they will automatically appear here."
+                      : "No records match the current search or status filter."}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-200">
+                        <tr>
+                          <th className="py-3 px-4">Session Date</th>
+                          <th className="py-3 px-4">Faculty Mentor</th>
+                          <th className="py-3 px-4">Cohort / Class</th>
+                          <th className="py-3 px-4">Attendance</th>
+                          <th className="py-3 px-4">Deliberation & Academic Focus</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {filteredMentorRecords.map((rec, idx) => {
+                          const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, rec.mentorId || rec.mentor_id));
+                          const mentorName = rec.mentorName || mentor?.name || 'Faculty Mentor';
+                          const isDraft = rec.status === 'Draft';
+                          const displayDate = rec.sessionDate || rec.date || (rec.createdAt ? new Date(rec.createdAt).toLocaleDateString() : 'Recent');
+                          const attendedCount = rec.studentsAttended !== undefined ? rec.studentsAttended : (rec.menteesAttendedCount || 0);
+                          const cohort = rec.whichClass || rec.which_class || rec.assignedBatch || mentor?.class || '3rd Yr CSE';
+
+                          return (
+                            <tr key={rec.id || idx} className="hover:bg-slate-50/80 transition">
+                              <td className="py-3 px-4 font-mono font-medium text-slate-900 whitespace-nowrap">
+                                <div>{displayDate}</div>
+                                <div className="text-[10px] text-slate-400 font-sans">{rec.location || 'Seminar Hall'}</div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="font-bold text-slate-900">{mentorName}</div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="font-mono text-[10px] text-blue-700 font-semibold">{rec.mentorId || rec.mentor_id || mentor?.id}</span>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] text-slate-600 font-semibold">{mentor?.dept || 'CSE'}</span>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 font-medium text-blue-800">
+                                {cohort}
+                              </td>
+                              <td className="py-3 px-4 font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                {attendedCount} Mentees Present
+                              </td>
+                              <td className="py-3 px-4 max-w-sm">
+                                <div className="font-semibold text-slate-800 line-clamp-1">{rec.topic || 'Mentorship Session'}</div>
+                                {rec.notes && (
+                                  <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                                    {rec.notes}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                {isDraft ? (
+                                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 text-[11px] font-bold border border-amber-200 inline-flex items-center gap-1">
+                                    <Clock size={12} />
+                                    <span>Draft Saved</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200 inline-flex items-center gap-1">
+                                    <CheckCircle2 size={12} />
+                                    <span>Submitted</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-right whitespace-nowrap">
+                                <button
+                                  onClick={() => setSelectedMentorReportModal({ ...rec, mentor, mentorName, displayDate, attendedCount, cohort })}
+                                  className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold shadow-sm transition inline-flex items-center space-x-1"
+                                >
+                                  <Eye size={12} />
+                                  <span>View Full Report</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </section>
+          );
+        })()}
 
         {/* ================= TAB 5: STUDENT FEEDBACK ON MENTORS ================= */}
         {activeTab === 'mentor-feedbacks' && (
@@ -2603,7 +2817,7 @@ export const AdminDashboard = ({ onLogout }) => {
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5">
                 <div>
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Immutable Cryptographic Audit Trail (UGC Mandate)</h2>
+                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Security & Activity Audit Trail</h2>
                   <p className="text-xs text-slate-500 mt-0.5">Every mentor session, RO meeting minutes entry, and administrative override is logged with SHA-256 state hashes</p>
                 </div>
                 <span className="px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-mono font-semibold border border-emerald-200 flex items-center gap-1.5">
@@ -2642,7 +2856,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Registrar Executive Intervention</h3>
-                  <p className="text-xs text-slate-500 font-mono">Case #{interventionModalIssue.id} • UGC Redressal Clause 14</p>
+                  <p className="text-xs text-slate-500 font-mono">Case #{interventionModalIssue.id}</p>
                 </div>
               </div>
               <button
@@ -2808,7 +3022,7 @@ export const AdminDashboard = ({ onLogout }) => {
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Interactive Faculty Mentee Allocation Engine</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Allocate enrolled students to faculty mentors with real-time UGC 1:30 quota compliance</p>
+                <p className="text-xs text-slate-500 mt-0.5">Allocate enrolled students to faculty mentors</p>
               </div>
               <button onClick={() => setAssigningMentor(null)} className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
                 <X size={18} />
@@ -3426,6 +3640,141 @@ export const AdminDashboard = ({ onLogout }) => {
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: VIEW FULL FACULTY MENTOR SESSION REPORT */}
+      {selectedMentorReportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-xl bg-blue-50 text-blue-700 border border-blue-100">
+                  <FileText size={22} />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-bold text-slate-900">Faculty Mentorship Session Report</span>
+                    {selectedMentorReportModal.status === 'Draft' ? (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[10px] font-bold border border-amber-200 inline-flex items-center gap-1">
+                        <Clock size={11} />
+                        <span>Draft Saved</span>
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200 inline-flex items-center gap-1">
+                        <CheckCircle2 size={11} />
+                        <span>Submitted</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Report Reference: #{selectedMentorReportModal.id || 'REC-XXXX'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedMentorReportModal(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Mentor & Session Metadata Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Faculty Mentor Details</span>
+                <div className="font-bold text-slate-900 text-sm mt-0.5">
+                  {selectedMentorReportModal.mentorName || selectedMentorReportModal.mentor?.name || 'Faculty Mentor'}
+                </div>
+                <div className="font-mono text-blue-700 font-semibold mt-0.5">
+                  ID: {selectedMentorReportModal.mentorId || selectedMentorReportModal.mentor_id || selectedMentorReportModal.mentor?.id}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Dept of {selectedMentorReportModal.mentor?.dept || 'Computer Science & Engineering'} • {selectedMentorReportModal.mentor?.email || 'mentor@nitte.edu.in'}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Session & Cohort Telemetry</span>
+                <div className="text-slate-800 font-medium mt-0.5">
+                  <strong>Date:</strong> {selectedMentorReportModal.displayDate || selectedMentorReportModal.sessionDate || selectedMentorReportModal.date}
+                </div>
+                <div className="text-slate-800 font-medium mt-0.5">
+                  <strong>Venue:</strong> {selectedMentorReportModal.location || 'Seminar Hall 204, Block III'}
+                </div>
+                <div className="text-slate-800 font-medium mt-0.5">
+                  <strong>Target Class:</strong> {selectedMentorReportModal.cohort || selectedMentorReportModal.whichClass || selectedMentorReportModal.which_class || '3rd Yr CSE'}
+                </div>
+                <div className="text-emerald-700 font-mono font-bold mt-1 inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  <CheckCircle2 size={12} />
+                  <span>{selectedMentorReportModal.attendedCount !== undefined ? selectedMentorReportModal.attendedCount : selectedMentorReportModal.studentsAttended} Mentees Recorded Present</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Topic & Focus Areas */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider text-[11px]">Session Topic & Discussion Focus</span>
+              <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-100 text-xs font-bold text-blue-900">
+                {selectedMentorReportModal.topic || 'Mentorship Session'}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-semibold border border-slate-200">
+                  ✓ Academic Performance & CIE Marks
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-semibold border border-slate-200">
+                  ✓ Campus Attendance Redressal
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-semibold border border-slate-200">
+                  ✓ Personal Well-being & Hostels
+                </span>
+              </div>
+            </div>
+
+            {/* Full Mentor Session Notes */}
+            <div className="space-y-1.5">
+              <span className="text-xs font-bold text-slate-700">Mentor Session Notes:</span>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap font-sans">
+                {selectedMentorReportModal.notes || 'No session notes recorded.'}
+              </div>
+            </div>
+
+            {/* Status Footer */}
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div>
+                <span className="font-bold text-slate-900 block">Session Report Status</span>
+                <span className="text-slate-600 text-[11px]">
+                  {selectedMentorReportModal.status === 'Draft'
+                    ? 'Unsubmitted Faculty Draft'
+                    : 'Submitted by Faculty Mentor'}
+                </span>
+              </div>
+              <span className="font-mono text-[10px] text-slate-500 shrink-0">
+                Logged: {selectedMentorReportModal.createdAt ? new Date(selectedMentorReportModal.createdAt).toLocaleString() : 'Current Academic Cycle'}
+              </span>
+            </div>
+
+            {/* Action Bar */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  showToast(`Printing session report #${selectedMentorReportModal.id}...`);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center space-x-1.5"
+              >
+                <Printer size={13} />
+                <span>Print Report</span>
+              </button>
+              <button
+                onClick={() => setSelectedMentorReportModal(null)}
+                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition"
+              >
+                Close Report
               </button>
             </div>
           </div>

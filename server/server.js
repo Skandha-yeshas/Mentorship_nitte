@@ -67,7 +67,7 @@ app.get('/api/db-state', async (req, res) => {
     const meetingsRes = await query(`SELECT id, issue_id AS "issueId", student_id AS "studentId", student_name AS "studentName", ro_id AS "roId", date, time, mode, location, notes, status FROM meetings`);
     const sessionsRes = await query(`SELECT id, mentor_id AS "mentorId", mentor_name AS "mentorName", title, date_time AS "dateTime", description, link FROM group_sessions ORDER BY date_time ASC`);
     const resourcesRes = await query(`SELECT id, mentor_id AS "mentorId", title, type, content, date_shared AS "dateShared" FROM resources ORDER BY date_shared DESC`);
-    const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, which_class AS "whichClass", location, created_at AS "createdAt" FROM mentor_session_records ORDER BY session_date DESC`);
+    const mentorRecordsRes = await query(`SELECT id, mentor_id AS "mentorId", session_date AS "sessionDate", students_attended AS "studentsAttended", topic, notes, which_class AS "whichClass", location, status, created_at AS "createdAt" FROM mentor_session_records ORDER BY created_at DESC`);
     const mentorFeedbacksRes = await query(`SELECT id, student_id AS "studentId", student_name AS "studentName", mentor_id AS "mentorId", mentor_name AS "mentorName", regularity_rating AS "regularityRating", clarity_rating AS "clarityRating", participation_rating AS "participationRating", difficulties, created_at AS "createdAt" FROM mentor_feedbacks ORDER BY created_at DESC`);
     const logsRes = await query(`SELECT id, text, timestamp, user_role AS "userRole", user_id AS "userId" FROM system_logs ORDER BY timestamp DESC LIMIT 100`);
     let categoryVideosRes = { rows: [] };
@@ -604,7 +604,8 @@ app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
     const mentorId = String(rawId).trim().toUpperCase();
     const name = String(rawName).trim();
     const email = String(rawEmail).trim().toLowerCase();
-    const generatedPassword = m.password && String(m.password).trim() ? String(m.password).trim() : generateComputerPassword();
+    const rawPassword = m.password || m['Initial Password'] || m['initial password'] || m['Password'] || m['password'] || m.pwd;
+    const generatedPassword = rawPassword && String(rawPassword).trim() ? String(rawPassword).trim() : generateComputerPassword();
 
     try {
       // Upsert into PostgreSQL mentors table
@@ -620,46 +621,208 @@ app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
         [mentorId, name, email, dept, assignedClass, generatedPassword]
       );
 
-      // Send automated onboarding credential email via Gmail SMTP
-      const emailHtml = `
-        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-          <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); padding: 24px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: 0.5px;">NITTE Student Mentorship & Support System</h1>
-            <p style="margin: 6px 0 0 0; font-size: 0.9rem; color: #93c5fd;">Official Faculty Mentor Account Onboarding</p>
-          </div>
-          <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
-            <p style="font-size: 1rem; margin-top: 0;">Dear <strong>${name}</strong>,</p>
-            <p>Welcome! Your official Faculty Mentor account has been registered on the NITTE Student Mentorship & Escalation Portal by Institutional Administration.</p>
-            
-            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #2563eb; padding: 18px; border-radius: 6px; margin: 20px 0;">
-              <h3 style="margin: 0 0 12px 0; color: #1e3a8a; font-size: 1rem;">🔐 Your Faculty Mentor Login Credentials:</h3>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #2563eb; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Faculty Mentor ID:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${mentorId}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Department:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${dept}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Assigned Mentorship Class:</strong> <span>${assignedClass}</span></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Registered Email:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
-            </div>
+      const portalBaseUrl = process.env.APP_URL || (req.headers.host ? `http://${req.headers.host}` : 'http://localhost:5173');
+      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}&pwd=${encodeURIComponent(generatedPassword)}`;
 
-            <p style="font-size: 0.9rem; color: #475569;">You can log in to the portal as <strong>Faculty Mentor</strong> using your Mentor ID or Registered Email along with the password above.</p>
-            
-            <div style="text-align: center; margin-top: 24px;">
-              <a href="http://localhost:5173" style="display: inline-block; background: #2563eb; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 0.95rem;">Log In to Faculty Mentor Dashboard</a>
-            </div>
-          </div>
-          <div style="background-color: #f1f5f9; padding: 14px 24px; text-align: center; font-size: 0.78rem; color: #64748b; border-top: 1px solid #e2e8f0;">
-            This automated credential notification was dispatched by NITTE System Administration via ${GMAIL_ADDRESS}.
-          </div>
-        </div>
-      `;
+      // Send automated onboarding credential email via Gmail SMTP with identical institutional theme
+      const emailHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NITTE Faculty Mentor Account Credentials</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 32px 12px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card Container -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0;">
+          
+          <!-- Modern Gradient Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #091e42 0%, #1e3a8a 52%, #059669 100%); padding: 36px 32px 28px; text-align: center; color: #ffffff;">
+              <div style="display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 30px; padding: 5px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #a7f3d0; margin-bottom: 14px;">
+                🏛️ NITTE (DEEMED TO BE UNIVERSITY)
+              </div>
+              <h1 style="margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; line-height: 1.3;">
+                Faculty Mentorship Portal
+              </h1>
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #93c5fd; font-weight: 400;">
+                Official Faculty Appointment & Direct Access Credentials
+              </p>
+            </td>
+          </tr>
+
+          <!-- Content Body -->
+          <tr>
+            <td style="padding: 32px 32px 24px;">
+              <p style="margin: 0 0 14px; font-size: 16px; color: #0f172a; line-height: 1.5;">
+                Dear Prof. / Dr. <strong style="color: #1e3a8a;">${name}</strong>,
+              </p>
+              <p style="margin: 0 0 18px; font-size: 14px; color: #475569; line-height: 1.6;">
+                Welcome to the NITTE Faculty Mentorship Network! Your official faculty advisor account has been provisioned and verified by Institutional Administration. You are now designated as an official mentor on the <strong>NITTE Student Mentorship & Grievance Escalation Portal</strong>.
+              </p>
+
+              <!-- Faculty Profile Snapshot Tag -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 22px;">
+                <tr>
+                  <td style="padding: 12px 18px; font-size: 13px; color: #334155;">
+                    <span style="display: inline-block; margin-right: 18px;"><strong>📚 Department:</strong> ${dept}</span>
+                    <span style="display: inline-block; margin-right: 18px;"><strong>👥 Mentorship Class:</strong> ${assignedClass || 'General Batch'}</span>
+                    <span style="display: inline-block; margin-right: 18px;"><strong>🛡️ Role:</strong> Faculty Mentor</span>
+                    <span style="display: inline-block;"><strong>👥 Capacity:</strong> Up to 30 Mentees</span>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Modern Credentials Box -->
+              <div style="background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #cbd5e1; border-top: 4px solid #059669; border-radius: 12px; padding: 20px; margin-bottom: 26px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">
+                  <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: #065f46;">
+                    🔐 Official Faculty Login Credentials
+                  </h3>
+                  <span style="font-size: 11px; background: #ecfdf5; color: #059669; padding: 3px 8px; border-radius: 20px; font-weight: 700; border: 1px solid #a7f3d0;">
+                    ✓ Active
+                  </span>
+                </div>
+
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 13px; color: #1e293b; line-height: 1.8;">
+                  <tr>
+                    <td width="38%" style="color: #64748b; font-weight: 600; padding: 5px 0;">Faculty / Mentor ID:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 14px; font-weight: 700; background: #ecfdf5; color: #047857; padding: 3px 8px; border-radius: 6px; border: 1px solid #a7f3d0;">
+                        ${mentorId}
+                      </code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">Official Email:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; color: #334155; background: #f1f5f9; padding: 3px 8px; border-radius: 6px;">
+                        ${email}
+                      </code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">Generated Password:</td>
+                    <td style="padding: 5px 0;">
+                      <code style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 15px; font-weight: 800; background: #fef2f2; color: #dc2626; padding: 4px 10px; border-radius: 6px; border: 1px solid #fecaca; letter-spacing: 0.5px;">
+                        ${generatedPassword}
+                      </code>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Direct 1-Click Login Button Section -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin: 24px 0 16px;">
+                <tr>
+                  <td align="center">
+                    <table role="presentation" cellspacing="0" cellpadding="0">
+                      <tr>
+                        <td align="center" style="border-radius: 10px; background: linear-gradient(135deg, #059669 0%, #047857 100%); box-shadow: 0 4px 16px rgba(5, 150, 105, 0.35);">
+                          <a href="${directLoginUrl}" target="_blank" style="display: inline-block; padding: 14px 34px; font-size: 15px; font-weight: 700; color: #ffffff; text-decoration: none; border-radius: 10px; letter-spacing: 0.2px;">
+                            👉 Open Faculty Mentor Portal
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
+                      ⚡ Pre-fills your Faculty ID & password on the login page. Simply click "Sign In to Faculty Mentor Portal" to enter.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Fallback Direct URL Box -->
+              <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 12px; margin-top: 18px; font-size: 12px; color: #475569;">
+                <p style="margin: 0 0 6px; font-weight: 600; color: #334155;">Direct Login Link (if button does not open):</p>
+                <a href="${directLoginUrl}" target="_blank" style="color: #059669; text-decoration: underline; word-break: break-all; font-family: monospace; font-size: 11px;">
+                  ${directLoginUrl}
+                </a>
+              </div>
+
+              <!-- Feature Highlights / Guidelines -->
+              <div style="margin-top: 26px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                <h4 style="margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: #64748b; font-weight: 700;">
+                  What you can do in your Faculty Portal:
+                </h4>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 13px; color: #334155; line-height: 1.6;">
+                  <tr>
+                    <td style="padding: 4px 0;">👥 <strong>Mentee Management:</strong> Review all assigned undergraduate / postgraduate students and monitor attendance or performance.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0;">🗓️ <strong>Counseling Sessions:</strong> Schedule and conduct 1-on-1 or group advisory meetings with integrated digital notes.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0;">🎫 <strong>Student Concerns & Tickets:</strong> Review issues filed by your mentees, provide initial guidance, or escalate unresolved matters to Relationship Officers (RO).</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0;">📑 <strong>Session Reports:</strong> Record session attendance and interaction notes.</td>
+                  </tr>
+                </table>
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
+              <p style="margin: 0 0 4px; font-weight: 600; color: #334155;">
+                NITTE Mentorship & Academic Support Administration
+              </p>
+              <p style="margin: 0 0 4px; font-size: 11px; color: #64748b;">
+                Nitte (Deemed to be University), Deralakatte, Mangaluru, Karnataka 575018
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94a3b8;">
+                This automated credential notification was sent by NITTE System Administration via ${GMAIL_ADDRESS}.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+      const emailText = `NITTE (Deemed to be University) - Faculty Mentorship Portal
+Official Faculty Account Activation & Credentials
+
+Dear Prof. / Dr. ${name},
+
+Welcome to the NITTE Faculty Mentorship Network! Your official faculty advisor account has been provisioned and verified by Institutional Administration.
+
+Faculty Details:
+- Department: ${dept}
+- Mentorship Class / Batch: ${assignedClass || 'General Batch'}
+- Role: Faculty Mentor (Advisor)
+- Capacity: Up to 30 Mentees
+
+Your Login Credentials:
+- Faculty / Mentor ID: ${mentorId}
+- Registered Email: ${email}
+- Password: ${generatedPassword}
+
+👉 Click the direct link below to open the faculty portal (pre-fills your credentials):
+${directLoginUrl}
+
+⚡ Note: The link will pre-fill your Faculty ID and password. Simply click "Sign In to Faculty Mentor Portal" to enter your dashboard.
+
+Portal: ${portalBaseUrl}
+NITTE Mentorship & Academic Support Desk
+Nitte (Deemed to be University), Deralakatte, Mangaluru, Karnataka 575018`;
 
       await sendGmailNotification({
         to: email,
         replyTo: GMAIL_ADDRESS,
         fromName: 'NITTE Admin Desk',
-        subject: `[NITTE FACULTY MENTOR CREDENTIALS] Welcome ${name} - Faculty Account Onboarding (${mentorId})`,
+        subject: `[NITTE FACULTY CREDENTIALS] Welcome Prof. ${name} - Faculty Mentor Portal (${mentorId})`,
         html: emailHtml,
-        text: `Welcome ${name}! Your Faculty Mentor account has been registered. Mentor ID: ${mentorId}, Department: ${dept}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        text: emailText,
         eventType: 'BULK_MENTOR_ONBOARDING'
       });
 
@@ -1696,23 +1859,35 @@ app.post('/api/resources', async (req, res) => {
 
 // 10.5. SUBMIT MENTOR SESSION RECORD
 app.post('/api/mentor/session-records', async (req, res) => {
-  const { mentorId, sessionDate, studentsAttended, topic, notes, whichClass, location } = req.body;
+  const { id, mentorId, sessionDate, studentsAttended, topic, notes, whichClass, location, status } = req.body;
   if (!mentorId || !sessionDate || !topic) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
+  const recordId = id || `REC-${Date.now()}`;
+  const recordStatus = status || 'Submitted';
+  const attendedCount = parseInt(studentsAttended) || 0;
+
   try {
     await query(
-      `INSERT INTO mentor_session_records (mentor_id, session_date, students_attended, topic, notes, which_class, location)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [mentorId, sessionDate, parseInt(studentsAttended) || 0, topic, notes || '', whichClass || '6th Sem CSE-A', location || 'Seminar Hall 1 (Admin Block)']
+      `INSERT INTO mentor_session_records (id, mentor_id, session_date, students_attended, topic, notes, which_class, location, status)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+       ON CONFLICT (id) DO UPDATE SET
+         session_date = EXCLUDED.session_date,
+         students_attended = EXCLUDED.students_attended,
+         topic = EXCLUDED.topic,
+         notes = EXCLUDED.notes,
+         which_class = EXCLUDED.which_class,
+         location = EXCLUDED.location,
+         status = EXCLUDED.status`,
+      [recordId, mentorId, sessionDate, JSON.stringify(attendedCount), topic, notes || '', whichClass || '6th Sem CSE-A', location || 'Seminar Hall 1 (Admin Block)', recordStatus]
     );
 
-    await logSystemEvent(`Mentor ${mentorId} submitted session report for ${whichClass || 'Class'}: ${topic}`, 'Mentor', mentorId);
-    res.status(201).json({ success: true });
+    await logSystemEvent(`Mentor ${mentorId} ${recordStatus === 'Draft' ? 'saved draft report' : 'submitted session report'} for ${whichClass || 'Class'}: ${topic}`, 'Mentor', mentorId);
+    res.status(201).json({ success: true, id: recordId, status: recordStatus });
   } catch (err) {
     console.error('Error logging mentor session record:', err);
-    res.status(500).json({ error: 'Failed to save session record' });
+    res.status(500).json({ error: 'Failed to save session record: ' + err.message });
   }
 });
 

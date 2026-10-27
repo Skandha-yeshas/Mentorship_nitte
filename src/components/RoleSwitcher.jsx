@@ -82,7 +82,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 text-sm leading-none">{getDisplayName()}</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-nitte-100 text-nitte-800 font-bold border border-nitte-200">
-                  {currentUser === 'Student' && currentStudent?.sem ? `Sem ${currentStudent.sem} • ${currentStudent.branch}` : `${currentUser} Account`}
+                  {currentUser === 'Student' && currentStudent?.sem ? `Sem ${currentStudent.sem} • ${currentStudent.branch}` : `${currentUser === 'Mentor' ? 'Faculty Mentor' : currentUser} Account`}
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-1">
@@ -91,8 +91,13 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
                     USN: {currentStudent?.id || selectedSubProfile || ''}
                   </span>
                 )}
+                {currentUser === 'Mentor' && (
+                  <span className="text-[11px] font-mono text-slate-500 leading-none">
+                    Faculty ID: {selectedSubProfile || authenticatedUser?.id || ''}
+                  </span>
+                )}
                 <span className="inline-flex items-center text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                  UGC Verified
+                  Active
                 </span>
               </div>
             </div>

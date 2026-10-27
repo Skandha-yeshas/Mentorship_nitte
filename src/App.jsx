@@ -9,7 +9,16 @@ import { LoginPage } from './views/LoginPage';
 import { LoginModal } from './components/LoginModal';
 
 function AppContent() {
-  const { currentUser, setCurrentUser, db, loading, error, authenticatedUser, logoutUser } = useContext(DatabaseContext);
+  const context = useContext(DatabaseContext) || {};
+  const {
+    currentUser = 'Student',
+    setCurrentUser = () => {},
+    db = {},
+    loading = false,
+    error = null,
+    authenticatedUser = null,
+    logoutUser = () => {}
+  } = context;
   const [selectedSubProfile, setSelectedSubProfile] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isLoginPageVisible, setIsLoginPageVisible] = useState(true);

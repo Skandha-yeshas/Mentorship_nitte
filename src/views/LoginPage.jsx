@@ -30,7 +30,6 @@ export const LoginPage = ({ onLoginSuccess }) => {
       const roleParam = params.get('role');
       const idParam = params.get('id') || params.get('user') || params.get('usn') || params.get('email');
       const pwdParam = params.get('pwd') || params.get('password') || params.get('key');
-      const autologinParam = params.get('autologin') === '1' || params.get('autologin') === 'true' || params.get('auto') === 'true';
 
       if (idParam || pwdParam || roleParam) {
         let targetRole = 'Student';
@@ -51,7 +50,8 @@ export const LoginPage = ({ onLoginSuccess }) => {
 
         // If credentials are provided from the invitation link:
         if (cleanId && cleanPwd) {
-          setSuccessMsg(`⚡ Credentials pre-filled for ${cleanId}. Please click "Sign In to ${targetRole} Portal" below to access your dashboard.`);
+          const targetRoleLabel = targetRole === 'Mentor' ? 'Faculty Mentor' : targetRole;
+          setSuccessMsg(`⚡ Credentials pre-filled for ${cleanId}. Please click "Sign In to ${targetRoleLabel} Portal" below to access your dashboard.`);
         }
       }
     } catch (e) {
@@ -563,7 +563,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
                   </>
                 ) : (
                   <>
-                    <span>Sign In to {selectedRole} Portal</span>
+                    <span>Sign In to {currentConfig.label || selectedRole} Portal</span>
                     <ArrowRight size={16} />
                   </>
                 )}

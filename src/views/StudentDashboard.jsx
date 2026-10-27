@@ -522,7 +522,7 @@ export const StudentDashboard = ({ studentId }) => {
                       <span className="p-1.5 rounded-lg bg-nitte-50 text-nitte-800 text-[18px] material-symbols-outlined">edit_note</span>
                       Lodge Grievance or Mentorship Request
                     </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Compliant with UGC (Grievance Redressal of Students) Regulations, 2023.</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Submit your academic or campus inquiry to your mentor.</p>
                   </div>
                   <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Authenticated: {student?.id || '4NM21CS089'}
@@ -1053,7 +1053,7 @@ export const StudentDashboard = ({ studentId }) => {
                             </span>
                           </span>
                           <div className="text-xs">
-                            <span className="font-bold text-slate-700">Official Closure &amp; UGC Compliance Sign-off</span>
+                            <span className="font-bold text-slate-700">Official Closure &amp; Sign-off</span>
                             <p className="text-slate-400 text-[11px] mt-0.5">
                               {selectedIssue.status === 'Resolved' ? (selectedIssue.resolutionNotes || 'Marked resolved by officer.') : 'Pending completion of agreed action items.'}
                             </p>
@@ -1279,7 +1279,7 @@ export const StudentDashboard = ({ studentId }) => {
                       <span className="text-[10px] font-bold bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200">
                         Signed: {myMentor?.name || 'Prof. Suresh Nayak'}
                       </span>
-                      <span className="text-[10px] text-emerald-600 font-medium">UGC Action Item Completed</span>
+                      <span className="text-[10px] text-emerald-600 font-medium">Action Item Completed</span>
                     </div>
                   </div>
 
@@ -1526,7 +1526,7 @@ export const StudentDashboard = ({ studentId }) => {
 
               {/* Subtitles / Recording active indicator */}
               <div className="absolute bottom-4 left-4 max-w-md bg-slate-950/80 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10 text-xs text-slate-200 z-10">
-                <span className="text-emerald-400 font-bold">Encrypted Session:</span> Institutional audio &amp; video streams protected under FERPA &amp; UGC guidelines.
+                <span className="text-emerald-400 font-bold">Encrypted Session:</span> Institutional audio &amp; video streams protected under university guidelines.
               </div>
             </div>
 
@@ -1656,7 +1656,7 @@ export const StudentDashboard = ({ studentId }) => {
             <span>Student Grievance Redressal Committee (SGRC)</span>
           </div>
           <div className="flex items-center gap-4 text-[11px]">
-            <a className="hover:text-nitte-800 transition" href="#ugc">UGC Regulations</a>
+            <a className="hover:text-nitte-800 transition" href="#regulations">University Regulations</a>
             <a className="hover:text-nitte-800 transition" href="#anti-ragging">Anti-Ragging Squad</a>
             <a className="hover:text-nitte-800 transition" href="#ombudsperson">Ombudsperson Contact</a>
             <span className="font-mono text-slate-400">Build v3.2.0</span>

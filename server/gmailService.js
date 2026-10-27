@@ -94,9 +94,9 @@ export const sendGmailNotification = async ({
 
   try {
     const res = await query(
-      `INSERT INTO email_logs (direction, sender, recipient, subject, body, event_type, issue_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at AS "createdAt"`,
-      ['OUTBOUND', sender, to, subject, bodyText, eventType, issueId, dispatchStatus]
+      `INSERT INTO email_logs (direction, sender, recipient, recipient_email, recipient_name, subject, body, event_type, issue_id, status)
+       VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at AS "createdAt"`,
+      ['OUTBOUND', sender, to, recipientName || to, subject, bodyText, eventType, issueId, dispatchStatus]
     );
     if (res.rows.length > 0) {
       emailRecord.id = res.rows[0].id;
@@ -147,9 +147,9 @@ export const processInboundGmailReply = async ({
   try {
     // 1. Save inbound email log
     await query(
-      `INSERT INTO email_logs (direction, sender, recipient, subject, body, event_type, issue_id, status)
-       VALUES ('INBOUND', $1, $2, $3, $4, 'GMAIL_REPLY', $5, 'RECEIVED')`,
-      [senderEmail, recipient, subject, bodyText, issueId]
+      `INSERT INTO email_logs (direction, sender, recipient, recipient_email, recipient_name, subject, body, event_type, issue_id, status)
+       VALUES ('INBOUND', $1, $2, $2, $3, $4, $5, 'GMAIL_REPLY', $6, 'RECEIVED')`,
+      [senderEmail, recipient, 'NITTE System Desk', subject, bodyText, issueId]
     );
 
     // 2. Fetch existing logs for the issue

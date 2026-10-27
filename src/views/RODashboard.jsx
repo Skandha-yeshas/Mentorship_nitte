@@ -5,6 +5,7 @@ import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtc
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
+import SelfHelpManagerModal from '../components/SelfHelpManagerModal';
 
 export const RODashboard = ({ roId }) => {
   const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, updateCategoryVideo, submitRoMeetingFeedback } = useContext(DatabaseContext);
@@ -1111,7 +1112,7 @@ export const RODashboard = ({ roId }) => {
                 </span>
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs shadow-2xs">
                   <span className="material-symbols-outlined text-xs text-emerald-600">verified</span>
-                  UGC Redressal Authorized
+                  Authorized Officer
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 mt-2 font-medium flex items-center flex-wrap gap-x-2">
@@ -1526,7 +1527,7 @@ export const RODashboard = ({ roId }) => {
                       </span>
                       <span className="text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-0.5 rounded flex items-center gap-1">
                         <span className="material-symbols-outlined text-xs text-slate-600">verified_user</span>
-                        UGC Redressal Clause 14 Compliant
+                        Redressal Procedure Verified
                       </span>
                       <span className={`text-xs font-semibold px-2.5 py-0.5 rounded border flex items-center gap-1 ${
                         selectedIssue.priority === 'high' || selectedIssue.priority === 'High'
@@ -1865,7 +1866,7 @@ export const RODashboard = ({ roId }) => {
                     </div>
                   </div>
                   <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1 self-start sm:self-auto">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> UGC Audit Compliant
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Audit Logged
                   </span>
                 </div>
 
@@ -2288,7 +2289,7 @@ export const RODashboard = ({ roId }) => {
                   <h3 className="text-base font-bold text-slate-900 leading-tight">
                     {activeMeeting ? 'Reschedule / Reassign Meeting' : 'Assign & Schedule Redressal Meeting'}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Mandated Deliberation Session under UGC Regulation 2023</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Consultation &amp; Redressal Session</p>
                 </div>
               </div>
               <button
@@ -3194,198 +3195,28 @@ export const RODashboard = ({ roId }) => {
         </div>
       )}
 
-      {/* CATEGORY GUIDANCE & SOLUTION VIDEO MANAGER MODAL (RO YouTube Editor) */}
-      {showVideoManagerModal && (() => {
-        const embedUrl = getYoutubeEmbedUrl(managerVideoUrl);
-        const isEmbed = embedUrl.includes('/embed/') || embedUrl.includes('youtube');
-
-        return (
-          <div className="modal-overlay" style={{ zIndex: 1250, background: 'rgba(0,0,0,0.88)' }}>
-            <div className="modal-content" style={{ maxWidth: '780px', width: '95%', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', borderRadius: '12px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
-              {/* Header */}
-              <div className="modal-header" style={{ borderBottom: '1px solid #334155', paddingBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '10px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Video size={22} />
-                  </div>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff', fontWeight: '700' }}>
-                      {managerTargetIssueId ? `Issue Solution Video (Ticket #${managerTargetIssueId})` : 'My Assigned Issue Solution Video'}
-                    </h3>
-                    <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>
-                      Assigned to <strong>{ro.name}</strong> ({ro.id}) &nbsp;|&nbsp; Category: <strong style={{ color: '#6ee7b7' }}>{managerCategory}</strong>
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowVideoManagerModal(false)}
-                  style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '6px' }}
-                >
-                  <X size={22} />
-                </button>
-              </div>
-
-              {/* Form */}
-              <form onSubmit={handleSaveCategoryVideo}>
-                <div className="modal-body" style={{ padding: '18px 0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  
-                  {/* Category Field - Strictly Scoped to this RO's assigned issue */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8' }}>
-                        Issue Category:
-                      </label>
-                      <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.3)', fontWeight: 600 }}>
-                        {managerTargetIssueId ? `🔒 Locked to Ticket #${managerTargetIssueId}` : `🔒 Scoped to ${ro.id}`}
-                      </span>
-                    </div>
-
-                    {managerTargetIssueId || myAssignedIssueCategories.length <= 1 ? (
-                      <div style={{
-                        background: 'rgba(30, 41, 59, 0.8)',
-                        color: '#f8fafc',
-                        border: '1px solid #334155',
-                        borderRadius: '6px',
-                        padding: '10px 14px',
-                        fontSize: '0.88rem',
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}>
-                        <span>{managerCategory}</span>
-                        <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Authorized RO Category</span>
-                      </div>
-                    ) : (
-                      <select
-                        value={managerCategory}
-                        onChange={(e) => {
-                          const newCat = e.target.value;
-                          setManagerCategory(newCat);
-                          loadCategoryVideoData(newCat);
-                        }}
-                        className="form-control"
-                        style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155' }}
-                      >
-                        {myAssignedIssueCategories.map(c => (
-                          <option key={c} value={c}>
-                            {c} (Assigned to {ro.id})
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <span style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
-                      Security Policy: Each RO can only change the YouTube link for their respective assigned issues.
-                    </span>
-                  </div>
-
-                  {/* Video Title */}
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                      Video Title / Headline:
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={managerVideoTitle}
-                      onChange={(e) => setManagerVideoTitle(e.target.value)}
-                      placeholder="e.g. NITTE Academic Guide: Course Enrollment & Attendance Policy"
-                      required
-                      style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155' }}
-                    />
-                  </div>
-
-                  {/* YouTube Video Link */}
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                      YouTube Video URL / Link:
-                    </label>
-                    <input
-                      type="url"
-                      className="form-control"
-                      value={managerVideoUrl}
-                      onChange={(e) => setManagerVideoUrl(e.target.value)}
-                      placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
-                      required
-                      style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155' }}
-                    />
-                    <span style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
-                      Paste any YouTube link (watch URL, share shortlink, or embed link).
-                    </span>
-                  </div>
-
-                  {/* Live Video Preview */}
-                  {managerVideoUrl && (
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                        Live Video Preview:
-                      </label>
-                      <div style={{ position: 'relative', width: '100%', paddingBottom: '45%', height: 0, overflow: 'hidden', borderRadius: '8px', background: '#000' }}>
-                        {isEmbed ? (
-                          <iframe
-                            src={embedUrl}
-                            title="Live Video Preview"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
-                          />
-                        ) : (
-                          <video
-                            src={managerVideoUrl}
-                            controls
-                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Guidance Checklist / Steps */}
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#94a3b8', marginBottom: '6px' }}>
-                      Key Troubleshooting Steps / FAQ Notes:
-                    </label>
-                    <textarea
-                      rows={4}
-                      className="form-control"
-                      value={managerVideoDesc}
-                      onChange={(e) => setManagerVideoDesc(e.target.value)}
-                      placeholder="Enter numbered points or instructions for students to resolve this issue..."
-                      style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155', resize: 'vertical' }}
-                    />
-                  </div>
-
-                  {managerSaveSuccess && (
-                    <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#6ee7b7', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem' }}>
-                      ✅ Guidance video successfully updated and saved to system database!
-                    </div>
-                  )}
-
-                </div>
-
-                {/* Footer */}
-                <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '14px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowVideoManagerModal(false)}
-                    className="btn btn-secondary"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    style={{ background: '#2563eb', padding: '8px 20px', fontWeight: 600 }}
-                  >
-                    💾 Save & Publish Guidance Video
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        );
-      })()}
+      {/* CATEGORY GUIDANCE & SOLUTION VIDEO MANAGER MODAL (Self-Help Hub) */}
+      <SelfHelpManagerModal
+        isOpen={showVideoManagerModal}
+        onClose={() => setShowVideoManagerModal(false)}
+        ro={ro}
+        category={managerCategory}
+        onCategoryChange={(newCat) => {
+          setManagerCategory(newCat);
+          loadCategoryVideoData(newCat);
+        }}
+        categories={myAssignedIssueCategories}
+        targetIssueId={managerTargetIssueId}
+        videoTitle={managerVideoTitle}
+        setVideoTitle={setManagerVideoTitle}
+        videoUrl={managerVideoUrl}
+        setVideoUrl={setManagerVideoUrl}
+        videoDesc={managerVideoDesc}
+        setVideoDesc={setManagerVideoDesc}
+        onSave={handleSaveCategoryVideo}
+        saveSuccess={managerSaveSuccess}
+        getYoutubeEmbedUrl={getYoutubeEmbedUrl}
+      />
 
     </div>
   );

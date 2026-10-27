@@ -5,6 +5,10 @@ import {
   generateRoMeetingScheduledEmailHtml,
   generateRoMeetingScheduledEmailText
 } from '../utils/studentEmailTemplate';
+import {
+  generateMentorOnboardingEmailHtml,
+  generateMentorOnboardingEmailText
+} from '../utils/mentorEmailTemplate';
 
 export const DatabaseContext = createContext();
 
@@ -971,6 +975,19 @@ export const DatabaseProvider = ({ children }) => {
           } catch (e) { }
         }
 
+        // Merge and persist mentor session records (guarantees local drafts & submissions are never wiped)
+        let mergedMentorRecords = Array.isArray(data.mentorSessionRecords) ? [...data.mentorSessionRecords] : [];
+        try {
+          const savedRecs = JSON.parse(localStorage.getItem('nitte_saved_mentor_records') || '[]');
+          if (Array.isArray(savedRecs) && savedRecs.length > 0) {
+            const serverRecIds = new Set(mergedMentorRecords.map(r => r.id));
+            const missingRecs = savedRecs.filter(r => !serverRecIds.has(r.id));
+            mergedMentorRecords = [...mergedMentorRecords, ...missingRecs];
+          }
+          localStorage.setItem('nitte_saved_mentor_records', JSON.stringify(mergedMentorRecords));
+        } catch (e) { }
+        data.mentorSessionRecords = mergedMentorRecords;
+
         // Save mentor feedbacks into local storage cache
         let currentFeedbacks = (data.mentorFeedbacks && data.mentorFeedbacks.length) ? data.mentorFeedbacks : (prev.mentorFeedbacks || []);
         if (!currentFeedbacks || !currentFeedbacks.length) {
@@ -1011,20 +1028,22 @@ export const DatabaseProvider = ({ children }) => {
       let cloudMeetings = null;
       let cloudFeedbacks = null;
       let cloudGroupSessions = null;
+      let cloudMentorRecords = null;
 
       try {
         const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
         const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
         const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
 
-        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes, sessRes] = await Promise.allSettled([
+        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes, sessRes, recRes] = await Promise.allSettled([
           fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/mentors?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/ros?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/issues?select=*&order=created_at.desc`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/meetings?select=*`, { headers }),
           fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/group_sessions?select=*&order=date_time.asc`, { headers })
+          fetch(`${SUPABASE_URL}/rest/v1/group_sessions?select=*&order=date_time.asc`, { headers }),
+          fetch(`${SUPABASE_URL}/rest/v1/mentor_session_records?select=*&order=created_at.desc`, { headers })
         ]);
 
         if (stuRes.status === 'fulfilled' && stuRes.value.ok) {
@@ -1132,6 +1151,24 @@ export const DatabaseProvider = ({ children }) => {
               dateTime: s.date_time || s.dateTime,
               description: s.description,
               link: s.link
+            }));
+          }
+        }
+
+        if (recRes && recRes.status === 'fulfilled' && recRes.value.ok) {
+          const raw = await recRes.value.json();
+          if (Array.isArray(raw)) {
+            cloudMentorRecords = raw.map(r => ({
+              id: r.id,
+              mentorId: r.mentor_id || r.mentorId,
+              sessionDate: r.session_date || r.sessionDate,
+              studentsAttended: typeof r.students_attended === 'number' ? r.students_attended : (parseInt(r.students_attended) || 0),
+              topic: r.topic,
+              notes: r.notes,
+              whichClass: r.which_class || r.whichClass,
+              location: r.location,
+              status: r.status || 'Submitted',
+              createdAt: r.created_at || r.createdAt
             }));
           }
         }
@@ -1282,6 +1319,18 @@ export const DatabaseProvider = ({ children }) => {
           ? cloudRos
           : ((prev.users && prev.users.ros && prev.users.ros.length > 0) ? prev.users.ros : MOCK_DB.users.ros);
 
+        let currentMentorRecords = (cloudMentorRecords && cloudMentorRecords.length > 0)
+          ? cloudMentorRecords
+          : ((prev.mentorSessionRecords && prev.mentorSessionRecords.length > 0) ? prev.mentorSessionRecords : []);
+        try {
+          const savedRecs = JSON.parse(localStorage.getItem('nitte_saved_mentor_records') || '[]');
+          if (Array.isArray(savedRecs) && savedRecs.length > 0) {
+            const existingIds = new Set(currentMentorRecords.map(r => r.id));
+            const missing = savedRecs.filter(r => !existingIds.has(r.id));
+            currentMentorRecords = [...currentMentorRecords, ...missing];
+          }
+        } catch (e) { }
+
         return {
           ...prev,
           users: {
@@ -1294,6 +1343,7 @@ export const DatabaseProvider = ({ children }) => {
           meetings: currentMeetings,
           mentorFeedbacks: currentFeedbacks,
           mentoringSchedules: currentSchedules,
+          mentorSessionRecords: currentMentorRecords,
           recordings: recs,
           categoryVideos: catVideos,
           groupSessions: (cloudGroupSessions && cloudGroupSessions.length > 0) ? cloudGroupSessions : (prev.groupSessions || [])
@@ -2162,8 +2212,8 @@ export const DatabaseProvider = ({ children }) => {
     } catch (err) { }
   };
 
-  const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location) => {
-    const mentor = (db.users?.mentors || []).find(m => m.id === mentorId);
+  const submitMentorSessionRecord = async (mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location, status = 'Submitted') => {
+    const mentor = (db.users?.mentors || []).find(m => isMatchingMentorId(m.id, mentorId));
     const newRec = {
       id: `REC-${Date.now()}`,
       mentorId,
@@ -2174,21 +2224,69 @@ export const DatabaseProvider = ({ children }) => {
       notes: notes || '',
       whichClass: whichClass || mentor?.class || '6th Sem CSE-A',
       location: location || 'Seminar Hall 1 (Admin Block)',
+      status: status || 'Submitted',
       createdAt: new Date().toISOString()
     };
 
-    // 1. Instantly update local React state for immediate UI reflection in Mentor & Admin Dashboards
-    setDb(prev => ({
-      ...prev,
-      mentorSessionRecords: [newRec, ...(prev.mentorSessionRecords || [])]
-    }));
+    // 1. Instantly update local React state and localStorage cache
+    setDb(prev => {
+      const existing = (prev.mentorSessionRecords || []).filter(
+        r => r.id !== newRec.id && !(isMatchingMentorId(r.mentorId, mentorId) && r.sessionDate === sessionDate && r.status === 'Draft' && status === 'Submitted')
+      );
+      const updatedList = [newRec, ...existing];
+      try {
+        localStorage.setItem('nitte_saved_mentor_records', JSON.stringify(updatedList));
+      } catch (e) { }
+      return {
+        ...prev,
+        mentorSessionRecords: updatedList
+      };
+    });
 
-    // 2. Also sync to backend API
+    // 2. Direct Supabase Cloud persistence
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      await fetch(`${SUPABASE_URL}/rest/v1/mentor_session_records`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation,resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: newRec.id,
+          mentor_id: mentorId,
+          session_date: sessionDate,
+          students_attended: parseInt(studentsAttended) || 0,
+          topic: topic,
+          notes: notes || '',
+          which_class: whichClass || mentor?.class || '6th Sem CSE-A',
+          location: location || 'Seminar Hall 1 (Admin Block)',
+          status: newRec.status
+        })
+      });
+    } catch (sbErr) {
+      console.warn('Direct Supabase Cloud session record persistence note:', sbErr?.message || sbErr);
+    }
+
+    // 3. Backend API sync
     try {
       const res = await fetch('/api/mentor/session-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mentorId, topic, sessionDate, studentsAttended, notes, whichClass, location })
+        body: JSON.stringify({
+          id: newRec.id,
+          mentorId,
+          topic,
+          sessionDate,
+          studentsAttended,
+          notes,
+          whichClass,
+          location,
+          status: newRec.status
+        })
       });
       if (res.ok) {
         await fetchDbState();
@@ -2196,6 +2294,8 @@ export const DatabaseProvider = ({ children }) => {
     } catch (err) {
       console.warn('Backend sync failed for session record, relying on updated local state.', err);
     }
+
+    return newRec;
   };
 
   // MENTOR MENTORING HOUR & 9:00 AM GMAIL ALERT
@@ -4083,10 +4183,11 @@ Office of Student Welfare & Academic Mentorship
       const rawEmail = extractRosterField(m, ['mentor email', 'mentoremail', 'faculty email', 'facultyemail', 'email', 'gmail', 'mail'], 'skandhayashu2906@gmail.com');
       const dept = extractRosterField(m, ['department', 'dept', 'branch'], 'CSE');
       const assignedClass = extractRosterField(m, ['assigned class / batch', 'assigned class', 'assigned batch', 'class', 'batch', 'mentees'], `${dept} 5th Sem - Batch A`);
+      const rawPassword = extractRosterField(m, ['initial password', 'password', 'pwd', 'pass', 'key'], '');
       const mentorId = String(rawId).trim().toUpperCase();
       const name = String(rawName).trim();
       const email = String(rawEmail).trim().toLowerCase();
-      const password = m.password && String(m.password).trim() ? String(m.password).trim() : `Nit#Mnt${Math.floor(1000 + Math.random() * 9000)}`;
+      const password = rawPassword || (m.password && String(m.password).trim() ? String(m.password).trim() : `Nit#Mnt${Math.floor(1000 + Math.random() * 9000)}`);
 
       const newMentor = {
         id: mentorId,
@@ -4163,10 +4264,29 @@ Office of Student Welfare & Academic Mentorship
       };
     });
 
-    // Send mentor onboarding emails in background
+    // Send mentor onboarding emails in background with identical institutional theme and direct pre-fill link
     (async () => {
+      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
       for (const m of addedMentors) {
         try {
+          const emailHtml = generateMentorOnboardingEmailHtml({
+            name: m.name,
+            mentorId: m.id,
+            email: m.email,
+            dept: m.dept,
+            assignedClass: m.class,
+            generatedPassword: m.password,
+            portalBaseUrl
+          });
+          const emailText = generateMentorOnboardingEmailText({
+            name: m.name,
+            mentorId: m.id,
+            email: m.email,
+            dept: m.dept,
+            assignedClass: m.class,
+            generatedPassword: m.password,
+            portalBaseUrl
+          });
           await fetch('/api/gmail/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4174,9 +4294,9 @@ Office of Student Welfare & Academic Mentorship
               to: m.email,
               replyTo: 'skandhayashu2906@gmail.com',
               fromName: 'NITTE Admin Desk',
-              subject: `[NITTE PORTAL CREDENTIALS] Welcome Prof. ${m.name} - Faculty Mentor Onboarding`,
-              html: `<p>Dear <strong>${m.name}</strong>,</p><p>Your Faculty Mentor credentials: ID: <code>${m.id}</code>, Email: <code>${m.email}</code>, Password: <code>${m.password}</code></p>`,
-              text: `Welcome ${m.name}! ID: ${m.id}, Password: ${m.password}`,
+              subject: `[NITTE FACULTY CREDENTIALS] Welcome Prof. ${m.name} - Faculty Mentor Portal (${m.id})`,
+              html: emailHtml,
+              text: emailText,
               eventType: 'BULK_MENTOR_ONBOARDING',
               recipientName: m.name
             })
