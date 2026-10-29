@@ -42,6 +42,7 @@ export const StudentDashboard = ({ studentId }) => {
   const [subjectTitle, setSubjectTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('high'); // 'low', 'medium', 'high'
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -119,7 +120,7 @@ export const StudentDashboard = ({ studentId }) => {
     avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
   };
 
-  // Student issues
+  // Student issues with strict deduplication
   const studentIdLower = (student?.id || '').toLowerCase();
   const studentNameLower = (student?.name || '').toLowerCase();
   const rawMyIssues = (db.issues || []).filter(i => {
@@ -127,7 +128,17 @@ export const StudentDashboard = ({ studentId }) => {
     const sName = (i.studentName || i.student_name || '').toLowerCase();
     return sId === studentIdLower || sName === studentNameLower;
   });
-  const myIssues = Array.from(new Map(rawMyIssues.map(i => [i.id, i])).values());
+
+  const blacklistedIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
+  const issueDedupeMap = new Map();
+  for (const iss of rawMyIssues) {
+    const cleanId = (iss.id || iss.issue_id || '').toUpperCase();
+    if (!cleanId || blacklistedIds.has(cleanId)) continue;
+    if (!issueDedupeMap.has(cleanId)) {
+      issueDedupeMap.set(cleanId, { ...iss, id: iss.id || iss.issue_id });
+    }
+  }
+  const myIssues = Array.from(issueDedupeMap.values());
   const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
   const selectedIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === activeSelectedIssueId?.toUpperCase()) || myIssues[0] || null;
 
@@ -333,8 +344,8 @@ export const StudentDashboard = ({ studentId }) => {
 
   // Form Submission
   const handleSubmitIssue = async (e) => {
-    e.preventDefault();
-    if (!description.trim()) return;
+    if (e && e.preventDefault) e.preventDefault();
+    if (!description.trim() || isSubmitting) return;
     setErrorMessage('');
 
     if (pendingFeedbackIssues.length > 0) {
@@ -349,16 +360,18 @@ export const StudentDashboard = ({ studentId }) => {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       const finalDesc = subjectTitle ? `[${subjectTitle}] ${description}` : description;
       const newIssueId = await submitIssue(student.id, category, finalDesc, priority.toUpperCase());
       setDescription('');
       setSelectedIssueId(newIssueId);
-      setSuccessMessage(`Ticket #${newIssueId} successfully registered and routed to ${activeFormRO.name}!`);
-      setTimeout(() => setSuccessMessage(''), 5000);
-      setActiveTab('track');
+      // Show self-help protocol video popup immediately after submission
+      setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
     } catch (err) {
       setErrorMessage(err.message || 'Failed to submit issue');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -731,12 +744,12 @@ export const StudentDashboard = ({ studentId }) => {
                   <div className="flex items-center gap-3 w-full sm:w-auto">
                     <button
                       type="button"
-                      disabled={isFormLocked || !description.trim()}
+                      disabled={isFormLocked || !description.trim() || isSubmitting}
                       onClick={handleSubmitIssue}
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-nitte-800/20 transition-all active:scale-95"
                     >
-                      <span className="material-symbols-outlined text-[16px]">send</span>
-                      {isFormLocked ? '2/2 Quota Limit Reached' : 'Submit Grievance to RO'}
+                      <span className="material-symbols-outlined text-[16px]">{isSubmitting ? 'sync' : 'send'}</span>
+                      {isSubmitting ? 'Submitting Grievance...' : (isFormLocked ? '2/2 Quota Limit Reached' : 'Submit Grievance to RO')}
                     </button>
                   </div>
                 </div>
@@ -1578,36 +1591,96 @@ export const StudentDashboard = ({ studentId }) => {
       {submissionVideoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
           <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200">
+            {/* Modal Header */}
             <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
               <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[20px] text-nitte-800">smart_display</span>
-                Self-Help Solution Center: {submissionVideoModal.category}
+                Self-Help Protocol — {submissionVideoModal.category}
               </span>
               <button
-                onClick={() => setSubmissionVideoModal(null)}
+                onClick={() => { setSubmissionVideoModal(null); setActiveTab('track'); }}
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700 transition"
               >
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
+
+            {/* Ticket badge */}
+            {submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' && (
+              <div className="px-5 py-2 bg-nitte-50 border-b border-slate-100 flex items-center gap-2">
+                <span className="material-symbols-outlined text-[16px] text-nitte-700">confirmation_number</span>
+                <span className="text-xs text-slate-600">
+                  Ticket <strong className="text-nitte-800">#{submissionVideoModal.issueId}</strong> submitted successfully — please watch the self-help video below before deciding next steps.
+                </span>
+              </div>
+            )}
+
             <div className="p-4 space-y-4">
+              {/* Video player */}
               <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
                 <iframe
                   className="w-full h-full"
                   src="https://www.youtube.com/embed/kqtD5dpn9C8?autoplay=1"
-                  title="Self-Help Video"
+                  title="Self-Help Protocol Video"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />
               </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setSubmissionVideoModal(null)}
-                  className="px-4 py-2 rounded-xl bg-nitte-800 text-white text-xs font-bold"
-                >
-                  Close &amp; Continue
-                </button>
-              </div>
+
+              {/* Guidance label */}
+              <p className="text-[11px] text-slate-500 text-center leading-relaxed">
+                Watch the guidance above. If your issue is resolved, click <strong>Issue Resolved</strong>. Otherwise, click <strong>Escalate to RO</strong> to route it to {submissionVideoModal.roName || 'your Relationship Officer'}.
+              </p>
+
+              {/* Action buttons — only show for real tickets */}
+              {submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Resolved button — white → green */}
+                  <button
+                    onClick={async () => {
+                      try {
+                        await resolveIssue(submissionVideoModal.issueId, student.id, 'Self-resolved by student after watching self-help protocol video.');
+                        setSubmissionVideoModal(null);
+                        setSuccessMessage(`Ticket #${submissionVideoModal.issueId} marked as resolved. Well done!`);
+                        setTimeout(() => setSuccessMessage(''), 5000);
+                        setActiveTab('track');
+                      } catch (err) {
+                        // If resolveIssue throws (e.g. requires RO), just close and track
+                        setSubmissionVideoModal(null);
+                        setActiveTab('track');
+                      }
+                    }}
+                    className="group flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-emerald-400 bg-white text-emerald-700 text-xs font-bold transition-all duration-200 hover:bg-emerald-500 hover:border-emerald-500 hover:text-white hover:shadow-lg hover:shadow-emerald-100 active:scale-95"
+                  >
+                    <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:scale-110">check_circle</span>
+                    Issue Resolved
+                  </button>
+
+                  {/* Escalate to RO button — white → red */}
+                  <button
+                    onClick={() => {
+                      setSubmissionVideoModal(null);
+                      setSuccessMessage(`Ticket #${submissionVideoModal.issueId} routed to ${submissionVideoModal.roName || 'RO'} for review.`);
+                      setTimeout(() => setSuccessMessage(''), 5000);
+                      setActiveTab('track');
+                    }}
+                    className="group flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-rose-400 bg-white text-rose-600 text-xs font-bold transition-all duration-200 hover:bg-rose-500 hover:border-rose-500 hover:text-white hover:shadow-lg hover:shadow-rose-100 active:scale-95"
+                  >
+                    <span className="material-symbols-outlined text-[18px] transition-transform duration-200 group-hover:scale-110">escalator_warning</span>
+                    Escalate to RO
+                  </button>
+                </div>
+              ) : (
+                /* Fallback close button for preview/walkthrough/capstone modes */
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setSubmissionVideoModal(null)}
+                    className="px-4 py-2 rounded-xl bg-nitte-800 text-white text-xs font-bold"
+                  >
+                    Close &amp; Continue
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

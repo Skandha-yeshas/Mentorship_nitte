@@ -1093,7 +1093,7 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
 
 // 2. SUBMIT AN ISSUE (Allows 2 Issues per 7 Days & Supports Demo Bypass)
 app.post('/api/issues', async (req, res) => {
-  const { studentId, category, description, priority, studentName, bypassLimit } = req.body;
+  const { issueId: clientIssueId, studentId, category, description, priority, studentName, bypassLimit } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
@@ -1147,7 +1147,9 @@ app.post('/api/issues', async (req, res) => {
       ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
       : `Issue submitted by ${studentName} (Attempt #${totalAttempts + 1} for ${category}).`;
 
-    const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
+    // Use the client-provided issueId if given (so we don't create a duplicate ticket),
+    // otherwise fall back to generating a new one.
+    const issueId = clientIssueId || `ISS-${Math.floor(100 + Math.random() * 900)}`;
     const timestamp = new Date().toISOString();
     const initialLogs = JSON.stringify([{ text: logText, time: timestamp }]);
 

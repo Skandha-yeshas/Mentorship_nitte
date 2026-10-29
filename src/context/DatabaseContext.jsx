@@ -927,40 +927,20 @@ export const DatabaseProvider = ({ children }) => {
                   return di;
                 });
 
-                // Also preserve offline created issues not present in backend & auto-sync them to Supabase Cloud!
-                const serverIdSet = new Set((data.issues || []).map(di => (di.id || di.issue_id)?.toUpperCase()));
-                const offlineIssues = savedIssues.filter(si => !serverIdSet.has((si.id || si.issue_id)?.toUpperCase()));
-                if (offlineIssues.length > 0) {
-                  mergedIssues = [...mergedIssues, ...offlineIssues];
-                  (async () => {
-                    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-                    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-                    for (const offIss of offlineIssues) {
-                      try {
-                        await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-                          method: 'POST',
-                          headers: {
-                            apikey: SUPABASE_KEY,
-                            Authorization: `Bearer ${SUPABASE_KEY}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=representation,resolution=merge-duplicates'
-                          },
-                          body: JSON.stringify({
-                            id: offIss.id || offIss.issue_id,
-                            student_id: offIss.studentId || offIss.student_id,
-                            student_name: offIss.studentName || offIss.student_name,
-                            category: offIss.category,
-                            description: offIss.description,
-                            priority: offIss.priority,
-                            status: offIss.status || 'Assigned to RO',
-                            ro_id: offIss.roId || offIss.ro_id || 'RO-01',
-                            logs: Array.isArray(offIss.logs) ? offIss.logs : []
-                          })
-                        });
-                      } catch (e) { }
-                    }
-                  })();
+                // Clean out any historical duplicate test IDs
+                const blacklistedDuplicateIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
+                mergedIssues = mergedIssues.filter(i => !blacklistedDuplicateIds.has((i.id || i.issue_id)?.toUpperCase()));
+
+                // Strict deduplication by ID
+                const issueIdMap = new Map();
+                for (const iss of mergedIssues) {
+                  const cleanKey = (iss.id || iss.issue_id || '').toUpperCase();
+                  if (!cleanKey) continue;
+                  if (!issueIdMap.has(cleanKey)) {
+                    issueIdMap.set(cleanKey, { ...iss, id: iss.id || iss.issue_id });
+                  }
                 }
+                mergedIssues = Array.from(issueIdMap.values());
               }
             }
             localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
@@ -1730,13 +1710,78 @@ export const DatabaseProvider = ({ children }) => {
     });
 
     const isThirdAttempt = totalAttempts >= 2;
-    const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
+    let initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
     const logText = isThirdAttempt
       ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
       : `Ticket raised by ${student.name} (Attempt #${totalAttempts + 1} for ${category}).`;
 
     const timestamp = new Date().toISOString();
-    const issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
+    let issueId = null;
+
+    // 1. PRIMARY AUTHORITATIVE CALL: Dispatch to backend /api/issues
+    // The backend creates ONE single issue, persists to PostgreSQL, syncs to Supabase, and sends Gmail
+    try {
+      const res = await fetch('/api/issues', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId,
+          studentName: student.name,
+          category,
+          description,
+          priority,
+          bypassLimit: isDemoLimitBypassed
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        issueId = data.id;
+        if (data.status) initialStatus = data.status;
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        if (errJson.error && errJson.error.includes('Weekly Limit Reached')) {
+          throw new Error(errJson.error);
+        }
+      }
+    } catch (apiErr) {
+      if (apiErr.message && apiErr.message.includes('Weekly Limit Reached')) {
+        throw apiErr;
+      }
+      console.warn('[submitIssue] Backend /api/issues offline, using direct Supabase fallback:', apiErr.message);
+    }
+
+    // 2. Fallback only if backend was completely offline: generate ID & write to Supabase directly
+    if (!issueId) {
+      issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
+          method: 'POST',
+          headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation,resolution=merge-duplicates'
+          },
+          body: JSON.stringify({
+            id: issueId,
+            student_id: studentId,
+            student_name: student.name,
+            category,
+            description,
+            priority,
+            status: initialStatus,
+            ro_id: roId,
+            created_at: timestamp,
+            logs: [{ time: new Date().toLocaleString(), text: logText }]
+          })
+        });
+        console.log(`[submitIssue] Fallback: Issue ${issueId} persisted directly to Supabase Cloud.`);
+      } catch (sbErr) {
+        console.warn('[submitIssue] Direct Supabase Cloud write warning:', sbErr.message);
+      }
+    }
+
     const newIssueObj = {
       id: issueId,
       studentId,
@@ -1751,58 +1796,15 @@ export const DatabaseProvider = ({ children }) => {
       logs: [{ time: new Date().toLocaleString(), text: logText }]
     };
 
-    // 1. PRIMARY DIRECT PERSISTENCE: Write authoritatively to Supabase Cloud REST
-    try {
-      await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: issueId,
-          student_id: studentId,
-          student_name: student.name,
-          category,
-          description,
-          priority,
-          status: initialStatus,
-          ro_id: roId,
-          created_at: timestamp,
-          logs: newIssueObj.logs
-        })
-      });
-      console.log(`[submitIssue] Issue ${issueId} persisted directly to Supabase Cloud.`);
-    } catch (sbErr) {
-      console.warn('[submitIssue] Direct Supabase Cloud write warning:', sbErr.message);
-    }
-
-    // 2. Immediately update local React state & localStorage
+    // 3. Update local React state & localStorage with only this single issue
     setDb(prev => {
-      const updatedIssues = [newIssueObj, ...(prev.issues || [])];
+      const prevWithoutSameId = (prev.issues || []).filter(i => (i.id || i.issue_id)?.toUpperCase() !== issueId.toUpperCase());
+      const updatedIssues = [newIssueObj, ...prevWithoutSameId];
       try {
         localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
       return { ...prev, issues: updatedIssues };
     });
-
-    // 3. Forward to Express backend for Gmail notifications & server-side event logs
-    try {
-      fetch('/api/issues', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId,
-          studentName: student.name,
-          category,
-          description,
-          priority,
-          bypassLimit: isDemoLimitBypassed
-        })
-      }).catch(() => {});
-    } catch (e) { }
 
     // 4. Trigger state refresh
     fetchDbState().catch(() => {});
