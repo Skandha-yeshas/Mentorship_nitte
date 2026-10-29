@@ -976,12 +976,58 @@ export const DatabaseProvider = ({ children }) => {
         } catch (e) { }
         data.issues = mergedIssues;
 
-        // Save server meetings into local storage cache
-        if (data.meetings && data.meetings.length) {
-          try {
-            localStorage.setItem('nitte_saved_meetings', JSON.stringify(data.meetings));
-          } catch (e) { }
+        // Save and merge server meetings with local storage cache and active React state
+        let mergedMeetings = Array.isArray(data.meetings) && data.meetings.length ? [...data.meetings] : [];
+        try {
+          const savedMeetingsStr = localStorage.getItem('nitte_saved_meetings');
+          if (savedMeetingsStr) {
+            const savedMeetings = JSON.parse(savedMeetingsStr);
+            if (Array.isArray(savedMeetings) && savedMeetings.length > 0) {
+              if (mergedMeetings.length === 0) {
+                mergedMeetings = savedMeetings;
+              } else {
+                mergedMeetings = mergedMeetings.map(dm => {
+                  const savedMatch = savedMeetings.find(sm =>
+                    (sm.id && (sm.id === dm.id || sm.id === dm.issueId)) ||
+                    (sm.issueId && (sm.issueId === dm.issueId || sm.issueId === dm.id))
+                  );
+                  if (savedMatch) {
+                    const isLocallyStarted = savedMatch.status === 'Started' || savedMatch.status === 'In-Progress';
+                    return {
+                      ...dm,
+                      status: isLocallyStarted ? savedMatch.status : (dm.status || savedMatch.status),
+                      startedAt: savedMatch.startedAt || dm.startedAt,
+                      endedAt: savedMatch.endedAt || dm.endedAt
+                    };
+                  }
+                  return dm;
+                });
+                const serverMeetIds = new Set(mergedMeetings.map(m => (m.id || m.issueId || '').toUpperCase()));
+                const missingSaved = savedMeetings.filter(sm => !serverMeetIds.has((sm.id || sm.issueId || '').toUpperCase()));
+                if (missingSaved.length > 0) {
+                  mergedMeetings = [...missingSaved, ...mergedMeetings];
+                }
+              }
+            }
+          }
+        } catch (e) { }
+
+        // If prev React state had any live Started meeting, protect it from being downgraded
+        const prevStarted = (prev.meetings || []).find(m => m.status === 'Started' || m.status === 'In-Progress');
+        if (prevStarted) {
+          const pKey = (prevStarted.id || prevStarted.issueId || '').toUpperCase();
+          const matchMeet = mergedMeetings.find(m => (m.id || m.issueId || '').toUpperCase() === pKey);
+          if (matchMeet) {
+            matchMeet.status = prevStarted.status;
+          } else {
+            mergedMeetings.unshift(prevStarted);
+          }
         }
+
+        try {
+          localStorage.setItem('nitte_saved_meetings', JSON.stringify(mergedMeetings));
+        } catch (e) { }
+        data.meetings = mergedMeetings;
 
         // Merge and persist mentor session records (guarantees local drafts & submissions are never wiped)
         let mergedMentorRecords = Array.isArray(data.mentorSessionRecords) ? [...data.mentorSessionRecords] : [];
@@ -2155,6 +2201,45 @@ export const DatabaseProvider = ({ children }) => {
     } catch (err) {
       console.warn('Backend server offline/sync warning, relying on updated active state.', err);
     }
+
+    // Direct Supabase Cloud persistence
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbHeaders = {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      };
+      fetch(`${SUPABASE_URL}/rest/v1/meetings`, {
+        method: 'POST',
+        headers: sbHeaders,
+        body: JSON.stringify({
+          id: newMeeting.id,
+          issue_id: issueId,
+          student_id: validStudentId,
+          student_name: studentName,
+          ro_id: roId,
+          date,
+          time,
+          mode: mode || 'Offline',
+          location: meetingLocation,
+          notes: finalNotes,
+          status: 'Confirmed'
+        })
+      }).catch(e => console.warn('Supabase meeting sync warning:', e.message));
+
+      fetch(`${SUPABASE_URL}/rest/v1/issues?id=eq.${issueId}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: 'Meeting Scheduled' })
+      }).catch(e => console.warn('Supabase issue status sync warning:', e.message));
+    } catch (e) { }
   };
 
   const submitFeedback = async (issueId, rating, comments) => {
@@ -2764,6 +2849,30 @@ Office of Student Welfare & Academic Mentorship
     } catch (err) {
       console.warn('Backend server offline/sync warning for updateMeetingStatus, using active local state.', err);
     }
+
+    // 3. Direct Supabase Cloud persistence
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbHeaders = {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      };
+      fetch(`${SUPABASE_URL}/rest/v1/meetings?or=(id.eq.${meetId},issue_id.eq.${meetId})`, {
+        method: 'PATCH',
+        headers: sbHeaders,
+        body: JSON.stringify({ status })
+      }).catch(e => console.warn('Supabase meeting status patch warning:', e.message));
+
+      if (status === 'Started') {
+        fetch(`${SUPABASE_URL}/rest/v1/issues?id=eq.${meetId}`, {
+          method: 'PATCH',
+          headers: sbHeaders,
+          body: JSON.stringify({ status: 'Meeting Started' })
+        }).catch(e => console.warn('Supabase issue meeting started warning:', e.message));
+      }
+    } catch (e) { }
   };
 
   const saveMeetingRecording = async (meetingId, issueId, durationSeconds, videoUrl, transcriptSummary) => {

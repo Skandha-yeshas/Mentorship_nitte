@@ -65,6 +65,38 @@ export const StudentDashboard = ({ studentId }) => {
   const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
   const [meetingEndedPopup, setMeetingEndedPopup] = useState(null);
   const [playingRecording, setPlayingRecording] = useState(null);
+  const [dismissedMeetingIds, setDismissedMeetingIds] = useState(() => new Set());
+
+  // Audio alert chime helper for incoming live meetings
+  const playMeetingChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.18, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.35);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(830.61, now + 0.15);
+      gain2.gain.setValueAtTime(0.22, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.6);
+    } catch (e) { }
+  };
 
   // WebRTC States & Refs
   const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
@@ -176,9 +208,11 @@ export const StudentDashboard = ({ studentId }) => {
     return String(raw).replace(/^MEET-/i, '').trim().toUpperCase();
   };
 
-  // Active online meeting detection
+  // Active online meeting detection (guarantees immediate visibility of Started meetings)
   const activeStudentOnlineMeeting = (() => {
     const myIssueIds = new Set((myIssues || []).map(i => (i.id || i.issue_id || '').toUpperCase()));
+
+    // 1. Direct match from db.meetings for student issues or student identity
     const myStudentMeetings = (db.meetings || []).filter(m => {
       const isCompleted = m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded';
       if (isCompleted) return false;
@@ -191,16 +225,86 @@ export const StudentDashboard = ({ studentId }) => {
         (student?.name && mStudentName === String(student.name).toLowerCase())
       );
     });
+
+    // Check if any direct student meeting has been started
     const liveMeet = myStudentMeetings.find(m => m.status === 'Started' || m.status === 'In-Progress');
     if (liveMeet) return liveMeet;
-    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
 
-    // Fallback: If any online meeting was started by the RO, ensure the student can see and join it
+    // 2. Direct match from student's active issues with 'Meeting Started' status (instant zero-delay sync)
+    const liveIssue = (myIssues || []).find(i => i.status === 'Meeting Started');
+    if (liveIssue) {
+      const matchingMeet = (db.meetings || []).find(m =>
+        (m.issueId && m.issueId.toUpperCase() === (liveIssue.id || '').toUpperCase()) ||
+        (m.issue_id && m.issue_id.toUpperCase() === (liveIssue.id || '').toUpperCase())
+      );
+      return matchingMeet ? { ...matchingMeet, status: 'Started' } : {
+        id: `MEET-${liveIssue.id}`,
+        issueId: liveIssue.id,
+        issue_id: liveIssue.id,
+        studentId: liveIssue.studentId || student?.id,
+        studentName: liveIssue.studentName || student?.name,
+        roId: liveIssue.roId || 'RO-01',
+        mode: 'Online',
+        status: 'Started',
+        date: new Date().toISOString().split('T')[0],
+        time: 'Now',
+        location: 'In-App Online Video Call Portal'
+      };
+    }
+
+    // 3. Fallback: Check if ANY meeting in db.meetings was started online for this student or session
     const anyLive = (db.meetings || []).find(m => (m.status === 'Started' || m.status === 'In-Progress') && (m.mode === 'Online' || !m.mode));
     if (anyLive) return anyLive;
 
+    // 4. Return upcoming scheduled meeting if available
+    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
+
     return null;
   })();
+
+  const isLiveMeetingActive = Boolean(
+    activeStudentOnlineMeeting &&
+    (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress')
+  );
+
+  const liveMeetingKey = activeStudentOnlineMeeting
+    ? (activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id || activeStudentOnlineMeeting.id)
+    : null;
+
+  // Real-time multi-tab meeting sync and automatic incoming chime notification
+  const prevLiveMeetingKeyRef = useRef(null);
+  useEffect(() => {
+    if (isLiveMeetingActive && liveMeetingKey && prevLiveMeetingKeyRef.current !== liveMeetingKey) {
+      prevLiveMeetingKeyRef.current = liveMeetingKey;
+      playMeetingChime();
+    } else if (!isLiveMeetingActive) {
+      prevLiveMeetingKeyRef.current = null;
+    }
+  }, [isLiveMeetingActive, liveMeetingKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.BroadcastChannel) return;
+    let bc;
+    try {
+      bc = new BroadcastChannel('nitte_meeting_sync');
+      bc.onmessage = (event) => {
+        if (event.data && event.data.type === 'meeting_status' && event.data.status === 'Started') {
+          const targetKey = event.data.meetId || event.data.issueId;
+          if (targetKey) {
+            setDismissedMeetingIds(prev => {
+              const next = new Set(prev);
+              next.delete(String(targetKey).trim().toUpperCase());
+              return next;
+            });
+          }
+          playMeetingChime();
+        }
+      };
+    } catch (e) { }
+    return () => {
+      try { if (bc) bc.close(); } catch (e) { }
+    };
+  }, []);
 
   // Quota & Lock calculation (Institutional rule: strictly up to 2 active issues)
   const activeUnresolvedIssues = myIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
@@ -233,12 +337,68 @@ export const StudentDashboard = ({ studentId }) => {
     }
   }, [category]);
 
-  // WebRTC Media Stream Request
+  // Helper to initialize or re-initialize WebRTC session with active stream
+  const initializeStudentWebRtcSession = (stream, targetIdParam) => {
+    let rawTarget =
+      targetIdParam ||
+      activeMeetingIssueId ||
+      activeStudentOnlineMeeting?.issueId ||
+      activeStudentOnlineMeeting?.issue_id;
+
+    if (!rawTarget && activeStudentOnlineMeeting?.id) {
+      const mMatch = (db.meetings || []).find(m => m.id === activeStudentOnlineMeeting.id);
+      if (mMatch && (mMatch.issueId || mMatch.issue_id)) {
+        rawTarget = mMatch.issueId || mMatch.issue_id;
+      }
+    }
+    if (!rawTarget) {
+      rawTarget = (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) || 'TICK-1002';
+    }
+    const targetIssueId = getCanonicalMeetingRoomId(rawTarget);
+
+    if (targetIssueId) {
+      if (webrtcSessionRef.current) {
+        try { webrtcSessionRef.current.close(); } catch (e) { }
+      }
+      webrtcSessionRef.current = new WebRtcMeetingSession({
+        issueId: targetIssueId,
+        role: 'student',
+        localStream: stream,
+        onRemoteStream: (remStream) => setRoRemoteStream(remStream),
+        onPeerStatus: (status) => setPeerConnected(Boolean(status.connected)),
+        onRemoteMediaState: (state) => {
+          if (typeof state.video === 'boolean') setIsRoCameraOff(!state.video);
+          if (typeof state.audio === 'boolean') setIsRoMicMuted(!state.audio);
+        },
+        onMeetingEnded: () => {
+          handleCloseStudentVideo();
+          setMeetingEndedPopup({
+            show: true,
+            issueId: targetIssueId,
+            roName: activeFormRO?.name || 'Relationship Officer',
+            endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+        }
+      });
+    }
+  };
+
+  // WebRTC Media Stream Request (Instant fallback if camera locked by RO tab)
   const requestStudentMedia = async (targetIssueIdParam = null) => {
+    // 1. If we already hold an active, non-stopped local stream, reuse it directly without camera contention
+    if (studentStreamRef.current && studentStreamRef.current.active && studentStreamRef.current.getTracks().some(t => t.readyState === 'live')) {
+      const stream = studentStreamRef.current;
+      setStudentStream(stream);
+      setStudentMediaPermissionState('granted');
+      initializeStudentWebRtcSession(stream, targetIssueIdParam);
+      return;
+    }
+
     if (isMediaRequestingRef.current) return;
     isMediaRequestingRef.current = true;
     setStudentMediaPermissionState('requesting');
     setStudentMediaPermissionError('');
+
     try {
       let stream = null;
       try {
@@ -261,7 +421,7 @@ export const StudentDashboard = ({ studentId }) => {
         });
       } catch (e) {
         try {
-          console.warn('[Student] Advanced constraints fallback, requesting standard widescreen media:', e);
+          console.warn('[Student] Standard widescreen media request fallback:', e);
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               width: { ideal: 1280, max: 1920 },
@@ -271,49 +431,19 @@ export const StudentDashboard = ({ studentId }) => {
             audio: true
           });
         } catch (fallbackErr) {
-          console.warn('[Student] Hardware webcam unavailable or in use by another tab, using virtual HD feed:', fallbackErr);
+          console.warn('[Student] Hardware webcam unavailable or in use by another tab (dual tab testing), using simulated HD feed:', fallbackErr);
           stream = createFallbackMediaStream({ label: student?.name || 'Student', role: 'Student' });
         }
       }
+
+      if (!stream) {
+        stream = createFallbackMediaStream({ label: student?.name || 'Student', role: 'Student' });
+      }
+
       studentStreamRef.current = stream;
       setStudentStream(stream);
       setStudentMediaPermissionState('granted');
-
-      const rawTarget =
-        targetIssueIdParam ||
-        activeMeetingIssueId ||
-        activeStudentOnlineMeeting?.issueId ||
-        activeStudentOnlineMeeting?.issue_id ||
-        activeStudentOnlineMeeting?.id ||
-        (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) ||
-        'TICK-1002';
-      const targetIssueId = getCanonicalMeetingRoomId(rawTarget);
-
-      if (targetIssueId) {
-        if (webrtcSessionRef.current) {
-          try { webrtcSessionRef.current.close(); } catch (e) { }
-        }
-        webrtcSessionRef.current = new WebRtcMeetingSession({
-          issueId: targetIssueId,
-          role: 'student',
-          localStream: stream,
-          onRemoteStream: (remStream) => setRoRemoteStream(remStream),
-          onPeerStatus: (status) => setPeerConnected(Boolean(status.connected)),
-          onRemoteMediaState: (state) => {
-            if (typeof state.video === 'boolean') setIsRoCameraOff(!state.video);
-            if (typeof state.audio === 'boolean') setIsRoMicMuted(!state.audio);
-          },
-          onMeetingEnded: () => {
-            handleCloseStudentVideo();
-            setMeetingEndedPopup({
-              show: true,
-              issueId: targetIssueId,
-              roName: activeFormRO?.name || 'Relationship Officer',
-              endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            });
-          }
-        });
-      }
+      initializeStudentWebRtcSession(stream, targetIssueIdParam);
     } catch (err) {
       console.warn('Media setup error:', err);
     } finally {
@@ -322,18 +452,31 @@ export const StudentDashboard = ({ studentId }) => {
   };
 
   const handleStudentJoinMeeting = (targetIssueId) => {
-    const rawTarget =
-      targetIssueId ||
-      activeMeetingIssueId ||
-      activeStudentOnlineMeeting?.issueId ||
-      activeStudentOnlineMeeting?.issue_id ||
-      activeStudentOnlineMeeting?.id ||
-      selectedIssue?.id ||
-      selectedIssueId ||
-      'TICK-1002';
+    let rawTarget = targetIssueId;
+    if (!rawTarget || String(rawTarget).startsWith('MEET-')) {
+      rawTarget = activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.issue_id;
+    }
+    if (!rawTarget && activeStudentOnlineMeeting?.id) {
+      const mMatch = (db.meetings || []).find(m => m.id === activeStudentOnlineMeeting.id);
+      if (mMatch && (mMatch.issueId || mMatch.issue_id)) {
+        rawTarget = mMatch.issueId || mMatch.issue_id;
+      }
+    }
+    if (!rawTarget) {
+      rawTarget = (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) || 'TICK-1002';
+    }
     const cleanId = getCanonicalMeetingRoomId(rawTarget);
     setActiveMeetingIssueId(cleanId);
     setShowStudentVideoModal(true);
+
+    // Un-dismiss if previously minimized
+    setDismissedMeetingIds(prev => {
+      const next = new Set(prev);
+      next.delete(String(cleanId).toUpperCase());
+      if (liveMeetingKey) next.delete(String(liveMeetingKey).toUpperCase());
+      return next;
+    });
+
     requestStudentMedia(cleanId);
   };
 
@@ -509,6 +652,42 @@ export const StudentDashboard = ({ studentId }) => {
           <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-800 text-xs font-semibold flex items-center gap-2 shadow-sm">
             <span className="material-symbols-outlined text-[18px] text-emerald-600">check_circle</span>
             <span>{successMessage}</span>
+          </div>
+        )}
+
+        {/* ================= STICKY TOP FLOATING ALERT FOR LIVE IN-PROGRESS CALL ================= */}
+        {isLiveMeetingActive && !showStudentVideoModal && (
+          <div className="sticky top-2 z-40 w-full animate-bounce-subtle shadow-xl">
+            <div className="bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-800 text-white rounded-2xl p-3 sm:p-4 border border-emerald-400/50 flex flex-wrap items-center justify-between gap-3 shadow-[0_10px_25px_-5px_rgba(16,185,129,0.3)]">
+              <div className="flex items-center gap-3">
+                <span className="relative flex h-3.5 w-3.5 flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500 border border-white"></span>
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-black tracking-wider uppercase bg-white/20 px-2 py-0.5 rounded-full text-white">
+                      Live Meeting In Progress
+                    </span>
+                    <span className="text-xs font-bold text-emerald-100">
+                      Ticket #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-50 mt-0.5">
+                    <strong>{activeFormRO?.name || 'Relationship Officer'}</strong> has commenced your grievance hearing and is in the video room.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-emerald-950 font-extrabold text-xs shadow-lg hover:bg-emerald-50 active:scale-95 transition-all group flex-shrink-0"
+              >
+                <span className="material-symbols-outlined text-[18px] text-emerald-600 transition-transform group-hover:scale-110">videocam</span>
+                <span>👉 Enter Meeting Room Now</span>
+                <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -944,12 +1123,27 @@ export const StudentDashboard = ({ studentId }) => {
                 <span className="p-2.5 rounded-xl bg-amber-50 text-amber-600 material-symbols-outlined text-[20px]">pending_actions</span>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+              <div
+                onClick={() => {
+                  if (isLiveMeetingActive) {
+                    handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id);
+                  }
+                }}
+                className={`p-4 rounded-xl border transition-all flex items-center justify-between ${
+                  isLiveMeetingActive
+                    ? 'bg-emerald-500/10 border-emerald-500 shadow-md ring-2 ring-emerald-500/30 cursor-pointer animate-pulse'
+                    : 'bg-white border-slate-200 shadow-sm'
+                }`}
+              >
                 <div>
                   <span className="text-[11px] font-semibold text-emerald-600 uppercase">Live WebRTC</span>
-                  <p className="text-xl font-extrabold text-emerald-600">{activeStudentOnlineMeeting?.status === 'Started' ? '1 Ready' : '0 Active'}</p>
+                  <p className="text-xl font-extrabold text-emerald-600">
+                    {isLiveMeetingActive ? '1 Ready (Click to Join)' : '0 Active'}
+                  </p>
                 </div>
-                <span className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 material-symbols-outlined text-[20px]">video_camera_front</span>
+                <span className={`p-2.5 rounded-xl bg-emerald-50 text-emerald-600 material-symbols-outlined text-[20px] ${isLiveMeetingActive ? 'animate-bounce' : ''}`}>
+                  video_camera_front
+                </span>
               </div>
 
               <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
@@ -1061,9 +1255,14 @@ export const StudentDashboard = ({ studentId }) => {
                         <button
                           type="button"
                           onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id || selectedIssue.id)}
-                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-nitte-800 font-bold text-xs shadow-sm hover:bg-nitte-50 transition"
+                          className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-black text-xs shadow-md transition-all active:scale-95 ${
+                            isLiveMeetingActive
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/30 ring-2 ring-emerald-400 animate-pulse'
+                              : 'bg-white border border-slate-200 text-nitte-800 hover:bg-nitte-50'
+                          }`}
                         >
-                          <span className="material-symbols-outlined text-[16px]">videocam</span> Join WebRTC Sync
+                          <span className="material-symbols-outlined text-[18px]">videocam</span>
+                          <span>{isLiveMeetingActive ? '👉 Join Live Call Now' : 'Join WebRTC Sync'}</span>
                         </button>
                       )}
                     </div>
@@ -1529,6 +1728,127 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
       </div>
+
+      {/* ================= 0. LIVE MEETING STARTED / INCOMING CALL POP-UP MODAL ================= */}
+      {isLiveMeetingActive && !showStudentVideoModal && (!liveMeetingKey || !dismissedMeetingIds.has(String(liveMeetingKey).toUpperCase())) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+          <div className="relative bg-slate-900 text-white rounded-3xl w-full max-w-lg overflow-hidden shadow-[0_0_60px_rgba(16,185,129,0.35)] border border-emerald-500/50 flex flex-col transition-all transform animate-in fade-in zoom-in-95 duration-200">
+            {/* Ambient Background Glows */}
+            <div className="absolute -right-20 -top-20 w-64 h-64 rounded-full bg-emerald-500/20 blur-3xl pointer-events-none"></div>
+            <div className="absolute -left-20 -bottom-20 w-64 h-64 rounded-full bg-blue-500/20 blur-3xl pointer-events-none"></div>
+
+            {/* Modal Header */}
+            <div className="relative px-6 py-4 bg-slate-950/90 border-b border-slate-800/80 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-3.5 w-3.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500"></span>
+                </span>
+                <span className="text-xs font-black uppercase tracking-wider text-rose-400">
+                  Live Hearing Commenced
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (liveMeetingKey) {
+                    setDismissedMeetingIds(prev => new Set(prev).add(String(liveMeetingKey).toUpperCase()));
+                  }
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                title="Minimize alert (can rejoin from top banner)"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="relative p-6 space-y-6">
+              {/* Call Radar Pulse + RO Profile */}
+              <div className="flex flex-col items-center text-center space-y-3">
+                <div className="relative">
+                  {/* Outer Pulsing Rings */}
+                  <span className="absolute -inset-3 rounded-full bg-emerald-500/20 animate-ping"></span>
+                  <span className="absolute -inset-1.5 rounded-full bg-emerald-500/40 animate-pulse"></span>
+                  <img
+                    alt={activeFormRO?.name || 'Relationship Officer'}
+                    className="relative w-20 h-20 rounded-full object-cover ring-4 ring-emerald-500 shadow-2xl"
+                    src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDLel99doHvbxmjryAfLBN2VNfpzynyvztUhQKhSNRExE89T18FYlvcmYM4tfaI_vM-172N9v2yX-Wld2Ntk59R4GxGXx7RABEII48GwhkCWqpuVBraR42HJWaKusfr93_AqXCXzXlrp9ejOk8nCkU5_qQ_UiN-glmZbFW-tIcIkJF3cTSY0S2B_q68gOQ-wDAWqktdFkdV_gkrZIVaMDWFM5iPNVJ7xKSySssioXk'}
+                  />
+                  <span className="absolute bottom-0 right-0 p-1.5 bg-emerald-500 rounded-full text-slate-950 ring-2 ring-slate-900 shadow">
+                    <span className="material-symbols-outlined text-[14px] block">videocam</span>
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wide bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Officer In Video Room Now
+                  </div>
+                  <h3 className="text-xl font-black text-white tracking-tight">
+                    {activeFormRO?.name || 'Dr. Rajeshwari Kamath'}
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Relationship Officer • Campus Grievance Hearing Cell
+                  </p>
+                </div>
+              </div>
+
+              {/* Ticket Details Box */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 text-left space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Grievance Ticket:</span>
+                  <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
+                    #{activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.id}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Category / Domain:</span>
+                  <span className="font-semibold text-slate-200">
+                    {selectedIssue?.category || activeStudentOnlineMeeting?.category || 'Official Consultation'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Connection Protocol:</span>
+                  <span className="text-slate-300 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px] text-emerald-400">verified_user</span>
+                    Encrypted WebRTC P2P
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-300 text-center leading-relaxed">
+                Your Relationship Officer has officially opened the video meeting room. Please join now to present your concerns directly.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="space-y-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.id)}
+                  className="w-full inline-flex items-center justify-center gap-3 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-sm sm:text-base shadow-[0_0_30px_rgba(16,185,129,0.5)] transition-all transform active:scale-95 group"
+                >
+                  <span className="material-symbols-outlined text-[24px] transition-transform group-hover:scale-125">videocam</span>
+                  <span>👉 Enter Meeting Room Now</span>
+                  <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (liveMeetingKey) {
+                      setDismissedMeetingIds(prev => new Set(prev).add(String(liveMeetingKey).toUpperCase()));
+                    }
+                  }}
+                  className="w-full text-center text-xs text-slate-400 hover:text-slate-200 py-2 transition"
+                >
+                  Minimize &amp; join later from dashboard top bar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= WEBRTC VIDEO MODAL (STITCH CINEMATIC DESIGN) ================= */}
       {showStudentVideoModal && (

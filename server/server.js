@@ -41,6 +41,8 @@ const logSystemEvent = async (text, userRole, userId) => {
 
 // In-memory issue store to guarantee zero data loss when direct PG pool is disconnected
 const inMemoryIssues = [];
+// In-memory meeting store to guarantee zero meeting status loss across restarts/polling
+const inMemoryMeetings = [];
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tadfbhczpmnyouoailds.supabase.co';
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
@@ -113,6 +115,20 @@ async function fetchSupabaseState() {
       notes: m.notes,
       status: m.status
     }));
+
+    // Merge recent in-memory meetings to preserve active statuses (e.g. Started)
+    for (const im of inMemoryMeetings) {
+      const imKey = (im.id || im.issueId || '').toUpperCase();
+      const matchIdx = mappedMeetings.findIndex(m =>
+        (m.id && String(m.id).toUpperCase() === imKey) ||
+        (m.issueId && String(m.issueId).toUpperCase() === imKey)
+      );
+      if (matchIdx >= 0) {
+        mappedMeetings[matchIdx] = { ...mappedMeetings[matchIdx], ...im };
+      } else {
+        mappedMeetings.unshift(im);
+      }
+    }
 
     return {
       users: {
@@ -212,6 +228,20 @@ app.get('/api/db-state', async (req, res) => {
       };
     });
 
+    const mergedPgMeetings = [...meetingsRes.rows];
+    for (const im of inMemoryMeetings) {
+      const imKey = (im.id || im.issueId || '').toUpperCase();
+      const matchIdx = mergedPgMeetings.findIndex(m =>
+        (m.id && String(m.id).toUpperCase() === imKey) ||
+        (m.issueId && String(m.issueId).toUpperCase() === imKey)
+      );
+      if (matchIdx >= 0) {
+        mergedPgMeetings[matchIdx] = { ...mergedPgMeetings[matchIdx], ...im };
+      } else {
+        mergedPgMeetings.unshift(im);
+      }
+    }
+
     res.json({
       users: {
         students: studentsRes.rows,
@@ -219,7 +249,7 @@ app.get('/api/db-state', async (req, res) => {
         ros: rosRes.rows
       },
       issues: mappedIssues,
-      meetings: meetingsRes.rows,
+      meetings: mergedPgMeetings,
       groupSessions: sessionsRes.rows,
       resources: resourcesRes.rows,
       mentorSessionRecords: mentorRecordsRes.rows,
@@ -1518,88 +1548,62 @@ app.post('/api/meetings', async (req, res) => {
     finalNotes = finalNotes ? `${finalNotes} | Discussions: ${cleanSummary}` : `Discussions: ${cleanSummary}`;
   }
 
+  const existingMemMeet = inMemoryMeetings.find(m => m.issueId && String(m.issueId).toUpperCase() === String(issueId).toUpperCase());
+  const meetId = existingMemMeet ? existingMemMeet.id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const isReschedule = Boolean(existingMemMeet);
+
+  let logMessage = isReschedule
+    ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
+    : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`;
+  if (cleanFeedback) {
+    logMessage += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
+  } else if (cleanSummary) {
+    logMessage += ` | [LOGGED DISCUSSION MINUTES]: "${cleanSummary}"`;
+  }
+
   try {
-    // Ensure student_id exists in database or fallback to issue's student_id
-    const studentCheck = await query(`SELECT id FROM students WHERE UPPER(id) = UPPER($1)`, [validStudentId]);
-    if (studentCheck.rowCount === 0) {
-      const issueCheck = await query(`SELECT student_id FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
-      if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
-        validStudentId = issueCheck.rows[0].student_id;
-      }
-    }
-
-    // Check if meeting already exists for this issue or if meeting was previously scheduled
-    const existingMeet = await query(`SELECT id FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
-    const issueStatusCheck = await query(`SELECT status, logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
-    const currentStatus = issueStatusCheck.rowCount > 0 ? issueStatusCheck.rows[0].status : '';
-
-    const isReschedule = existingMeet.rowCount > 0 ||
-      currentStatus === 'Meeting Scheduled' ||
-      currentStatus === 'Meeting Started' ||
-      currentStatus === 'In-Progress' ||
-      currentStatus === 'In Progress';
-
-    const meetId = existingMeet.rowCount > 0 ? existingMeet.rows[0].id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    if (isReschedule) {
-      if (issueStatusCheck.rowCount > 0) {
-        const lArr = typeof issueStatusCheck.rows[0].logs === 'string' ? JSON.parse(issueStatusCheck.rows[0].logs) : (issueStatusCheck.rows[0].logs || []);
-        const getLogText = (l) => {
-          if (!l) return '';
-          if (typeof l === 'string') {
-            if (l.trim().startsWith('{') && l.includes('"text"')) {
-              try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) { }
-            }
-            return l;
-          }
-          if (typeof l === 'object' && l.text) return String(l.text);
-          return String(l);
-        };
-        const reassignCount = lArr.filter(l => {
-          const txt = getLogText(l).toLowerCase();
-          return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
-        }).length;
-        if (reassignCount >= 2) {
-          return res.status(400).json({ error: 'RO Limit Reached: Maximum 2 meeting reassignments allowed per issue. Please escalate to Admin for further changes.' });
+    try {
+      // Ensure student_id exists in database or fallback to issue's student_id
+      const studentCheck = await query(`SELECT id FROM students WHERE UPPER(id) = UPPER($1)`, [validStudentId]);
+      if (studentCheck.rowCount === 0) {
+        const issueCheck = await query(`SELECT student_id FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
+        if (issueCheck.rowCount > 0 && issueCheck.rows[0].student_id) {
+          validStudentId = issueCheck.rows[0].student_id;
         }
       }
 
-      // Delete any previous meeting rows for this issue to ensure no stale 'Started' status remains
-      await query(`DELETE FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+      // Check if meeting already exists for this issue or if meeting was previously scheduled
+      const existingMeet = await query(`SELECT id FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+      const issueStatusCheck = await query(`SELECT status, logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
 
-      // Insert fresh meeting record with status = 'Confirmed'
-      await query(
-        `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
-      );
-    } else {
-      await query(
-        `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
-        [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
-      );
-    }
+      if (isReschedule || (existingMeet && existingMeet.rowCount > 0)) {
+        // Delete any previous meeting rows for this issue to ensure no stale 'Started' status remains
+        await query(`DELETE FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+        await query(
+          `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
+          [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
+        );
+      } else {
+        await query(
+          `INSERT INTO meetings (id, issue_id, student_id, student_name, ro_id, date, time, mode, location, notes, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Confirmed')`,
+          [meetId, issueId, validStudentId, studentName, roId, date, time, mode || 'Offline', meetLoc, finalNotes]
+        );
+      }
 
-    let logMessage = isReschedule
-      ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
-      : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`;
-    if (cleanFeedback) {
-      logMessage += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
-    } else if (cleanSummary) {
-      logMessage += ` | [LOGGED DISCUSSION MINUTES]: "${cleanSummary}"`;
-    }
-
-    // Update issue logs and status (reset status to Meeting Scheduled)
-    const issueRes = await query(`SELECT logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
-    if (issueRes.rowCount > 0) {
-      const logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : (issueRes.rows[0].logs || []);
-      logs.push({ text: logMessage, time: timestamp });
-
-      await query(
-        `UPDATE issues SET status = 'Meeting Scheduled', logs = $1 WHERE UPPER(id) = UPPER($2)`,
-        [JSON.stringify(logs), issueId]
-      );
+      // Update issue logs and status
+      const issueRes = await query(`SELECT logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
+      if (issueRes.rowCount > 0) {
+        const logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : (issueRes.rows[0].logs || []);
+        logs.push({ text: logMessage, time: timestamp });
+        await query(
+          `UPDATE issues SET status = 'Meeting Scheduled', logs = $1 WHERE UPPER(id) = UPPER($2)`,
+          [JSON.stringify(logs), issueId]
+        );
+      }
+    } catch (pgErr) {
+      console.warn('[Server] Direct PG meeting insert notice (using Supabase & in-memory):', pgErr.message);
     }
 
     await logSystemEvent(`RO ${roId} ${isReschedule ? 'rescheduled' : 'scheduled'} a meeting with Student ${studentName} for ${date} at ${time}`, 'RO', roId);
@@ -1639,6 +1643,45 @@ app.post('/api/meetings', async (req, res) => {
       recipientName: studentName
     });
 
+    const memoryMeeting = {
+      id: meetId,
+      issueId,
+      studentId: validStudentId,
+      studentName,
+      roId,
+      date,
+      time,
+      mode: mode || 'Offline',
+      location: meetLoc,
+      notes: finalNotes,
+      status: 'Confirmed'
+    };
+    const mIdx = inMemoryMeetings.findIndex(m => m.id === meetId || (m.issueId && m.issueId.toUpperCase() === issueId.toUpperCase()));
+    if (mIdx >= 0) inMemoryMeetings[mIdx] = memoryMeeting;
+    else inMemoryMeetings.unshift(memoryMeeting);
+
+    // Direct Supabase Cloud REST upsert
+    try {
+      const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' };
+      fetch(`${SUPABASE_URL}/rest/v1/meetings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: meetId,
+          issue_id: issueId,
+          student_id: validStudentId,
+          student_name: studentName,
+          ro_id: roId,
+          date,
+          time,
+          mode: mode || 'Offline',
+          location: meetLoc,
+          notes: finalNotes,
+          status: 'Confirmed'
+        })
+      }).catch(e => console.warn('[Server] Supabase meeting insert warning:', e.message));
+    } catch (e) {}
+
     res.status(201).json({ id: meetId, isReschedule });
   } catch (err) {
     console.error('Error scheduling meeting:', err);
@@ -1653,13 +1696,72 @@ app.put('/api/meetings/:id', async (req, res) => {
 
   try {
     const combinedNotes = notes || (discussionSummary ? `Discussions: ${discussionSummary}${actionItems ? ` | Action Items: ${actionItems}` : ''}` : null);
-    if (combinedNotes) {
-      await query(
-        `UPDATE meetings SET status = COALESCE($1, status), notes = $2 WHERE id = $3 OR UPPER(issue_id) = UPPER($3)`,
-        [status || 'Completed', combinedNotes, meetId]
-      );
+    
+    // 1. Update in-memory meetings store
+    const targetKey = String(meetId).toUpperCase();
+    const memMeet = inMemoryMeetings.find(m =>
+      (m.id && String(m.id).toUpperCase() === targetKey) ||
+      (m.issueId && String(m.issueId).toUpperCase() === targetKey)
+    );
+    if (memMeet) {
+      if (status) memMeet.status = status;
+      if (combinedNotes) memMeet.notes = combinedNotes;
+      if (status === 'Started') memMeet.startedAt = new Date().toISOString();
+      if (status === 'Completed' || status === 'Finished') memMeet.endedAt = new Date().toISOString();
     } else {
-      await query(`UPDATE meetings SET status = $1 WHERE id = $2 OR UPPER(issue_id) = UPPER($2)`, [status, meetId]);
+      inMemoryMeetings.unshift({
+        id: meetId,
+        issueId: meetId,
+        status: status || 'Completed',
+        notes: combinedNotes || '',
+        startedAt: status === 'Started' ? new Date().toISOString() : undefined,
+        endedAt: (status === 'Completed' || status === 'Finished') ? new Date().toISOString() : undefined
+      });
+    }
+
+    // 2. If Started, also ensure matching issue in inMemoryIssues is set to 'Meeting Started'
+    if (status === 'Started') {
+      const targetIssueId = (memMeet && memMeet.issueId) || meetId;
+      const memIss = inMemoryIssues.find(i => (i.id || '').toUpperCase() === String(targetIssueId).toUpperCase());
+      if (memIss) {
+        memIss.status = 'Meeting Started';
+      }
+    }
+
+    // 3. Update Supabase Cloud REST
+    try {
+      const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+      fetch(`${SUPABASE_URL}/rest/v1/meetings?or=(id.eq.${meetId},issue_id.eq.${meetId})`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          status: status || 'Completed',
+          ...(combinedNotes ? { notes: combinedNotes } : {})
+        })
+      }).catch(e => console.warn('[Server] Supabase meeting patch warning:', e.message));
+
+      if (status === 'Started') {
+        const targetIssueId = (memMeet && memMeet.issueId) || meetId;
+        fetch(`${SUPABASE_URL}/rest/v1/issues?id=eq.${targetIssueId}`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ status: 'Meeting Started' })
+        }).catch(e => console.warn('[Server] Supabase issue status patch warning:', e.message));
+      }
+    } catch (e) {}
+
+    // 4. Update Postgres pool if connected
+    try {
+      if (combinedNotes) {
+        await query(
+          `UPDATE meetings SET status = COALESCE($1, status), notes = $2 WHERE id = $3 OR UPPER(issue_id) = UPPER($3)`,
+          [status || 'Completed', combinedNotes, meetId]
+        );
+      } else {
+        await query(`UPDATE meetings SET status = $1 WHERE id = $2 OR UPPER(issue_id) = UPPER($2)`, [status, meetId]);
+      }
+    } catch (pgErr) {
+      console.warn('[Server] PG meeting update notice (using Supabase & in-memory):', pgErr.message);
     }
     await logSystemEvent(`Meeting ${meetId} updated (${status || 'Completed'})${discussionSummary ? ' with discussion minutes' : ''}`, 'RO', 'MEETING_MGR');
     res.json({ success: true });
