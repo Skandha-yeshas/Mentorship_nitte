@@ -1159,92 +1159,159 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1b. GET STUDENT ISSUE LIMIT STATUS (2 Issues Per 7 Days Limit)
+// 1b. GET STUDENT ISSUE LIMIT STATUS (Maximum 2 Active Issues Limit)
 app.get('/api/students/:id/issue-limit', async (req, res) => {
   const studentId = req.params.id;
   try {
-    const checkRes = await query(
-      `SELECT created_at FROM issues 
-       WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-       ORDER BY created_at ASC`,
-      [studentId]
+    let activeCount = 0;
+    const cleanStudentId = String(studentId).trim().toLowerCase();
+    const countedIds = new Set();
+
+    // 1. In-memory buffer check
+    const inMemActive = inMemoryIssues.filter(i =>
+      (String(i.studentId || i.student_id || '').trim().toLowerCase() === cleanStudentId) &&
+      i.status !== 'Resolved' && i.status !== 'Closed'
     );
+    inMemActive.forEach(i => countedIds.add((i.id || '').toUpperCase()));
+    activeCount += inMemActive.length;
 
-    const recentCount = checkRes.rowCount;
-    const maxLimit = 2;
-    const isEligible = recentCount < maxLimit;
-
-    if (recentCount > 0) {
-      const oldestCreated = new Date(checkRes.rows[0].created_at);
-      const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
-
-      res.json({
-        isEligible,
-        recentCount,
-        maxLimit,
-        maxQuota: maxLimit, // backwards compatibility alias
-        remainingLimit: Math.max(0, maxLimit - recentCount),
-        remainingQuota: Math.max(0, maxLimit - recentCount),
-        oldestSubmittedAt: oldestCreated.toISOString(),
-        nextAllowedAt: nextAllowed.toISOString(),
-        cooldownMs: diffMs
-      });
-    } else {
-      res.json({
-        isEligible: true,
-        recentCount: 0,
-        maxLimit,
-        maxQuota: maxLimit,
-        remainingLimit: maxLimit,
-        remainingQuota: maxLimit,
-        oldestSubmittedAt: null,
-        nextAllowedAt: null,
-        cooldownMs: 0
-      });
+    // 2. Direct Supabase Cloud REST check
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/issues?student_id=ilike.${encodeURIComponent(studentId)}&status=not.in.(Resolved,Closed)&select=id`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+      );
+      if (sbRes.ok) {
+        const sbActive = await sbRes.json();
+        if (Array.isArray(sbActive)) {
+          for (const s of sbActive) {
+            const uId = (s.id || '').toUpperCase();
+            if (uId && !countedIds.has(uId)) {
+              countedIds.add(uId);
+              activeCount++;
+            }
+          }
+        }
+      }
+    } catch (sbErr) {
+      console.warn('[Server] Supabase issue-limit check notice:', sbErr.message);
     }
+
+    // 3. PostgreSQL query check (if connected)
+    if (isDbConnected()) {
+      try {
+        const pgRes = await query(
+          `SELECT id FROM issues 
+           WHERE LOWER(student_id) = LOWER($1) AND status NOT IN ('Resolved', 'Closed')`,
+          [studentId]
+        );
+        if (pgRes && pgRes.rows) {
+          for (const r of pgRes.rows) {
+            const uId = (r.id || '').toUpperCase();
+            if (uId && !countedIds.has(uId)) {
+              countedIds.add(uId);
+              activeCount++;
+            }
+          }
+        }
+      } catch (checkErr) {
+        console.warn('[Server] Issue limit check PG notice:', checkErr.message);
+      }
+    }
+
+    const maxLimit = 2;
+    const isEligible = activeCount < maxLimit;
+
+    res.json({
+      isEligible,
+      activeCount,
+      recentCount: activeCount,
+      maxLimit,
+      maxQuota: maxLimit,
+      remainingLimit: Math.max(0, maxLimit - activeCount),
+      remainingQuota: Math.max(0, maxLimit - activeCount)
+    });
   } catch (err) {
     console.error('Error checking student issue limit:', err);
     res.status(500).json({ error: 'Failed to check issue limit' });
   }
 });
 
-// 2. SUBMIT AN ISSUE (Allows 2 Issues per 7 Days & Supports Demo Bypass)
+// 2. SUBMIT AN ISSUE (Strictly enforces max 2 active issues per student)
 app.post('/api/issues', async (req, res) => {
-  const { issueId: clientIssueId, studentId, category, description, priority, studentName, bypassLimit } = req.body;
+  const { issueId: clientIssueId, studentId, category, description, priority, studentName } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   try {
-    // Check 7-day 2-issue limit for this student unless Demo Bypass is active
-    if (!bypassLimit) {
+    // Strictly Enforce 2-Issue Maximum Active Limit per Student
+    let activeCount = 0;
+    const cleanStudentId = String(studentId).trim().toLowerCase();
+    const cleanStudentName = studentName ? String(studentName).trim().toLowerCase() : '';
+
+    // 1. In-memory buffer check
+    const inMemActive = inMemoryIssues.filter(i => {
+      const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
+      const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
+      const matches = sId === cleanStudentId || (cleanStudentName && cleanStudentName !== 'student' && sName === cleanStudentName);
+      return matches && i.status !== 'Resolved' && i.status !== 'Closed';
+    });
+    const countedIds = new Set(inMemActive.map(i => (i.id || '').toUpperCase()));
+    activeCount += inMemActive.length;
+
+    // 2. Direct Supabase Cloud REST check
+    try {
+      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      const sbRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/issues?student_id=ilike.${encodeURIComponent(studentId)}&status=not.in.(Resolved,Closed)&select=id`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+      );
+      if (sbRes.ok) {
+        const sbActive = await sbRes.json();
+        if (Array.isArray(sbActive)) {
+          for (const s of sbActive) {
+            const uId = (s.id || '').toUpperCase();
+            if (uId && !countedIds.has(uId)) {
+              countedIds.add(uId);
+              activeCount++;
+            }
+          }
+        }
+      }
+    } catch (sbCheckErr) {
+      console.warn('[Server] Active issue Supabase check error:', sbCheckErr.message);
+    }
+
+    // 3. PostgreSQL query check (if connected)
+    if (isDbConnected()) {
       try {
-        const checkRes = await query(
-          `SELECT created_at FROM issues 
-           WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-           ORDER BY created_at ASC`,
+        const pgRes = await query(
+          `SELECT id FROM issues 
+           WHERE LOWER(student_id) = LOWER($1) AND status NOT IN ('Resolved', 'Closed')`,
           [studentId]
         );
-
-        if (checkRes && checkRes.rowCount >= 2) {
-          const oldestCreated = new Date(checkRes.rows[0].created_at);
-          const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
-          const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
-          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-          const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-
-          const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
-
-          return res.status(400).json({
-            error: `Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
-            nextAllowedDate: nextAllowed.toISOString(),
-            cooldownRemainingMs: diffMs
-          });
+        if (pgRes && pgRes.rows) {
+          for (const r of pgRes.rows) {
+            const uId = (r.id || '').toUpperCase();
+            if (uId && !countedIds.has(uId)) {
+              countedIds.add(uId);
+              activeCount++;
+            }
+          }
         }
       } catch (checkErr) {
         console.warn('[Server] Issue limit check PG notice:', checkErr.message);
       }
+    }
+
+    if (activeCount >= 2) {
+      return res.status(400).json({
+        error: `Grievance Quota Limit Reached (2 / 2 Active Issues Used): Student ${studentName || studentId} already has ${activeCount} active unresolved grievances. A maximum of 2 active issues are permitted simultaneously. Please wait until an open grievance is marked as Resolved and feedback is submitted to free up a slot.`
+      });
     }
 
     const idx = ALL_CATEGORIES.indexOf(category);

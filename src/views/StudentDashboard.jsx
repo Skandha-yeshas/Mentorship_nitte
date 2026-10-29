@@ -202,12 +202,12 @@ export const StudentDashboard = ({ studentId }) => {
     return null;
   })();
 
-  // Quota & Lock calculation (Institutional rule: up to 2 active issues)
+  // Quota & Lock calculation (Institutional rule: strictly up to 2 active issues)
   const activeUnresolvedIssues = myIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
   const usedCount = activeUnresolvedIssues.length;
   const maxWeeklyLimit = 2;
   const isLimitReached = usedCount >= maxWeeklyLimit;
-  const isFormLocked = isLimitReached && !isDemoLimitBypassed;
+  const isFormLocked = isLimitReached;
 
   const pendingFeedbackIssues = myIssues.filter(i => {
     const isResolvedOrClosed = i.status === 'Resolved' || i.status === 'Closed';
@@ -384,8 +384,8 @@ export const StudentDashboard = ({ studentId }) => {
       return;
     }
 
-    if (isFormLocked) {
-      setErrorMessage('Quota Limit Reached: Maximum 2 active issues permitted simultaneously.');
+    if (isLimitReached || isFormLocked) {
+      setErrorMessage(`Grievance Quota Limit Reached (${usedCount} / 2 Active Issues Filled): Institutional policy strictly allows a maximum of 2 active grievances per student. Further submissions are locked until one of your active issues is marked as Resolved.`);
       return;
     }
 
@@ -575,8 +575,36 @@ export const StudentDashboard = ({ studentId }) => {
                   </span>
                 </div>
 
+                {/* Active Quota Lock Alert Banner */}
+                {isLimitReached && (
+                  <div className="rounded-2xl border-2 border-rose-300 bg-rose-50/90 p-4 sm:p-5 shadow-sm space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-rose-800 font-extrabold text-sm">
+                        <span className="material-symbols-outlined text-[22px] text-rose-600">lock</span>
+                        <span>Maximum Grievance Limit Reached (2 / 2 Active Slots Filled)</span>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-200 text-rose-900 border border-rose-300">
+                        Submissions Locked
+                      </span>
+                    </div>
+                    <p className="text-xs text-rose-700 leading-relaxed">
+                      You currently have <strong>2 active grievances</strong> awaiting resolution. Under institutional policy, a student cannot raise more than two issues simultaneously. New submissions are locked until one of your active issues is marked as <strong>Resolved</strong> and feedback is submitted.
+                    </p>
+                    <div className="pt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('track')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">rule_folder</span>
+                        View Active Issues ({activeUnresolvedIssues.length})
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Grievance Category Selection (NO DROPDOWN - Stitch 2-Tier Selection) */}
-                <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/80">
+                <div className={`space-y-3.5 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/80 transition-opacity ${isFormLocked ? 'opacity-60 pointer-events-none' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
                       <span>1. Select Issue Category &amp; Specific Problem</span>
@@ -593,10 +621,11 @@ export const StudentDashboard = ({ studentId }) => {
                     <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
                     <input
                       type="text"
-                      placeholder="Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)..."
+                      disabled={isFormLocked}
+                      placeholder={isFormLocked ? 'Submissions locked (2/2 active issues reached)' : 'Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)...'}
                       value={categorySearchQuery}
                       onChange={(e) => setCategorySearchQuery(e.target.value)}
-                      className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition text-slate-800 shadow-sm"
+                      className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition text-slate-800 shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
                     />
                   </div>
 
@@ -729,18 +758,19 @@ export const StudentDashboard = ({ studentId }) => {
                 </div>
 
                 {/* Subject & Description */}
-                <div className="space-y-3">
+                <div className={`space-y-3 transition-opacity ${isFormLocked ? 'opacity-60' : ''}`}>
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
                       Subject / Brief Title <span className="text-rose-500">*</span>
                     </label>
                     <input
-                      className="w-full text-sm font-semibold px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition"
+                      className="w-full text-sm font-semibold px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition disabled:bg-slate-100 disabled:cursor-not-allowed"
                       type="text"
                       required
+                      disabled={isFormLocked}
                       value={subjectTitle}
                       onChange={(e) => setSubjectTitle(e.target.value)}
-                      placeholder="e.g. Internal Assessment CIE Score Discrepancy"
+                      placeholder={isFormLocked ? 'Grievance submissions locked (2/2 active issues reached)' : 'e.g. Internal Assessment CIE Score Discrepancy'}
                     />
                   </div>
 
@@ -752,13 +782,14 @@ export const StudentDashboard = ({ studentId }) => {
                       <span className="text-[11px] font-mono text-slate-400">{description.length} / 600 chars</span>
                     </div>
                     <textarea
-                      className="w-full text-sm px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition custom-scrollbar leading-relaxed"
+                      className="w-full text-sm px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition custom-scrollbar leading-relaxed disabled:bg-slate-100 disabled:cursor-not-allowed"
                       rows={4}
                       required
+                      disabled={isFormLocked}
                       maxLength={600}
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
-                      placeholder="Provide specific details, dates, course codes, or semester lab batch information..."
+                      placeholder={isFormLocked ? 'Grievance submissions locked until an existing ticket is resolved and closed.' : 'Provide specific details, dates, course codes, or semester lab batch information...'}
                     />
                   </div>
                 </div>
@@ -781,8 +812,8 @@ export const StudentDashboard = ({ studentId }) => {
                       onClick={handleSubmitIssue}
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-nitte-800/20 transition-all active:scale-95"
                     >
-                      <span className="material-symbols-outlined text-[16px]">{isSubmitting ? 'sync' : 'send'}</span>
-                      {isSubmitting ? 'Submitting Grievance...' : (isFormLocked ? '2/2 Quota Limit Reached' : 'Submit Grievance to RO')}
+                      <span className="material-symbols-outlined text-[16px]">{isSubmitting ? 'sync' : (isFormLocked ? 'lock' : 'send')}</span>
+                      {isSubmitting ? 'Submitting Grievance...' : (isFormLocked ? '2 / 2 Quota Limit Reached (Locked)' : 'Submit Grievance to RO')}
                     </button>
                   </div>
                 </div>

@@ -1607,8 +1607,8 @@ export const DatabaseProvider = ({ children }) => {
     localStorage.setItem('curr_user_role', currentUser);
   }, [currentUser]);
 
-  const isDemoLimitBypassed = true;
-  const toggleDemoLimitBypass = () => { };
+  const [isDemoLimitBypassed, setIsDemoLimitBypassed] = useState(false);
+  const toggleDemoLimitBypass = () => setIsDemoLimitBypassed(prev => !prev);
 
   // Local issue creator for offline / client fallback mode
   const createLocalIssue = (studentId, studentName, category, description, priority) => {
@@ -1744,6 +1744,20 @@ export const DatabaseProvider = ({ children }) => {
       totalAttempts += reopens;
     });
 
+    // Strict Quota Guard: Maximum 2 active grievances per student
+    const activeStudentIssues = (db.issues || []).filter(i => {
+      const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
+      const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
+      const matchesStudent = sId === effectiveStudentId.toLowerCase() ||
+        (effectiveStudentName && effectiveStudentName.toLowerCase() !== 'student' && sName === effectiveStudentName.toLowerCase());
+      const isUnresolved = i.status !== 'Resolved' && i.status !== 'Closed';
+      return matchesStudent && isUnresolved;
+    });
+
+    if (activeStudentIssues.length >= 2) {
+      throw new Error(`Quota Limit Reached (2 / 2 Active Issues Used): You currently have ${activeStudentIssues.length} active grievances awaiting resolution. Institutional policy permits a maximum of 2 active issues simultaneously.`);
+    }
+
     const isThirdAttempt = totalAttempts >= 2;
     let initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
     const logText = isThirdAttempt
@@ -1764,8 +1778,7 @@ export const DatabaseProvider = ({ children }) => {
           studentName: effectiveStudentName,
           category,
           description,
-          priority,
-          bypassLimit: isDemoLimitBypassed
+          priority
         })
       });
 
@@ -1775,12 +1788,11 @@ export const DatabaseProvider = ({ children }) => {
         if (data.status) initialStatus = data.status;
       } else {
         const errJson = await res.json().catch(() => ({}));
-        if (errJson.error && errJson.error.includes('Weekly Limit Reached')) {
-          throw new Error(errJson.error);
-        }
+        throw new Error(errJson.error || `Failed to submit issue (HTTP ${res.status})`);
       }
     } catch (apiErr) {
-      if (apiErr.message && apiErr.message.includes('Weekly Limit Reached')) {
+      // Re-throw quota errors or any explicit server validation errors immediately
+      if (apiErr.message && !apiErr.message.includes('Failed to fetch') && !apiErr.message.includes('NetworkError')) {
         throw apiErr;
       }
       console.warn('[submitIssue] Backend /api/issues offline, using direct Supabase fallback:', apiErr.message);
@@ -1788,6 +1800,9 @@ export const DatabaseProvider = ({ children }) => {
 
     // 2. Fallback only if backend was completely offline: generate ID & write to Supabase directly
     if (!issueId) {
+      if (activeStudentIssues.length >= 2) {
+        throw new Error(`Quota Limit Reached (2 / 2 Active Issues Used): Institutional policy permits a maximum of 2 active issues simultaneously.`);
+      }
       issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
       try {
         // Ensure student exists in Supabase students table first
