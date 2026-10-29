@@ -371,11 +371,11 @@ export const RODashboard = ({ roId }) => {
   };
 
   // Fetch current RO profile
-  const ro = db.users.ros.find(r => r.id === roId) || db.users.ros[0];
+  const ro = (db.users?.ros || []).find(r => r.id === roId) || db.users?.ros?.[0] || { id: 'RO-01', name: 'Relationship Officer' };
 
   // Issues assigned to this RO
-  const roIssues = db.issues.filter(i => i.roId === ro.id);
-  const activeRoIssues = roIssues.filter(i => i.status !== 'Resolved');
+  const roIssues = (db.issues || []).filter(i => (i.roId === ro.id || i.ro_id === ro.id));
+  const activeRoIssues = roIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
 
   // Categories belonging strictly to this RO's assigned issues & assigned region
   const myAssignedIssueCategories = Array.from(new Set([

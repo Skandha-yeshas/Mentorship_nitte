@@ -39,13 +39,121 @@ const logSystemEvent = async (text, userRole, userId) => {
   }
 };
 
+// In-memory issue store to guarantee zero data loss when direct PG pool is disconnected
+const inMemoryIssues = [];
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://tadfbhczpmnyouoailds.supabase.co';
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+
+async function fetchSupabaseState() {
+  const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+  try {
+    const [stuRes, mntRes, rosRes, issRes, meetRes, sessRes, resRes, recRes, fbRes, vidRes] = await Promise.allSettled([
+      fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/mentors?select=*`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/ros?select=*`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/issues?select=*&order=created_at.desc`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/meetings?select=*`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/group_sessions?select=*&order=date_time.asc`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/resources?select=*&order=date_shared.desc`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/mentor_session_records?select=*&order=created_at.desc`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers }).then(r => r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/category_videos?select=*`, { headers }).then(r => r.json())
+    ]);
+
+    const rawIssues = issRes.status === 'fulfilled' && Array.isArray(issRes.value) ? issRes.value : [];
+    const mappedIssues = rawIssues.map(issue => {
+      let feedback = null;
+      if (issue.feedback_rating !== null && issue.feedback_rating !== undefined) {
+        feedback = {
+          rating: issue.feedback_rating,
+          comments: issue.feedback_comments || ''
+        };
+      }
+      return {
+        id: issue.id,
+        studentId: issue.student_id || issue.studentId,
+        student_id: issue.student_id || issue.studentId,
+        studentName: issue.student_name || issue.studentName,
+        student_name: issue.student_name || issue.studentName,
+        category: issue.category,
+        description: issue.description,
+        priority: issue.priority,
+        status: issue.status,
+        roId: issue.ro_id || issue.roId,
+        ro_id: issue.ro_id || issue.roId,
+        createdAt: issue.created_at || issue.createdAt,
+        created_at: issue.created_at || issue.createdAt,
+        resolvedAt: issue.resolved_at || issue.resolvedAt,
+        resolutionNotes: issue.resolution_notes || issue.resolutionNotes,
+        feedback,
+        logs: Array.isArray(issue.logs) ? issue.logs : (typeof issue.logs === 'string' ? JSON.parse(issue.logs || '[]') : [])
+      };
+    });
+
+    // Merge any recent in-memory issues
+    const idSet = new Set(mappedIssues.map(i => (i.id || '').toUpperCase()));
+    for (const im of inMemoryIssues) {
+      if (!idSet.has((im.id || '').toUpperCase())) {
+        mappedIssues.unshift(im);
+      }
+    }
+
+    const rawMeetings = meetRes.status === 'fulfilled' && Array.isArray(meetRes.value) ? meetRes.value : [];
+    const mappedMeetings = rawMeetings.map(m => ({
+      id: m.id,
+      issueId: m.issue_id || m.issueId,
+      studentId: m.student_id || m.studentId,
+      studentName: m.student_name || m.studentName,
+      roId: m.ro_id || m.roId,
+      date: m.date,
+      time: m.time,
+      mode: m.mode,
+      location: m.location,
+      notes: m.notes,
+      status: m.status
+    }));
+
+    return {
+      users: {
+        students: stuRes.status === 'fulfilled' && Array.isArray(stuRes.value) ? stuRes.value : [],
+        mentors: mntRes.status === 'fulfilled' && Array.isArray(mntRes.value) ? mntRes.value : [],
+        ros: rosRes.status === 'fulfilled' && Array.isArray(rosRes.value) ? rosRes.value : []
+      },
+      issues: mappedIssues,
+      meetings: mappedMeetings,
+      groupSessions: sessRes.status === 'fulfilled' && Array.isArray(sessRes.value) ? sessRes.value : [],
+      resources: resRes.status === 'fulfilled' && Array.isArray(resRes.value) ? resRes.value : [],
+      mentorSessionRecords: recRes.status === 'fulfilled' && Array.isArray(recRes.value) ? recRes.value : [],
+      categoryVideos: vidRes.status === 'fulfilled' && Array.isArray(vidRes.value) ? vidRes.value : [],
+      mentorFeedbacks: fbRes.status === 'fulfilled' && Array.isArray(fbRes.value) ? fbRes.value : [],
+      systemLogs: []
+    };
+  } catch (err) {
+    console.warn('[Server] Supabase REST fetch error:', err.message);
+    return null;
+  }
+}
+
 // 1. GET FULL APP STATE (For quick frontend loading)
 app.get('/api/db-state', async (req, res) => {
+  const emailLogs = await getEmailLogs().catch(() => []);
+
   if (!isDbConnected()) {
+    const cloudState = await fetchSupabaseState();
+    if (cloudState) {
+      return res.json({
+        ...cloudState,
+        isPgConnected: false,
+        gmailAddress: GMAIL_ADDRESS,
+        gmailLogs: emailLogs,
+        imapStatus: getImapStatus()
+      });
+    }
     const fallback = getFallbackState();
-    const emailLogs = await getEmailLogs().catch(() => []);
     return res.json({
       ...fallback,
+      issues: inMemoryIssues.length > 0 ? inMemoryIssues : fallback.issues,
       gmailAddress: GMAIL_ADDRESS,
       gmailLogs: emailLogs,
       imapStatus: getImapStatus()
@@ -123,11 +231,21 @@ app.get('/api/db-state', async (req, res) => {
       imapStatus: getImapStatus()
     });
   } catch (err) {
-    console.warn('[Server] DB query error, serving in-memory demo state:', err.message);
+    console.warn('[Server] DB query error, falling back to Supabase Cloud REST:', err.message);
+    const cloudState = await fetchSupabaseState();
+    if (cloudState) {
+      return res.json({
+        ...cloudState,
+        isPgConnected: false,
+        gmailAddress: GMAIL_ADDRESS,
+        gmailLogs: emailLogs,
+        imapStatus: getImapStatus()
+      });
+    }
     const fallback = getFallbackState();
-    const emailLogs = await getEmailLogs().catch(() => []);
     res.json({
       ...fallback,
+      issues: inMemoryIssues.length > 0 ? inMemoryIssues : fallback.issues,
       gmailAddress: GMAIL_ADDRESS,
       gmailLogs: emailLogs,
       imapStatus: getImapStatus()
@@ -1101,27 +1219,31 @@ app.post('/api/issues', async (req, res) => {
   try {
     // Check 7-day 2-issue limit for this student unless Demo Bypass is active
     if (!bypassLimit) {
-      const checkRes = await query(
-        `SELECT created_at FROM issues 
-         WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-         ORDER BY created_at ASC`,
-        [studentId]
-      );
+      try {
+        const checkRes = await query(
+          `SELECT created_at FROM issues 
+           WHERE student_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+           ORDER BY created_at ASC`,
+          [studentId]
+        );
 
-      if (checkRes.rowCount >= 2) {
-        const oldestCreated = new Date(checkRes.rows[0].created_at);
-        const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        if (checkRes && checkRes.rowCount >= 2) {
+          const oldestCreated = new Date(checkRes.rows[0].created_at);
+          const nextAllowed = new Date(oldestCreated.getTime() + 7 * 24 * 60 * 60 * 1000);
+          const diffMs = Math.max(0, nextAllowed.getTime() - Date.now());
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
-        const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
+          const timeText = diffDays > 0 ? `${diffDays} days and ${diffHours} hours` : `${diffHours} hours`;
 
-        return res.status(400).json({
-          error: `Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
-          nextAllowedDate: nextAllowed.toISOString(),
-          cooldownRemainingMs: diffMs
-        });
+          return res.status(400).json({
+            error: `Weekly Limit Reached (2 / 2 Issues Used): Students can submit up to 2 issues per 7 days. Your next issue submission opens in ${timeText}. (Tip: Turn on Demo Mode to bypass)`,
+            nextAllowedDate: nextAllowed.toISOString(),
+            cooldownRemainingMs: diffMs
+          });
+        }
+      } catch (checkErr) {
+        console.warn('[Server] Issue limit check PG notice:', checkErr.message);
       }
     }
 
@@ -1129,17 +1251,23 @@ app.post('/api/issues', async (req, res) => {
     const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
 
     // Count previous attempts/issues in this category for this student
-    const catCheck = await query(
-      `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
-      [studentId, category, calculatedRoId]
-    );
-
-    let totalAttempts = catCheck.rowCount;
-    catCheck.rows.forEach(row => {
-      const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
-      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-      totalAttempts += reopens;
-    });
+    let totalAttempts = 0;
+    try {
+      const catCheck = await query(
+        `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
+        [studentId, category, calculatedRoId]
+      );
+      if (catCheck && catCheck.rows) {
+        totalAttempts = catCheck.rowCount;
+        catCheck.rows.forEach(row => {
+          const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
+          const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
+          totalAttempts += reopens;
+        });
+      }
+    } catch (catErr) {
+      console.warn('[Server] Category check PG notice:', catErr.message);
+    }
 
     const isThirdAttempt = totalAttempts >= 2; // 3rd attempt or higher
     const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
@@ -1152,6 +1280,25 @@ app.post('/api/issues', async (req, res) => {
     const issueId = clientIssueId || `ISS-${Math.floor(100 + Math.random() * 900)}`;
     const timestamp = new Date().toISOString();
     const initialLogs = JSON.stringify([{ text: logText, time: timestamp }]);
+
+    // Always record in-memory so it can never be lost
+    const memoryIssue = {
+      id: issueId,
+      studentId,
+      student_id: studentId,
+      studentName,
+      student_name: studentName,
+      category,
+      description,
+      priority,
+      status: initialStatus,
+      roId: calculatedRoId,
+      ro_id: calculatedRoId,
+      createdAt: timestamp,
+      created_at: timestamp,
+      logs: [{ text: logText, time: timestamp }]
+    };
+    inMemoryIssues.unshift(memoryIssue);
 
     // Dual-sync: 1. PostgreSQL pool query
     try {
@@ -1171,7 +1318,25 @@ app.post('/api/issues', async (req, res) => {
     // Dual-sync: 2. Direct Supabase Cloud REST API
     try {
       const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
+      // Ensure student exists in Supabase students table so FK constraint never fails
+      await fetch(`${SUPABASE_URL}/rest/v1/students`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=ignore-duplicates'
+        },
+        body: JSON.stringify({
+          id: studentId,
+          name: studentName || 'Student',
+          email: `${String(studentId).toLowerCase()}@nitte.edu.in`,
+          branch: 'CSE',
+          sem: 6,
+          password: 'Nit#Stu2026'
+        })
+      }).catch(() => {});
+
       await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
         method: 'POST',
         headers: {

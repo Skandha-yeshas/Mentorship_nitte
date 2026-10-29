@@ -884,14 +884,17 @@ export const DatabaseProvider = ({ children }) => {
         }
 
         // Save server issues into local storage cache, preserving local feedback & shiftedToLocalStorage status
-        if (data.issues && data.issues.length) {
-          try {
-            const savedIssuesStr = localStorage.getItem('nitte_saved_issues');
-            let mergedIssues = data.issues;
-            if (savedIssuesStr) {
-              const savedIssues = JSON.parse(savedIssuesStr);
-              if (Array.isArray(savedIssues)) {
-                mergedIssues = data.issues.map(di => {
+        let mergedIssues = Array.isArray(data.issues) && data.issues.length ? [...data.issues] : [];
+        try {
+          const savedIssuesStr = localStorage.getItem('nitte_saved_issues');
+          if (savedIssuesStr) {
+            const savedIssues = JSON.parse(savedIssuesStr);
+            if (Array.isArray(savedIssues) && savedIssues.length > 0) {
+              if (mergedIssues.length === 0) {
+                // If server returned 0 issues (due to connection hiccup), DO NOT wipe local state!
+                mergedIssues = savedIssues;
+              } else {
+                mergedIssues = mergedIssues.map(di => {
                   const savedMatch = savedIssues.find(si => (si.id || si.issue_id)?.toUpperCase() === (di.id || di.issue_id)?.toUpperCase());
                   if (savedMatch) {
                     const isLocallyEscalated = savedMatch.status === 'Escalated' || savedMatch.status === 'Re-escalated' || Boolean(savedMatch.isReEscalated);
@@ -927,26 +930,51 @@ export const DatabaseProvider = ({ children }) => {
                   return di;
                 });
 
-                // Clean out any historical duplicate test IDs
-                const blacklistedDuplicateIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
-                mergedIssues = mergedIssues.filter(i => !blacklistedDuplicateIds.has((i.id || i.issue_id)?.toUpperCase()));
-
-                // Strict deduplication by ID
-                const issueIdMap = new Map();
-                for (const iss of mergedIssues) {
-                  const cleanKey = (iss.id || iss.issue_id || '').toUpperCase();
-                  if (!cleanKey) continue;
-                  if (!issueIdMap.has(cleanKey)) {
-                    issueIdMap.set(cleanKey, { ...iss, id: iss.id || iss.issue_id });
-                  }
+                // Preserve any recently created issues not yet synced in server response (within last 15 mins)
+                const serverIdSet = new Set(mergedIssues.map(di => (di.id || di.issue_id)?.toUpperCase()));
+                const recentSaved = savedIssues.filter(si => {
+                  const sId = (si.id || si.issue_id)?.toUpperCase();
+                  if (!sId || serverIdSet.has(sId)) return false;
+                  const age = Date.now() - new Date(si.createdAt || si.created_at || 0).getTime();
+                  return isNaN(age) || age < 15 * 60 * 1000;
+                });
+                if (recentSaved.length > 0) {
+                  mergedIssues = [...recentSaved, ...mergedIssues];
                 }
-                mergedIssues = Array.from(issueIdMap.values());
               }
             }
-            localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
-            data.issues = mergedIssues;
-          } catch (e) { }
+          }
+        } catch (e) { }
+
+        // Clean out any historical duplicate test IDs
+        const blacklistedDuplicateIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
+        mergedIssues = mergedIssues.filter(i => !blacklistedDuplicateIds.has((i.id || i.issue_id)?.toUpperCase()));
+
+        // Strict deduplication by ID and normalization
+        const issueIdMap = new Map();
+        for (const iss of mergedIssues) {
+          const cleanKey = (iss.id || iss.issue_id || '').toUpperCase();
+          if (!cleanKey) continue;
+          if (!issueIdMap.has(cleanKey)) {
+            issueIdMap.set(cleanKey, {
+              ...iss,
+              id: iss.id || iss.issue_id,
+              studentId: iss.studentId || iss.student_id,
+              student_id: iss.student_id || iss.studentId,
+              studentName: iss.studentName || iss.student_name,
+              student_name: iss.student_name || iss.studentName,
+              roId: iss.roId || iss.ro_id,
+              ro_id: iss.ro_id || iss.roId,
+              createdAt: iss.createdAt || iss.created_at,
+              created_at: iss.created_at || iss.createdAt
+            });
+          }
         }
+        mergedIssues = Array.from(issueIdMap.values());
+        try {
+          localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
+        } catch (e) { }
+        data.issues = mergedIssues;
 
         // Save server meetings into local storage cache
         if (data.meetings && data.meetings.length) {
@@ -1689,7 +1717,14 @@ export const DatabaseProvider = ({ children }) => {
 
   // ISSUE SUBMISSION (Guaranteed Direct Supabase Cloud Write + Dual Backend Dispatch)
   const submitIssue = async (studentId, category, description, priority) => {
-    const student = (db.users?.students || []).find(s => s.id === studentId) || { name: 'Student' };
+    const cleanStudentId = String(studentId || authenticatedUser?.id || '').trim();
+    const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === cleanStudentId.toLowerCase()) ||
+      (authenticatedUser && String(authenticatedUser.id || '').trim().toLowerCase() === cleanStudentId.toLowerCase() ? authenticatedUser : null) ||
+      authenticatedUser ||
+      { id: cleanStudentId, name: 'Student' };
+    const effectiveStudentId = student.id || cleanStudentId;
+    const effectiveStudentName = student.name || 'Student';
+
     const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
 
@@ -1699,7 +1734,7 @@ export const DatabaseProvider = ({ children }) => {
 
     // Count attempts for 3rd attempt auto-escalation
     const prevCatIssues = (db.issues || []).filter(i =>
-      (i.studentId === studentId || i.student_id === studentId) &&
+      (String(i.studentId || i.student_id || '').toLowerCase() === effectiveStudentId.toLowerCase()) &&
       (i.category === category || i.roId === roId || i.ro_id === roId)
     );
     let totalAttempts = prevCatIssues.length;
@@ -1713,7 +1748,7 @@ export const DatabaseProvider = ({ children }) => {
     let initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
     const logText = isThirdAttempt
       ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-      : `Ticket raised by ${student.name} (Attempt #${totalAttempts + 1} for ${category}).`;
+      : `Ticket raised by ${effectiveStudentName} (Attempt #${totalAttempts + 1} for ${category}).`;
 
     const timestamp = new Date().toISOString();
     let issueId = null;
@@ -1725,8 +1760,8 @@ export const DatabaseProvider = ({ children }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentId,
-          studentName: student.name,
+          studentId: effectiveStudentId,
+          studentName: effectiveStudentName,
           category,
           description,
           priority,
@@ -1755,6 +1790,25 @@ export const DatabaseProvider = ({ children }) => {
     if (!issueId) {
       issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
       try {
+        // Ensure student exists in Supabase students table first
+        await fetch(`${SUPABASE_URL}/rest/v1/students`, {
+          method: 'POST',
+          headers: {
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=ignore-duplicates'
+          },
+          body: JSON.stringify({
+            id: effectiveStudentId,
+            name: effectiveStudentName,
+            email: student.email || `${effectiveStudentId.toLowerCase()}@nitte.edu.in`,
+            branch: student.branch || 'CSE',
+            sem: student.sem || 6,
+            password: 'Nit#Stu2026'
+          })
+        }).catch(() => {});
+
         await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
           method: 'POST',
           headers: {
@@ -1765,8 +1819,8 @@ export const DatabaseProvider = ({ children }) => {
           },
           body: JSON.stringify({
             id: issueId,
-            student_id: studentId,
-            student_name: student.name,
+            student_id: effectiveStudentId,
+            student_name: effectiveStudentName,
             category,
             description,
             priority,
@@ -1784,15 +1838,19 @@ export const DatabaseProvider = ({ children }) => {
 
     const newIssueObj = {
       id: issueId,
-      studentId,
-      studentName: student.name,
+      studentId: effectiveStudentId,
+      student_id: effectiveStudentId,
+      studentName: effectiveStudentName,
+      student_name: effectiveStudentName,
       category,
       description,
       priority,
       status: initialStatus,
       roId,
+      ro_id: roId,
       roName: ro ? ro.name : (catIdx !== -1 ? `RO - ${category.split(' - ')[1] || 'Officer'}` : 'RO Officer'),
       createdAt: timestamp,
+      created_at: timestamp,
       logs: [{ time: new Date().toLocaleString(), text: logText }]
     };
 

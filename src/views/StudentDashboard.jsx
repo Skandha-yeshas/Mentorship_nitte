@@ -82,12 +82,24 @@ export const StudentDashboard = ({ studentId }) => {
   const studentStreamRef = useRef(null);
   const webrtcSessionRef = useRef(null);
   const studentCompositeRecorderRef = useRef(null);
+  const submittedIssueIdsRef = useRef(new Set());
 
-  // Resolve current student profile
-  const targetStudentId = String(studentId || authenticatedUser?.id || '').trim().toLowerCase();
-  const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetStudentId) ||
-    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetStudentId) ||
+  // Resolve current student profile (Authenticated student takes precedence over generic props)
+  const isAuthUserStudent = authenticatedUser && (authenticatedUser.role === 'Student' || !authenticatedUser.role);
+  const rawTargetStudentId = String((isAuthUserStudent ? authenticatedUser?.id : null) || studentId || authenticatedUser?.id || '').trim();
+  const targetStudentIdLower = rawTargetStudentId.toLowerCase();
+
+  const student = (isAuthUserStudent ? authenticatedUser : null) ||
+    (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetStudentIdLower) ||
+    (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetStudentIdLower) ||
     authenticatedUser ||
+    (rawTargetStudentId ? {
+      id: rawTargetStudentId,
+      name: 'Student',
+      sem: '6',
+      branch: 'CSE',
+      email: `${rawTargetStudentId.toLowerCase()}@nitte.edu.in`
+    } : null) ||
     (db.users?.students || [])[0] || {
       id: '4NM21CS089',
       name: 'Ananya Rao',
@@ -121,12 +133,29 @@ export const StudentDashboard = ({ studentId }) => {
   };
 
   // Student issues with strict deduplication
-  const studentIdLower = (student?.id || '').toLowerCase();
-  const studentNameLower = (student?.name || '').toLowerCase();
+  const validStudentIds = new Set([
+    targetStudentIdLower,
+    String(student?.id || '').trim().toLowerCase(),
+    String(authenticatedUser?.id || '').trim().toLowerCase(),
+    String(student?.email || '').trim().toLowerCase(),
+    String(authenticatedUser?.email || '').trim().toLowerCase(),
+    String(studentId || '').trim().toLowerCase()
+  ].filter(Boolean));
+
+  const validStudentNames = new Set([
+    String(student?.name || '').trim().toLowerCase(),
+    String(authenticatedUser?.name || '').trim().toLowerCase()
+  ].filter(n => n && n !== 'student' && n !== 'student user'));
+
   const rawMyIssues = (db.issues || []).filter(i => {
-    const sId = (i.studentId || i.student_id || '').toLowerCase();
-    const sName = (i.studentName || i.student_name || '').toLowerCase();
-    return sId === studentIdLower || sName === studentNameLower;
+    const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
+    const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
+    const isIdMatch = sId && validStudentIds.has(sId);
+    const isNameMatch = sName && validStudentNames.has(sName);
+    const cleanIssueId = String(i.id || i.issue_id || '').toUpperCase();
+    const isRecentlySelected = selectedIssueId && cleanIssueId === String(selectedIssueId).toUpperCase();
+    const isSubmittedInSession = submittedIssueIdsRef.current.has(cleanIssueId);
+    return isIdMatch || isNameMatch || isRecentlySelected || isSubmittedInSession;
   });
 
   const blacklistedIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
@@ -365,7 +394,11 @@ export const StudentDashboard = ({ studentId }) => {
       const finalDesc = subjectTitle ? `[${subjectTitle}] ${description}` : description;
       const newIssueId = await submitIssue(student.id, category, finalDesc, priority.toUpperCase());
       setDescription('');
+      setSubjectTitle('');
       setSelectedIssueId(newIssueId);
+      if (newIssueId) {
+        submittedIssueIdsRef.current.add(String(newIssueId).toUpperCase());
+      }
       // Show self-help protocol video popup immediately after submission
       setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
     } catch (err) {
@@ -815,9 +848,15 @@ export const StudentDashboard = ({ studentId }) => {
                               <img
                                 alt="RO Avatar"
                                 className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-300"
-                                src={activeFormRO?.avatar || 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150'}
+                                src={
+                                  (db.users?.ros || []).find(r => r.id === (item.roId || item.ro_id))?.avatar ||
+                                  activeFormRO?.avatar ||
+                                  'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150'
+                                }
                               />
-                              <span className="font-medium text-slate-700">{item.roName || 'Assigned RO'}</span>
+                              <span className="font-medium text-slate-700">
+                                {item.roName || (db.users?.ros || []).find(r => r.id === (item.roId || item.ro_id))?.name || 'Assigned RO'}
+                              </span>
                             </div>
                             <span className="font-mono text-[10px] text-nitte-800 font-semibold">View Details →</span>
                           </div>
