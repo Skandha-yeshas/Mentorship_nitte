@@ -114,18 +114,23 @@ export const sendGmailNotification = async ({
 /**
  * Get all Gmail logs (Outbound & Inbound)
  */
-export const getEmailLogs = async () => {
+export const getEmailLogs = async ({ issueId } = {}) => {
+  const matchingFallback = issueId
+    ? fallbackEmailLogs.filter(log => String(log.issue_id || log.issueId || '').trim().toUpperCase() === String(issueId).trim().toUpperCase())
+    : fallbackEmailLogs;
   try {
     const res = await query(
       `SELECT id, direction, sender, recipient, subject, body, 
               event_type AS "eventType", issue_id AS "issueId", 
               status, created_at AS "createdAt" 
-       FROM email_logs ORDER BY created_at DESC LIMIT 100`
+       FROM email_logs ${issueId ? 'WHERE UPPER(issue_id) = UPPER($1)' : ''}
+       ORDER BY created_at DESC ${issueId ? '' : 'LIMIT 100'}`,
+      issueId ? [issueId] : []
     );
-    return res.rows.concat(fallbackEmailLogs);
+    return res.rows.concat(matchingFallback);
   } catch (err) {
     console.error('[Gmail System] Error reading email logs from DB:', err.message);
-    return fallbackEmailLogs;
+    return matchingFallback;
   }
 };
 

@@ -1,9 +1,12 @@
 import React, { useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl, isMatchingMentorId } from '../context/DatabaseContext';
 import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtcService';
-import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
+import IssueActivityLog from '../components/IssueActivityLog';
+import { buildIssueSlipHtml, printIssueSlip } from '../utils/issueSlip';
+import { getGrievanceQuota, formatQuotaDate } from '../../shared/grievanceQuota.js';
+import { getStudentIssues, getLiveStudentMeetings } from '../utils/studentMeetings';
 
 // 7 Domain models mapping the 49/50 specialized categories
 const DOMAIN_MODELS = [
@@ -24,10 +27,7 @@ export const StudentDashboard = ({ studentId }) => {
     reopenIssue,
     resolveIssue,
     submitMentorFeedback,
-    isDemoLimitBypassed,
-    toggleDemoLimitBypass,
     updateMeetingStatus,
-    saveMeetingRecording,
     authenticatedUser
   } = useContext(DatabaseContext);
 
@@ -43,6 +43,7 @@ export const StudentDashboard = ({ studentId }) => {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('high'); // 'low', 'medium', 'high'
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExportingSlip, setIsExportingSlip] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -64,8 +65,6 @@ export const StudentDashboard = ({ studentId }) => {
   const [showStudentVideoModal, setShowStudentVideoModal] = useState(false);
   const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
   const [meetingEndedPopup, setMeetingEndedPopup] = useState(null);
-  const [playingRecording, setPlayingRecording] = useState(null);
-  const [dismissedMeetingIds, setDismissedMeetingIds] = useState(() => new Set());
 
   // Audio alert chime helper for incoming live meetings
   const playMeetingChime = () => {
@@ -113,8 +112,6 @@ export const StudentDashboard = ({ studentId }) => {
 
   const studentStreamRef = useRef(null);
   const webrtcSessionRef = useRef(null);
-  const studentCompositeRecorderRef = useRef(null);
-  const submittedIssueIdsRef = useRef(new Set());
 
   // Resolve current student profile (Authenticated student takes precedence over generic props)
   const isAuthUserStudent = authenticatedUser && (authenticatedUser.role === 'Student' || !authenticatedUser.role);
@@ -164,31 +161,8 @@ export const StudentDashboard = ({ studentId }) => {
     avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
   };
 
-  // Student issues with strict deduplication
-  const validStudentIds = new Set([
-    targetStudentIdLower,
-    String(student?.id || '').trim().toLowerCase(),
-    String(authenticatedUser?.id || '').trim().toLowerCase(),
-    String(student?.email || '').trim().toLowerCase(),
-    String(authenticatedUser?.email || '').trim().toLowerCase(),
-    String(studentId || '').trim().toLowerCase()
-  ].filter(Boolean));
-
-  const validStudentNames = new Set([
-    String(student?.name || '').trim().toLowerCase(),
-    String(authenticatedUser?.name || '').trim().toLowerCase()
-  ].filter(n => n && n !== 'student' && n !== 'student user'));
-
-  const rawMyIssues = (db.issues || []).filter(i => {
-    const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
-    const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
-    const isIdMatch = sId && validStudentIds.has(sId);
-    const isNameMatch = sName && validStudentNames.has(sName);
-    const cleanIssueId = String(i.id || i.issue_id || '').toUpperCase();
-    const isRecentlySelected = selectedIssueId && cleanIssueId === String(selectedIssueId).toUpperCase();
-    const isSubmittedInSession = submittedIssueIdsRef.current.has(cleanIssueId);
-    return isIdMatch || isNameMatch || isRecentlySelected || isSubmittedInSession;
-  });
+  // Use only the resolved student's identity; names and selected tickets are not ownership.
+  const rawMyIssues = getStudentIssues(db.issues || [], student);
 
   const blacklistedIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
   const issueDedupeMap = new Map();
@@ -201,70 +175,17 @@ export const StudentDashboard = ({ studentId }) => {
   }
   const myIssues = Array.from(issueDedupeMap.values());
   const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
-  const selectedIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === activeSelectedIssueId?.toUpperCase()) || myIssues[0] || null;
+  const selectedIssue = myIssues.find(i => i.id?.toUpperCase() === activeSelectedIssueId?.toUpperCase()) || myIssues[0] || null;
 
-  const sanitizeMeetingIssueId = (raw) => {
-    if (!raw) return 'TICK-1002';
-    return String(raw).replace(/^MEET-/i, '').trim().toUpperCase();
-  };
-
-  // Active online meeting detection (guarantees immediate visibility of Started meetings)
-  const activeStudentOnlineMeeting = (() => {
-    const myIssueIds = new Set((myIssues || []).map(i => (i.id || i.issue_id || '').toUpperCase()));
-
-    // 1. Direct match from db.meetings for student issues or student identity
-    const myStudentMeetings = (db.meetings || []).filter(m => {
-      const isCompleted = m.status === 'Completed' || m.status === 'Finished' || m.status === 'Cancelled' || m.status === 'Concluded';
-      if (isCompleted) return false;
-      const mIssueId = (m.issueId || m.issue_id || '').toUpperCase();
-      const mStudentId = (m.studentId || m.student_id || '').toUpperCase();
-      const mStudentName = (m.studentName || m.student_name || '').toLowerCase();
-      return (
-        myIssueIds.has(mIssueId) ||
-        (student?.id && mStudentId === String(student.id).toUpperCase()) ||
-        (student?.name && mStudentName === String(student.name).toLowerCase())
-      );
-    });
-
-    // Check if any direct student meeting has been started
-    const liveMeet = myStudentMeetings.find(m => m.status === 'Started' || m.status === 'In-Progress');
-    if (liveMeet) return liveMeet;
-
-    // 2. Direct match from student's active issues with 'Meeting Started' status (instant zero-delay sync)
-    const liveIssue = (myIssues || []).find(i => i.status === 'Meeting Started');
-    if (liveIssue) {
-      const matchingMeet = (db.meetings || []).find(m =>
-        (m.issueId && m.issueId.toUpperCase() === (liveIssue.id || '').toUpperCase()) ||
-        (m.issue_id && m.issue_id.toUpperCase() === (liveIssue.id || '').toUpperCase())
-      );
-      return matchingMeet ? { ...matchingMeet, status: 'Started' } : {
-        id: `MEET-${liveIssue.id}`,
-        issueId: liveIssue.id,
-        issue_id: liveIssue.id,
-        studentId: liveIssue.studentId || student?.id,
-        studentName: liveIssue.studentName || student?.name,
-        roId: liveIssue.roId || 'RO-01',
-        mode: 'Online',
-        status: 'Started',
-        date: new Date().toISOString().split('T')[0],
-        time: 'Now',
-        location: 'In-App Online Video Call Portal'
-      };
-    }
-
-    // 3. Fallback: Check if ANY meeting in db.meetings was started online for this student or session
-    const anyLive = (db.meetings || []).find(m => (m.status === 'Started' || m.status === 'In-Progress') && (m.mode === 'Online' || !m.mode));
-    if (anyLive) return anyLive;
-
-    // 4. Return upcoming scheduled meeting if available
-    if (myStudentMeetings.length > 0) return myStudentMeetings[0];
-
-    return null;
-  })();
-
-  const isLiveMeetingActive = Boolean(
-    activeStudentOnlineMeeting &&
-    (activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress')
+  const liveStudentMeetings = getLiveStudentMeetings({
+    meetings: db.meetings || [],
+    issues: db.issues || [],
+    student
+  });
+  const activeStudentOnlineMeeting = liveStudentMeetings[0] || null;
+  const isLiveMeetingActive = Boolean(activeStudentOnlineMeeting);
+  const selectedIssueMeeting = liveStudentMeetings.find(meeting =>
+    String(meeting.issueId || meeting.issue_id).trim().toUpperCase() === String(selectedIssue?.id || '').trim().toUpperCase()
   );
 
   const liveMeetingKey = activeStudentOnlineMeeting
@@ -282,42 +203,31 @@ export const StudentDashboard = ({ studentId }) => {
     }
   }, [isLiveMeetingActive, liveMeetingKey]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.BroadcastChannel) return;
-    let bc;
-    try {
-      bc = new BroadcastChannel('nitte_meeting_sync');
-      bc.onmessage = (event) => {
-        if (event.data && event.data.type === 'meeting_status' && event.data.status === 'Started') {
-          const targetKey = event.data.meetId || event.data.issueId;
-          if (targetKey) {
-            setDismissedMeetingIds(prev => {
-              const next = new Set(prev);
-              next.delete(String(targetKey).trim().toUpperCase());
-              return next;
-            });
-          }
-          playMeetingChime();
-        }
-      };
-    } catch (e) { }
-    return () => {
-      try { if (bc) bc.close(); } catch (e) { }
-    };
-  }, []);
+  // Cross-tab meeting updates come through DatabaseContext; the scoped effect above plays the chime.
 
-  // Quota & Lock calculation (Institutional rule: strictly up to 2 active issues)
   const activeUnresolvedIssues = myIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
-  const usedCount = activeUnresolvedIssues.length;
-  const maxWeeklyLimit = 2;
-  const isLimitReached = usedCount >= maxWeeklyLimit;
-  const isFormLocked = isLimitReached;
-
-  const pendingFeedbackIssues = myIssues.filter(i => {
-    const isResolvedOrClosed = i.status === 'Resolved' || i.status === 'Closed';
-    const hasFeedback = Boolean(i.feedback && (i.feedback.rating || i.feedbackRating));
-    return isResolvedOrClosed && !hasFeedback;
+  const [quotaNow, setQuotaNow] = useState(() => Date.now());
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [serverQuotaIssues, setServerQuotaIssues] = useState([]);
+  const quota = getGrievanceQuota({
+    issues: [...(db.issues || []), ...serverQuotaIssues], studentId: student.id, now: quotaNow
   });
+  const usedCount = Math.min(quota.usedCount, quota.maxQuota);
+  const isLimitReached = quota.isLocked;
+  const isFormLocked = quota.isLocked;
+  const nextQuotaChangeAt = quota.slots.find(slot => slot.unlocksAt)?.unlocksAt;
+
+  useEffect(() => {
+    const refresh = () => setQuotaNow(Date.now());
+    const interval = setInterval(refresh, 30000);
+    const timer = nextQuotaChangeAt
+      ? setTimeout(refresh, Math.max(1, Math.min(2147483647, new Date(nextQuotaChangeAt).getTime() - Date.now() + 1)))
+      : null;
+    window.addEventListener('focus', refresh);
+    return () => { clearInterval(interval); clearTimeout(timer); window.removeEventListener('focus', refresh); };
+  }, [nextQuotaChangeAt]);
+
+  useEffect(() => { setServerQuotaIssues([]); setShowQuotaModal(false); setQuotaNow(Date.now()); }, [student.id]);
 
   // Filter sub-issues based on domain or search query
   const availableCategories = useMemo(() => {
@@ -452,31 +362,17 @@ export const StudentDashboard = ({ studentId }) => {
   };
 
   const handleStudentJoinMeeting = (targetIssueId) => {
-    let rawTarget = targetIssueId;
-    if (!rawTarget || String(rawTarget).startsWith('MEET-')) {
-      rawTarget = activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.issue_id;
+    const target = String(targetIssueId || '').trim().toUpperCase();
+    const meeting = liveStudentMeetings.find(item =>
+      [item.id, item.issueId, item.issue_id].some(id => id && String(id).trim().toUpperCase() === target)
+    );
+    if (!meeting) {
+      setErrorMessage('This meeting is not available. Please wait for your RO to start your meeting.');
+      return;
     }
-    if (!rawTarget && activeStudentOnlineMeeting?.id) {
-      const mMatch = (db.meetings || []).find(m => m.id === activeStudentOnlineMeeting.id);
-      if (mMatch && (mMatch.issueId || mMatch.issue_id)) {
-        rawTarget = mMatch.issueId || mMatch.issue_id;
-      }
-    }
-    if (!rawTarget) {
-      rawTarget = (selectedIssue ? (selectedIssue.id || selectedIssue.issue_id) : activeSelectedIssueId) || 'TICK-1002';
-    }
-    const cleanId = getCanonicalMeetingRoomId(rawTarget);
+    const cleanId = getCanonicalMeetingRoomId(meeting.issueId || meeting.issue_id);
     setActiveMeetingIssueId(cleanId);
     setShowStudentVideoModal(true);
-
-    // Un-dismiss if previously minimized
-    setDismissedMeetingIds(prev => {
-      const next = new Set(prev);
-      next.delete(String(cleanId).toUpperCase());
-      if (liveMeetingKey) next.delete(String(liveMeetingKey).toUpperCase());
-      return next;
-    });
-
     requestStudentMedia(cleanId);
   };
 
@@ -514,23 +410,39 @@ export const StudentDashboard = ({ studentId }) => {
     if (webrtcSessionRef.current) webrtcSessionRef.current.setVideoEnabled(!next);
   };
 
+  const handleExportSlip = async () => {
+    if (!selectedIssue || isExportingSlip) return;
+    // Capture the clicked ticket so a selection change cannot mix two issues.
+    const issue = selectedIssue;
+    const issueId = issue.id || issue.issue_id;
+    const officer = (db.users?.ros || []).find(ro => String(ro.id).trim().toUpperCase() === String(issue.roId || issue.ro_id).trim().toUpperCase()) || {};
+    setIsExportingSlip(true);
+    setErrorMessage('');
+    try {
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}/activity`);
+      if (!response.ok) throw new Error('Could not load the complete action log for this issue. Please try exporting again.');
+      const history = await response.json();
+      const html = buildIssueSlipHtml({ issue, student, officer, history });
+      await printIssueSlip(html);
+    } catch (error) {
+      setErrorMessage(error.message || 'Could not export this issue slip.');
+    } finally {
+      setIsExportingSlip(false);
+    }
+  };
+
   // Form Submission
   const handleSubmitIssue = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    if (!description.trim() || isSubmitting) return;
+    if (isSubmitting) return;
+    setQuotaNow(Date.now());
+    const currentQuota = getGrievanceQuota({ issues: [...(db.issues || []), ...serverQuotaIssues], studentId: student.id });
+    if (currentQuota.isLocked) {
+      setShowQuotaModal(true);
+      return;
+    }
+    if (!description.trim()) return;
     setErrorMessage('');
-
-    if (pendingFeedbackIssues.length > 0) {
-      setSelectedIssueId(pendingFeedbackIssues[0].id);
-      setActiveTab('track');
-      setErrorMessage(`Action Required: Please submit your feedback and rating for resolved Ticket #${pendingFeedbackIssues[0].id} first.`);
-      return;
-    }
-
-    if (isLimitReached || isFormLocked) {
-      setErrorMessage(`Grievance Quota Limit Reached (${usedCount} / 2 Active Issues Filled): Institutional policy strictly allows a maximum of 2 active grievances per student. Further submissions are locked until one of your active issues is marked as Resolved.`);
-      return;
-    }
 
     setIsSubmitting(true);
     try {
@@ -539,13 +451,15 @@ export const StudentDashboard = ({ studentId }) => {
       setDescription('');
       setSubjectTitle('');
       setSelectedIssueId(newIssueId);
-      if (newIssueId) {
-        submittedIssueIdsRef.current.add(String(newIssueId).toUpperCase());
-      }
       // Show self-help protocol video popup immediately after submission
       setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
     } catch (err) {
-      setErrorMessage(err.message || 'Failed to submit issue');
+      if (err.quota?.isLocked) {
+        setServerQuotaIssues(err.quota.slots || []);
+        setShowQuotaModal(true);
+      } else {
+        setErrorMessage(err.message || 'Failed to submit issue');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -557,7 +471,7 @@ export const StudentDashboard = ({ studentId }) => {
     if (!targetId) return;
     submitFeedback(targetId, rating, feedbackComments);
     setFeedbackComments('');
-    setSuccessMessage('Thank you! Your rating & feedback has been submitted.');
+    setSuccessMessage('Your feedback has been submitted. The original 7-day slot lock remains unchanged.');
     setTimeout(() => setSuccessMessage(''), 4000);
   };
 
@@ -586,8 +500,8 @@ export const StudentDashboard = ({ studentId }) => {
       <div className="max-w-7xl w-full mx-auto space-y-6">
 
         {/* ================= 1. WEBRTC LIVE SESSION ALERT BANNER ================= */}
-        {activeStudentOnlineMeeting && (
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-nitte-950 via-nitte-800 to-indigo-900 text-white shadow-card-hover border border-nitte-700/40 p-5 sm:p-6 transition-all">
+        {activeStudentOnlineMeeting && !showStudentVideoModal && (
+          <div className={`${isLiveMeetingActive ? 'sticky top-2 z-40' : 'relative'} overflow-hidden rounded-2xl bg-gradient-to-r from-nitte-950 via-nitte-800 to-indigo-900 text-white shadow-card-hover border border-nitte-700/40 p-5 sm:p-6 transition-all`}>
             <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none"></div>
             <div className="absolute left-1/3 -bottom-12 w-64 h-64 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none"></div>
             <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
@@ -607,7 +521,7 @@ export const StudentDashboard = ({ studentId }) => {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wide bg-rose-500/20 text-rose-300 border border-rose-400/30">
                       <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
-                      {(activeStudentOnlineMeeting.status === 'Started' || activeStudentOnlineMeeting.status === 'In-Progress') ? 'LIVE NOW' : 'WAITING FOR RO'}
+                      LIVE NOW
                     </span>
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white/10 text-slate-200">
                       <span className="material-symbols-outlined text-[13px] text-emerald-400">lock</span>
@@ -655,47 +569,11 @@ export const StudentDashboard = ({ studentId }) => {
           </div>
         )}
 
-        {/* ================= STICKY TOP FLOATING ALERT FOR LIVE IN-PROGRESS CALL ================= */}
-        {isLiveMeetingActive && !showStudentVideoModal && (
-          <div className="sticky top-2 z-40 w-full animate-bounce-subtle shadow-xl">
-            <div className="bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-800 text-white rounded-2xl p-3 sm:p-4 border border-emerald-400/50 flex flex-wrap items-center justify-between gap-3 shadow-[0_10px_25px_-5px_rgba(16,185,129,0.3)]">
-              <div className="flex items-center gap-3">
-                <span className="relative flex h-3.5 w-3.5 flex-shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500 border border-white"></span>
-                </span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-black tracking-wider uppercase bg-white/20 px-2 py-0.5 rounded-full text-white">
-                      Live Meeting In Progress
-                    </span>
-                    <span className="text-xs font-bold text-emerald-100">
-                      Ticket #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}
-                    </span>
-                  </div>
-                  <p className="text-xs text-emerald-50 mt-0.5">
-                    <strong>{activeFormRO?.name || 'Relationship Officer'}</strong> has commenced your grievance hearing and is in the video room.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-emerald-950 font-extrabold text-xs shadow-lg hover:bg-emerald-50 active:scale-95 transition-all group flex-shrink-0"
-              >
-                <span className="material-symbols-outlined text-[18px] text-emerald-600 transition-transform group-hover:scale-110">videocam</span>
-                <span>👉 Enter Meeting Room Now</span>
-                <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* ================= 2. SEGMENTED NAVIGATION TAB BAR ================= */}
         <div className="bg-white rounded-2xl p-1.5 border border-slate-200 shadow-card">
           <nav aria-label="Tabs" className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
             <button
-              onClick={() => setActiveTab('report')}
+              onClick={() => { setActiveTab('report'); setQuotaNow(Date.now()); if (isFormLocked) setShowQuotaModal(true); }}
               className={`tab-btn flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all ${activeTab === 'report' ? 'bg-nitte-800 text-white shadow-pill-glow' : 'hover:text-nitte-800 hover:bg-slate-50 text-slate-600'}`}
             >
               <span className="material-symbols-outlined text-[18px]">add_comment</span>
@@ -754,34 +632,6 @@ export const StudentDashboard = ({ studentId }) => {
                   </span>
                 </div>
 
-                {/* Active Quota Lock Alert Banner */}
-                {isLimitReached && (
-                  <div className="rounded-2xl border-2 border-rose-300 bg-rose-50/90 p-4 sm:p-5 shadow-sm space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-rose-800 font-extrabold text-sm">
-                        <span className="material-symbols-outlined text-[22px] text-rose-600">lock</span>
-                        <span>Maximum Grievance Limit Reached (2 / 2 Active Slots Filled)</span>
-                      </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-200 text-rose-900 border border-rose-300">
-                        Submissions Locked
-                      </span>
-                    </div>
-                    <p className="text-xs text-rose-700 leading-relaxed">
-                      You currently have <strong>2 active grievances</strong> awaiting resolution. Under institutional policy, a student cannot raise more than two issues simultaneously. New submissions are locked until one of your active issues is marked as <strong>Resolved</strong> and feedback is submitted.
-                    </p>
-                    <div className="pt-1 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('track')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">rule_folder</span>
-                        View Active Issues ({activeUnresolvedIssues.length})
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 {/* Grievance Category Selection (NO DROPDOWN - Stitch 2-Tier Selection) */}
                 <div className={`space-y-3.5 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/80 transition-opacity ${isFormLocked ? 'opacity-60 pointer-events-none' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -801,7 +651,7 @@ export const StudentDashboard = ({ studentId }) => {
                     <input
                       type="text"
                       disabled={isFormLocked}
-                      placeholder={isFormLocked ? 'Submissions locked (2/2 active issues reached)' : 'Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)...'}
+                      placeholder={isFormLocked ? 'Submissions locked for the 7-day quota period' : 'Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)...'}
                       value={categorySearchQuery}
                       onChange={(e) => setCategorySearchQuery(e.target.value)}
                       className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition text-slate-800 shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
@@ -949,7 +799,7 @@ export const StudentDashboard = ({ studentId }) => {
                       disabled={isFormLocked}
                       value={subjectTitle}
                       onChange={(e) => setSubjectTitle(e.target.value)}
-                      placeholder={isFormLocked ? 'Grievance submissions locked (2/2 active issues reached)' : 'e.g. Internal Assessment CIE Score Discrepancy'}
+                      placeholder={isFormLocked ? 'Both slots are in the 7-day lock period' : 'e.g. Internal Assessment CIE Score Discrepancy'}
                     />
                   </div>
 
@@ -968,7 +818,7 @@ export const StudentDashboard = ({ studentId }) => {
                       maxLength={600}
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
-                      placeholder={isFormLocked ? 'Grievance submissions locked until an existing ticket is resolved and closed.' : 'Provide specific details, dates, course codes, or semester lab batch information...'}
+                      placeholder={isFormLocked ? 'A new grievance can be submitted when the next 7-day slot lock expires.' : 'Provide specific details, dates, course codes, or semester lab batch information...'}
                     />
                   </div>
                 </div>
@@ -987,12 +837,12 @@ export const StudentDashboard = ({ studentId }) => {
                   <div className="flex items-center gap-3 w-full sm:w-auto">
                     <button
                       type="button"
-                      disabled={isFormLocked || !description.trim() || isSubmitting}
+                      disabled={isSubmitting || (!isFormLocked && !description.trim())}
                       onClick={handleSubmitIssue}
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-nitte-800/20 transition-all active:scale-95"
                     >
                       <span className="material-symbols-outlined text-[16px]">{isSubmitting ? 'sync' : (isFormLocked ? 'lock' : 'send')}</span>
-                      {isSubmitting ? 'Submitting Grievance...' : (isFormLocked ? '2 / 2 Quota Limit Reached (Locked)' : 'Submit Grievance to RO')}
+                      {isSubmitting ? 'Submitting Grievance...' : (isFormLocked ? 'View 7-Day Quota Lock' : 'Submit Grievance to RO')}
                     </button>
                   </div>
                 </div>
@@ -1005,12 +855,12 @@ export const StudentDashboard = ({ studentId }) => {
                     <div>
                       <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-[18px] text-nitte-800">hourglass_top</span>
-                        Grievance Quota &amp; Active Slots
+                        Grievance Quota &amp; 7-Day Slots
                       </h4>
                       <span className="text-[11px] text-slate-400">Institutional Redressal Ceiling</span>
                     </div>
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${isLimitReached ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${isLimitReached ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${isLimitReached ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isLimitReached ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
                       {usedCount} / 2 {isLimitReached ? 'Filled (Limit Reached)' : 'Used'}
                     </span>
                   </div>
@@ -1021,18 +871,20 @@ export const StudentDashboard = ({ studentId }) => {
                       <span>Quota &amp; 7-Day Lock Policy</span>
                     </div>
                     <p className="text-slate-600">
-                      Students can maintain a maximum of <strong>2 active issues</strong> simultaneously. Once resolved, mandatory feedback completes the cycle and unlocks the issue slot.
+                      You have <strong>2 slots</strong>. Each issue locks its slot for <strong>7 days from submission</strong>, even after resolution or feedback.
                     </p>
+                    <p className="font-semibold">{quota.isLocked ? `Next slot available: ${formatQuotaDate(quota.nextSlotAvailableAt)}` : `${quota.remainingQuota} slot(s) available now.`}</p>
+                    <button type="button" onClick={() => setShowQuotaModal(true)} className="font-bold underline">View slot unlock times</button>
                   </div>
 
                   {/* Active Slots Breakdown */}
                   <div className="space-y-3">
-                    {activeUnresolvedIssues.length === 0 ? (
+                    {quota.slots.length === 0 ? (
                       <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-500">
-                        No active issues currently open. Both issue slots are available!
+                        No slots are locked. Both issue slots are available!
                       </div>
                     ) : (
-                      activeUnresolvedIssues.slice(0, 2).map((item, idx) => (
+                      quota.slots.slice(0, 2).map((item, idx) => (
                         <div
                           key={item.id}
                           onClick={() => {
@@ -1053,6 +905,7 @@ export const StudentDashboard = ({ studentId }) => {
                           <p className="text-xs font-bold text-slate-900 leading-snug">
                             {item.category}
                           </p>
+                          <p className="text-[11px] font-semibold text-amber-800">Slot unlocks: {formatQuotaDate(item.unlocksAt)}</p>
                           <div className="flex items-center justify-between text-[11px] pt-2 border-t border-slate-200/60 text-slate-500">
                             <div className="flex items-center gap-1.5">
                               <img
@@ -1229,11 +1082,12 @@ export const StudentDashboard = ({ studentId }) => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => window.print()}
+                        onClick={handleExportSlip}
+                        disabled={isExportingSlip}
                         className="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold flex items-center gap-1 transition"
                       >
                         <span className="material-symbols-outlined text-[16px]">print</span>
-                        Export Slip
+                        {isExportingSlip ? 'Preparing Slip…' : 'Export Slip'}
                       </button>
                     </div>
 
@@ -1251,10 +1105,10 @@ export const StudentDashboard = ({ studentId }) => {
                         </div>
                       </div>
 
-                      {activeStudentOnlineMeeting && (
+                      {selectedIssueMeeting && (
                         <button
                           type="button"
-                          onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.issue_id || selectedIssue.id)}
+                          onClick={() => handleStudentJoinMeeting(selectedIssueMeeting.issueId || selectedIssueMeeting.issue_id)}
                           className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-black text-xs shadow-md transition-all active:scale-95 ${
                             isLiveMeetingActive
                               ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/30 ring-2 ring-emerald-400 animate-pulse'
@@ -1344,6 +1198,8 @@ export const StudentDashboard = ({ studentId }) => {
                       </div>
                     </div>
 
+                    <IssueActivityLog key={selectedIssue.id} issue={selectedIssue} emailLogs={db.gmailLogs || []} />
+
                     {/* Post-Meeting Discussion Minutes Display */}
                     {(selectedIssue.discussionSummary || selectedIssue.discussionMinutes) && (
                       <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
@@ -1362,37 +1218,13 @@ export const StudentDashboard = ({ studentId }) => {
                       </div>
                     )}
 
-                    {/* Stored Video Recording Archive */}
-                    {db.recordings && db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).length > 0 && (
-                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
-                        <span className="font-bold text-nitte-800 flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[16px]">videocam</span>
-                          Auto-Archived Online Video Recordings
-                        </span>
-                        {db.recordings.filter(r => (r.issueId || r.issue_id)?.toUpperCase() === selectedIssue.id?.toUpperCase()).map(rec => (
-                          <div key={rec.id} className="p-2.5 bg-white rounded-lg border border-slate-200 flex items-center justify-between">
-                            <div>
-                              <p className="font-bold text-slate-800">{rec.mode || 'Online Call'} ({rec.durationText || '10 min'})</p>
-                              <p className="text-[10px] text-slate-500">{new Date(rec.recordedAt).toLocaleString()}</p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setPlayingRecording(rec)}
-                              className="px-3 py-1 rounded bg-nitte-800 text-white font-bold text-[11px]"
-                            >
-                              Play Recording
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
 
                     {/* Satisfaction Feedback (When Resolved) */}
                     {selectedIssue.status === 'Resolved' && (
                       <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-800">Rate Redressal Progress</span>
-                          <span className="text-[10px] text-slate-400">Required to free issue quota</span>
+                          <span className="text-[10px] text-slate-400">The 7-day slot lock stays unchanged</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-amber-400">
                           {[1, 2, 3, 4, 5].map(st => (
@@ -1429,7 +1261,7 @@ export const StudentDashboard = ({ studentId }) => {
                             onClick={handleFeedbackSubmit}
                             className="px-3.5 py-1.5 rounded-lg bg-nitte-800 text-white text-xs font-bold hover:bg-nitte-900 transition"
                           >
-                            Submit Feedback &amp; Unlock Slot
+                            Submit Feedback
                           </button>
                         </div>
 
@@ -1729,123 +1561,21 @@ export const StudentDashboard = ({ studentId }) => {
         )}
       </div>
 
-      {/* ================= 0. LIVE MEETING STARTED / INCOMING CALL POP-UP MODAL ================= */}
-      {isLiveMeetingActive && !showStudentVideoModal && (!liveMeetingKey || !dismissedMeetingIds.has(String(liveMeetingKey).toUpperCase())) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
-          <div className="relative bg-slate-900 text-white rounded-3xl w-full max-w-lg overflow-hidden shadow-[0_0_60px_rgba(16,185,129,0.35)] border border-emerald-500/50 flex flex-col transition-all transform animate-in fade-in zoom-in-95 duration-200">
-            {/* Ambient Background Glows */}
-            <div className="absolute -right-20 -top-20 w-64 h-64 rounded-full bg-emerald-500/20 blur-3xl pointer-events-none"></div>
-            <div className="absolute -left-20 -bottom-20 w-64 h-64 rounded-full bg-blue-500/20 blur-3xl pointer-events-none"></div>
 
-            {/* Modal Header */}
-            <div className="relative px-6 py-4 bg-slate-950/90 border-b border-slate-800/80 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-3.5 w-3.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500"></span>
-                </span>
-                <span className="text-xs font-black uppercase tracking-wider text-rose-400">
-                  Live Hearing Commenced
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (liveMeetingKey) {
-                    setDismissedMeetingIds(prev => new Set(prev).add(String(liveMeetingKey).toUpperCase()));
-                  }
-                }}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-                title="Minimize alert (can rejoin from top banner)"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
+      {showQuotaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60">
+          <div role="dialog" aria-modal="true" aria-labelledby="quota-dialog-title" className="w-full max-w-lg rounded-2xl border border-amber-300 bg-amber-50 p-6 shadow-2xl text-amber-950 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="quota-dialog-title" className="text-lg font-bold">Grievance Quota &amp; 7-Day Lock Policy</h2>
+              <button type="button" autoFocus onClick={() => setShowQuotaModal(false)} aria-label="Close quota details" className="rounded-lg px-2 py-1 font-bold hover:bg-amber-200">✕</button>
             </div>
-
-            {/* Modal Body */}
-            <div className="relative p-6 space-y-6">
-              {/* Call Radar Pulse + RO Profile */}
-              <div className="flex flex-col items-center text-center space-y-3">
-                <div className="relative">
-                  {/* Outer Pulsing Rings */}
-                  <span className="absolute -inset-3 rounded-full bg-emerald-500/20 animate-ping"></span>
-                  <span className="absolute -inset-1.5 rounded-full bg-emerald-500/40 animate-pulse"></span>
-                  <img
-                    alt={activeFormRO?.name || 'Relationship Officer'}
-                    className="relative w-20 h-20 rounded-full object-cover ring-4 ring-emerald-500 shadow-2xl"
-                    src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDLel99doHvbxmjryAfLBN2VNfpzynyvztUhQKhSNRExE89T18FYlvcmYM4tfaI_vM-172N9v2yX-Wld2Ntk59R4GxGXx7RABEII48GwhkCWqpuVBraR42HJWaKusfr93_AqXCXzXlrp9ejOk8nCkU5_qQ_UiN-glmZbFW-tIcIkJF3cTSY0S2B_q68gOQ-wDAWqktdFkdV_gkrZIVaMDWFM5iPNVJ7xKSySssioXk'}
-                  />
-                  <span className="absolute bottom-0 right-0 p-1.5 bg-emerald-500 rounded-full text-slate-950 ring-2 ring-slate-900 shadow">
-                    <span className="material-symbols-outlined text-[14px] block">videocam</span>
-                  </span>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wide bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    Officer In Video Room Now
-                  </div>
-                  <h3 className="text-xl font-black text-white tracking-tight">
-                    {activeFormRO?.name || 'Dr. Rajeshwari Kamath'}
-                  </h3>
-                  <p className="text-xs text-slate-300">
-                    Relationship Officer • Campus Grievance Hearing Cell
-                  </p>
-                </div>
-              </div>
-
-              {/* Ticket Details Box */}
-              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 text-left space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Grievance Ticket:</span>
-                  <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
-                    #{activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.id}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Category / Domain:</span>
-                  <span className="font-semibold text-slate-200">
-                    {selectedIssue?.category || activeStudentOnlineMeeting?.category || 'Official Consultation'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Connection Protocol:</span>
-                  <span className="text-slate-300 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px] text-emerald-400">verified_user</span>
-                    Encrypted WebRTC P2P
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-300 text-center leading-relaxed">
-                Your Relationship Officer has officially opened the video meeting room. Please join now to present your concerns directly.
-              </p>
-
-              {/* Action Buttons */}
-              <div className="space-y-2.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => handleStudentJoinMeeting(activeStudentOnlineMeeting?.issueId || activeStudentOnlineMeeting?.id)}
-                  className="w-full inline-flex items-center justify-center gap-3 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-sm sm:text-base shadow-[0_0_30px_rgba(16,185,129,0.5)] transition-all transform active:scale-95 group"
-                >
-                  <span className="material-symbols-outlined text-[24px] transition-transform group-hover:scale-125">videocam</span>
-                  <span>👉 Enter Meeting Room Now</span>
-                  <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (liveMeetingKey) {
-                      setDismissedMeetingIds(prev => new Set(prev).add(String(liveMeetingKey).toUpperCase()));
-                    }
-                  }}
-                  className="w-full text-center text-xs text-slate-400 hover:text-slate-200 py-2 transition"
-                >
-                  Minimize &amp; join later from dashboard top bar
-                </button>
-              </div>
-            </div>
+            <p className="text-sm font-bold">{usedCount} / 2 slots {quota.isLocked ? 'locked' : 'used'} · {quota.remainingQuota} available now</p>
+            <p className="text-sm leading-relaxed">Each submitted issue occupies one slot for 7 full days. Resolving the issue or submitting feedback does not release that slot early.</p>
+            <p className="rounded-xl border border-amber-300 bg-amber-100 p-3 text-sm font-bold">{quota.isLocked ? `Next slot available: ${formatQuotaDate(quota.nextSlotAvailableAt)}` : 'You can submit a new grievance now.'}</p>
+            <ul className="space-y-2 text-xs">
+              {quota.slots.map(slot => <li key={slot.id || slot.issue_id} className="flex flex-wrap justify-between gap-2"><strong>#{slot.id || slot.issue_id}</strong><span>Unlocks {formatQuotaDate(slot.unlocksAt)}</span></li>)}
+            </ul>
+            <button type="button" onClick={() => setShowQuotaModal(false)} className="w-full rounded-xl bg-amber-700 hover:bg-amber-800 px-4 py-2.5 text-sm font-bold text-white">Understood</button>
           </div>
         </div>
       )}
@@ -2076,20 +1806,6 @@ export const StudentDashboard = ({ studentId }) => {
         </div>
       )}
 
-      {/* ================= RECORDING PLAYBACK MODAL ================= */}
-      {playingRecording && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-          <div className="bg-slate-900 text-white rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl border border-slate-800">
-            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
-              <span className="text-xs font-bold">Auto-Archived Recording: Ticket #{playingRecording.issueId}</span>
-              <button onClick={() => setPlayingRecording(null)} className="text-slate-400 hover:text-white">✕</button>
-            </div>
-            <div className="p-4">
-              <video src={playingRecording.videoUrl} controls autoPlay className="w-full aspect-video rounded-xl bg-black" />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ================= MEETING CONCLUDED ALERT POPUP ================= */}
       {meetingEndedPopup && (

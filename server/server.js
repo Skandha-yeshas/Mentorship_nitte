@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { getQuotaLockMessage } from '../shared/grievanceQuota.js';
+import { createIssueQuotaReader, createStudentSubmissionLock } from './issueQuota.js';
+import { createIssueActivityStore } from './issueActivity.js';
 import { initDb, query, dropAllTables, seedTables, ALL_CATEGORIES, isDbConnected, getFallbackState } from './db.js';
 import { sendGmailNotification, getEmailLogs, processInboundGmailReply, GMAIL_ADDRESS } from './gmailService.js';
 import { startImapListener, getImapStatus } from './gmailImapService.js';
@@ -1189,188 +1192,79 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1b. GET STUDENT ISSUE LIMIT STATUS (Maximum 2 Active Issues Limit)
-app.get('/api/students/:id/issue-limit', async (req, res) => {
-  const studentId = req.params.id;
-  try {
-    let activeCount = 0;
-    const cleanStudentId = String(studentId).trim().toLowerCase();
-    const countedIds = new Set();
-
-    // 1. In-memory buffer check
-    const inMemActive = inMemoryIssues.filter(i =>
-      (String(i.studentId || i.student_id || '').trim().toLowerCase() === cleanStudentId) &&
-      i.status !== 'Resolved' && i.status !== 'Closed'
-    );
-    inMemActive.forEach(i => countedIds.add((i.id || '').toUpperCase()));
-    activeCount += inMemActive.length;
-
-    // 2. Direct Supabase Cloud REST check
-    try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      const sbRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/issues?student_id=ilike.${encodeURIComponent(studentId)}&status=not.in.(Resolved,Closed)&select=id`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-      );
-      if (sbRes.ok) {
-        const sbActive = await sbRes.json();
-        if (Array.isArray(sbActive)) {
-          for (const s of sbActive) {
-            const uId = (s.id || '').toUpperCase();
-            if (uId && !countedIds.has(uId)) {
-              countedIds.add(uId);
-              activeCount++;
-            }
-          }
-        }
-      }
-    } catch (sbErr) {
-      console.warn('[Server] Supabase issue-limit check notice:', sbErr.message);
-    }
-
-    // 3. PostgreSQL query check (if connected)
-    if (isDbConnected()) {
-      try {
-        const pgRes = await query(
-          `SELECT id FROM issues 
-           WHERE LOWER(student_id) = LOWER($1) AND status NOT IN ('Resolved', 'Closed')`,
-          [studentId]
-        );
-        if (pgRes && pgRes.rows) {
-          for (const r of pgRes.rows) {
-            const uId = (r.id || '').toUpperCase();
-            if (uId && !countedIds.has(uId)) {
-              countedIds.add(uId);
-              activeCount++;
-            }
-          }
-        }
-      } catch (checkErr) {
-        console.warn('[Server] Issue limit check PG notice:', checkErr.message);
-      }
-    }
-
-    const maxLimit = 2;
-    const isEligible = activeCount < maxLimit;
-
-    res.json({
-      isEligible,
-      activeCount,
-      recentCount: activeCount,
-      maxLimit,
-      maxQuota: maxLimit,
-      remainingLimit: Math.max(0, maxLimit - activeCount),
-      remainingQuota: Math.max(0, maxLimit - activeCount)
+const issueActivity = createIssueActivityStore({
+  query, getMemoryIssues: () => inMemoryIssues,
+  readCloudIssue: async issueId => {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/issues?id=ilike.${encodeURIComponent(issueId)}&select=id,logs,status&limit=1`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
     });
-  } catch (err) {
-    console.error('Error checking student issue limit:', err);
-    res.status(500).json({ error: 'Failed to check issue limit' });
+    if (!response.ok) throw new Error('Ticket activity lookup unavailable');
+    const rows = await response.json();
+    return Array.isArray(rows) ? rows[0] : null;
+  },
+  writeCloudIssue: async (issueId, update) => {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/issues?id=ilike.${encodeURIComponent(issueId)}`, {
+      method: 'PATCH',
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(update)
+    });
+    if (!response.ok) throw new Error('Could not save ticket activity');
   }
 });
 
-// 2. SUBMIT AN ISSUE (Strictly enforces max 2 active issues per student)
+app.get('/api/issues/:id/activity', async (req, res) => {
+  try {
+    const history = await issueActivity.read(req.params.id);
+    if (!history) return res.status(404).json({ error: 'Issue not found' });
+    const emailLogs = await getEmailLogs({ issueId: history.issueId });
+    res.json({ ...history, emailLogs });
+  } catch (error) {
+    res.status(503).json({ error: 'Ticket activity is temporarily unavailable' });
+  }
+});
+
+const readStudentQuota = createIssueQuotaReader({
+  query, isDbConnected,
+  getMemoryIssues: () => inMemoryIssues,
+  fetchCloudIssues: async studentId => {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/issues?student_id=eq.${encodeURIComponent(studentId)}&select=id,student_id,created_at,status`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!response.ok) throw new Error('Cloud quota lookup unavailable');
+    return response.json();
+  }
+});
+const acquireStudentSubmission = createStudentSubmissionLock();
+
+// Both quota display and submission enforce the same two-slot, seven-day policy.
+app.get('/api/students/:id/issue-limit', async (req, res) => {
+  try {
+    res.json(await readStudentQuota(req.params.id));
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
+});
+
+// 2. SUBMIT AN ISSUE (Two submissions per rolling seven-day period)
 app.post('/api/issues', async (req, res) => {
   const { issueId: clientIssueId, studentId, category, description, priority, studentName } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
 
+  const releaseSubmission = await acquireStudentSubmission(studentId);
   try {
-    // Strictly Enforce 2-Issue Maximum Active Limit per Student
-    let activeCount = 0;
-    const cleanStudentId = String(studentId).trim().toLowerCase();
-    const cleanStudentName = studentName ? String(studentName).trim().toLowerCase() : '';
-
-    // 1. In-memory buffer check
-    const inMemActive = inMemoryIssues.filter(i => {
-      const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
-      const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
-      const matches = sId === cleanStudentId || (cleanStudentName && cleanStudentName !== 'student' && sName === cleanStudentName);
-      return matches && i.status !== 'Resolved' && i.status !== 'Closed';
-    });
-    const countedIds = new Set(inMemActive.map(i => (i.id || '').toUpperCase()));
-    activeCount += inMemActive.length;
-
-    // 2. Direct Supabase Cloud REST check
-    try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      const sbRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/issues?student_id=ilike.${encodeURIComponent(studentId)}&status=not.in.(Resolved,Closed)&select=id`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-      );
-      if (sbRes.ok) {
-        const sbActive = await sbRes.json();
-        if (Array.isArray(sbActive)) {
-          for (const s of sbActive) {
-            const uId = (s.id || '').toUpperCase();
-            if (uId && !countedIds.has(uId)) {
-              countedIds.add(uId);
-              activeCount++;
-            }
-          }
-        }
-      }
-    } catch (sbCheckErr) {
-      console.warn('[Server] Active issue Supabase check error:', sbCheckErr.message);
-    }
-
-    // 3. PostgreSQL query check (if connected)
-    if (isDbConnected()) {
-      try {
-        const pgRes = await query(
-          `SELECT id FROM issues 
-           WHERE LOWER(student_id) = LOWER($1) AND status NOT IN ('Resolved', 'Closed')`,
-          [studentId]
-        );
-        if (pgRes && pgRes.rows) {
-          for (const r of pgRes.rows) {
-            const uId = (r.id || '').toUpperCase();
-            if (uId && !countedIds.has(uId)) {
-              countedIds.add(uId);
-              activeCount++;
-            }
-          }
-        }
-      } catch (checkErr) {
-        console.warn('[Server] Issue limit check PG notice:', checkErr.message);
-      }
-    }
-
-    if (activeCount >= 2) {
-      return res.status(400).json({
-        error: `Grievance Quota Limit Reached (2 / 2 Active Issues Used): Student ${studentName || studentId} already has ${activeCount} active unresolved grievances. A maximum of 2 active issues are permitted simultaneously. Please wait until an open grievance is marked as Resolved and feedback is submitted to free up a slot.`
-      });
+    const quota = await readStudentQuota(studentId);
+    if (quota.isLocked) {
+      return res.status(429).json({ code: 'GRIEVANCE_QUOTA_LOCKED', error: getQuotaLockMessage(quota), quota });
     }
 
     const idx = ALL_CATEGORIES.indexOf(category);
     const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
 
-    // Count previous attempts/issues in this category for this student
-    let totalAttempts = 0;
-    try {
-      const catCheck = await query(
-        `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
-        [studentId, category, calculatedRoId]
-      );
-      if (catCheck && catCheck.rows) {
-        totalAttempts = catCheck.rowCount;
-        catCheck.rows.forEach(row => {
-          const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
-          const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-          totalAttempts += reopens;
-        });
-      }
-    } catch (catErr) {
-      console.warn('[Server] Category check PG notice:', catErr.message);
-    }
-
-    const isThirdAttempt = totalAttempts >= 2; // 3rd attempt or higher
-    const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
-    const logText = isThirdAttempt
-      ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-      : `Issue submitted by ${studentName} (Attempt #${totalAttempts + 1} for ${category}).`;
+    const initialStatus = 'Assigned to RO';
+    const logText = `Issue submitted by ${studentName} and assigned to ${calculatedRoId}.`;
 
     // Use the client-provided issueId if given (so we don't create a duplicate ticket),
     // otherwise fall back to generating a new one.
@@ -1466,7 +1360,7 @@ app.post('/api/issues', async (req, res) => {
       to: 'skandhayashu2906@gmail.com',
       replyTo: 'skandhayashas2906@gmail.com',
       fromName: `NITTE Portal (${studentName})`,
-      subject: isThirdAttempt ? `[ADMIN AUTO-ESCALATION - 3RD ATTEMPT] ${category} (${issueId})` : `[RO ACTION REQUIRED - ${calculatedRoId}] New Issue: ${category} (${issueId})`,
+      subject: `[RO ACTION REQUIRED - ${calculatedRoId}] New Issue: ${category} (${issueId})`,
       html: `<h3>New Student Issue Registered for RO Office</h3>
              <p>Hello RO Officer (<strong>${calculatedRoId}</strong>),</p>
              <p>Student <strong>${studentName}</strong> (from skandhayashas2906@gmail.com) has submitted an issue:</p>
@@ -1478,7 +1372,6 @@ app.post('/api/issues', async (req, res) => {
                <li><strong>Student Name:</strong> ${studentName} (${studentId})</li>
                <li><strong>Description:</strong> ${description}</li>
              </ul>
-             ${isThirdAttempt ? '<p style="color: #dc2626; font-weight: bold;">⚠️ Note: This is the 3rd attempt for this category. It has been automatically escalated to Admin Office.</p>' : ''}
              <p>Please log into your RO Dashboard to review and take action.</p>
              <hr/>
              <p><em>Dispatched to RO Office email: skandhayashu2906@gmail.com</em></p>`,
@@ -1495,7 +1388,7 @@ app.post('/api/issues', async (req, res) => {
       subject: `[TICKET CONFIRMATION - ${issueId}] Issue Submitted: ${category}`,
       html: `<h3>NITTE Student Support Ticket Registered</h3>
              <p>Dear <strong>${studentName}</strong>,</p>
-             <p>Your issue has been successfully submitted ${isThirdAttempt ? 'and <strong>automatically escalated to the Admin Office</strong> (3rd Attempt Limit)' : `and forwarded to RO Officer <strong>${calculatedRoId}</strong>`}.</p>
+             <p>Your issue has been successfully submitted and forwarded to RO Officer <strong>${calculatedRoId}</strong>.</p>
              <ul>
                <li><strong>Ticket ID:</strong> ${issueId}</li>
                <li><strong>Category:</strong> ${category}</li>
@@ -1509,16 +1402,18 @@ app.post('/api/issues', async (req, res) => {
       recipientName: studentName
     }).catch(err => console.error('[Gmail SMTP] Student email error:', err));
 
-    res.status(201).json({ id: issueId, status: initialStatus, isThirdAttempt });
+    res.status(201).json({ id: issueId, status: initialStatus, createdAt: timestamp });
   } catch (err) {
     console.error('Error submitting issue:', err);
-    res.status(500).json({ error: 'Failed to submit issue' });
+    res.status(503).json({ error: err.message || 'Failed to submit issue' });
+  } finally {
+    releaseSubmission();
   }
 });
 
 // 3. SCHEDULE / RESCHEDULE A MEETING (RO ASSIGNED)
 app.post('/api/meetings', async (req, res) => {
-  const { issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
+  const { id: requestedMeetingId, isReschedule: requestedReschedule, issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
   
   // Resolve valid studentId from parameter or fallback to issues table
   let validStudentId = studentId;
@@ -1549,8 +1444,9 @@ app.post('/api/meetings', async (req, res) => {
   }
 
   const existingMemMeet = inMemoryMeetings.find(m => m.issueId && String(m.issueId).toUpperCase() === String(issueId).toUpperCase());
-  const meetId = existingMemMeet ? existingMemMeet.id : `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-  const isReschedule = Boolean(existingMemMeet);
+  // Keep the client, Postgres, and cloud copies on the same meeting ID.
+  const meetId = requestedMeetingId || existingMemMeet?.id || `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  let isReschedule = Boolean(existingMemMeet || requestedReschedule);
 
   let logMessage = isReschedule
     ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
@@ -1574,6 +1470,10 @@ app.post('/api/meetings', async (req, res) => {
 
       // Check if meeting already exists for this issue or if meeting was previously scheduled
       const existingMeet = await query(`SELECT id FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
+      if (existingMeet.rowCount > 0 && !isReschedule) {
+        isReschedule = true;
+        logMessage = logMessage.replace('Meeting scheduled', 'Meeting rescheduled / reassigned');
+      }
       const issueStatusCheck = await query(`SELECT status, logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
 
       if (isReschedule || (existingMeet && existingMeet.rowCount > 0)) {
@@ -1592,20 +1492,15 @@ app.post('/api/meetings', async (req, res) => {
         );
       }
 
-      // Update issue logs and status
-      const issueRes = await query(`SELECT logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
-      if (issueRes.rowCount > 0) {
-        const logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : (issueRes.rows[0].logs || []);
-        logs.push({ text: logMessage, time: timestamp });
-        await query(
-          `UPDATE issues SET status = 'Meeting Scheduled', logs = $1 WHERE UPPER(id) = UPPER($2)`,
-          [JSON.stringify(logs), issueId]
-        );
-      }
     } catch (pgErr) {
       console.warn('[Server] Direct PG meeting insert notice (using Supabase & in-memory):', pgErr.message);
     }
 
+    await issueActivity.append(issueId, {
+      id: `schedule:${meetId}:${timestamp}`,
+      eventType: isReschedule ? 'MEETING_RESCHEDULED' : 'MEETING_SCHEDULED',
+      text: logMessage, time: timestamp, actor: roId || 'RO'
+    }, 'Meeting Scheduled');
     await logSystemEvent(`RO ${roId} ${isReschedule ? 'rescheduled' : 'scheduled'} a meeting with Student ${studentName} for ${date} at ${time}`, 'RO', roId);
 
     // Dynamically resolve student email from database
@@ -1639,7 +1534,7 @@ app.post('/api/meetings', async (req, res) => {
              <hr/>
              <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
       issueId,
-      eventType: 'MEETING_SCHEDULED',
+      eventType: isReschedule ? 'MEETING_RESCHEDULED' : 'MEETING_SCHEDULED',
       recipientName: studentName
     });
 
@@ -1692,31 +1587,60 @@ app.post('/api/meetings', async (req, res) => {
 // 4. UPDATE MEETING STATUS & DISCUSSION MINUTES (Confirm/Cancel/Notes)
 app.put('/api/meetings/:id', async (req, res) => {
   const meetId = req.params.id;
-  const { status, notes, discussionSummary, actionItems } = req.body;
+  const { status, notes, discussionSummary, actionItems, outcome, followUpNeeded } = req.body;
 
   try {
     const combinedNotes = notes || (discussionSummary ? `Discussions: ${discussionSummary}${actionItems ? ` | Action Items: ${actionItems}` : ''}` : null);
     
     // 1. Update in-memory meetings store
     const targetKey = String(meetId).toUpperCase();
-    const memMeet = inMemoryMeetings.find(m =>
+    let memMeet = inMemoryMeetings.find(m =>
       (m.id && String(m.id).toUpperCase() === targetKey) ||
       (m.issueId && String(m.issueId).toUpperCase() === targetKey)
     );
+    // After a restart the meeting may exist only in persistent storage.
+    // Resolve it before caching an update; a meeting ID is not an issue ID.
+    if (!memMeet) {
+      let storedMeeting;
+      try {
+        const result = await query(
+          `SELECT id, issue_id AS "issueId", student_id AS "studentId", student_name AS "studentName", ro_id AS "roId", date, time, mode, location, notes, status FROM meetings WHERE UPPER(id) = UPPER($1) OR UPPER(issue_id) = UPPER($1) LIMIT 1`,
+          [meetId]
+        );
+        storedMeeting = result.rows[0];
+      } catch (e) {
+        console.warn('[Server] Meeting lookup notice:', e.message);
+      }
+      if (!storedMeeting) {
+        const lookupId = encodeURIComponent(meetId);
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/meetings?or=(id.eq.${lookupId},issue_id.eq.${lookupId})&limit=1`, {
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+        });
+        const rows = response.ok ? await response.json() : [];
+        if (Array.isArray(rows) && rows[0]) {
+          const row = rows[0];
+          storedMeeting = { ...row, issueId: row.issue_id, studentId: row.student_id, studentName: row.student_name, roId: row.ro_id };
+        }
+      }
+      if (!storedMeeting) return res.status(404).json({ error: 'Meeting not found. Please schedule the meeting before starting it.' });
+      memMeet = storedMeeting;
+      inMemoryMeetings.unshift(memMeet);
+    }
+    const previousStatus = memMeet.status;
     if (memMeet) {
       if (status) memMeet.status = status;
       if (combinedNotes) memMeet.notes = combinedNotes;
-      if (status === 'Started') memMeet.startedAt = new Date().toISOString();
+      if (discussionSummary?.trim()) {
+        memMeet.discussionSummary = discussionSummary.trim();
+        memMeet.actionItems = actionItems || '';
+        memMeet.feedbackSubmittedAt = new Date().toISOString();
+      }
+      if (status === 'Started') {
+        memMeet.startedAt = new Date().toISOString();
+        memMeet.endedAt = null;
+        memMeet.endedByRo = false;
+      }
       if (status === 'Completed' || status === 'Finished') memMeet.endedAt = new Date().toISOString();
-    } else {
-      inMemoryMeetings.unshift({
-        id: meetId,
-        issueId: meetId,
-        status: status || 'Completed',
-        notes: combinedNotes || '',
-        startedAt: status === 'Started' ? new Date().toISOString() : undefined,
-        endedAt: (status === 'Completed' || status === 'Finished') ? new Date().toISOString() : undefined
-      });
     }
 
     // 2. If Started, also ensure matching issue in inMemoryIssues is set to 'Meeting Started'
@@ -1762,6 +1686,32 @@ app.put('/api/meetings/:id', async (req, res) => {
       }
     } catch (pgErr) {
       console.warn('[Server] PG meeting update notice (using Supabase & in-memory):', pgErr.message);
+    }
+    const eventTime = new Date().toISOString();
+    const targetIssueId = memMeet.issueId || memMeet.issue_id;
+    const actor = memMeet.roId || memMeet.ro_id || 'RO';
+    if (status === 'Started' && previousStatus !== 'Started') {
+      await issueActivity.append(targetIssueId, {
+        id: `meeting-start:${memMeet.id}:${eventTime}`, eventType: 'MEETING_STARTED',
+        text: `Meeting started by ${actor} (${memMeet.mode || 'Online'}).`, time: eventTime, actor
+      }, 'Meeting Started');
+    } else if (['Completed', 'Finished'].includes(status) && !['Completed', 'Finished', 'Concluded'].includes(previousStatus)) {
+      await issueActivity.append(targetIssueId, {
+        id: `meeting-end:${memMeet.id}:${eventTime}`, eventType: 'MEETING_ENDED',
+        text: `Meeting ended by ${actor}. Awaiting RO minutes / feedback.`, time: eventTime, actor
+      }, 'In-Progress');
+    } else if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+      await issueActivity.append(targetIssueId, {
+        id: `meeting-cancel:${memMeet.id}:${eventTime}`, eventType: 'MEETING_CANCELLED',
+        text: `Meeting cancelled by ${actor}.`, time: eventTime, actor
+      }, 'In-Progress');
+    }
+    if (discussionSummary?.trim()) {
+      await issueActivity.append(targetIssueId, {
+        id: `ro-feedback:${memMeet.id}:${eventTime}`, eventType: 'RO_FEEDBACK_SUBMITTED', actor,
+        text: `[RO POST-MEETING DISCUSSION RECORD] Deliberations: "${discussionSummary.trim()}"${actionItems ? ` | Action Items: "${actionItems}"` : ''}${outcome ? ` | Outcome: ${outcome}` : ''}${followUpNeeded ? ' | Follow-up required.' : ''}`,
+        time: eventTime
+      });
     }
     await logSystemEvent(`Meeting ${meetId} updated (${status || 'Completed'})${discussionSummary ? ' with discussion minutes' : ''}`, 'RO', 'MEETING_MGR');
     res.json({ success: true });
@@ -1954,7 +1904,7 @@ app.put('/api/issues/:id/resolve', async (req, res) => {
   }
 });
 
-// 5b. REOPEN AN ISSUE (Student Re-open Feature with 3rd Attempt Auto-Escalation)
+// 5b. REOPEN AN ISSUE (Routes back to the assigned RO)
 app.put('/api/issues/:id/reopen', async (req, res) => {
   const issueId = req.params.id;
   const { studentId, reason } = req.body;
@@ -1973,23 +1923,8 @@ app.put('/api/issues/:id/reopen', async (req, res) => {
       logs = typeof issueRes.rows[0].logs === 'string' ? JSON.parse(issueRes.rows[0].logs) : issueRes.rows[0].logs;
     }
 
-    // Count attempts in this category
-    const catCheck = await query(
-      `SELECT id, logs FROM issues WHERE student_id = $1 AND (category = $2 OR ro_id = $3)`,
-      [issueStudentId || studentId, category, roId]
-    );
-    let totalAttempts = catCheck.rowCount;
-    catCheck.rows.forEach(row => {
-      const lArr = typeof row.logs === 'string' ? JSON.parse(row.logs) : (row.logs || []);
-      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-      totalAttempts += reopens;
-    });
-
-    const isThirdAttempt = totalAttempts >= 2; // 3rd attempt or higher
-    const newStatus = isThirdAttempt ? 'Escalated' : 'Re-opened by Student';
-    const logText = isThirdAttempt
-      ? `[AUTO-ESCALATED TO ADMIN] 3rd re-escalation attempt for category ${category}. Automatically escalated directly to Admin Office for priority intervention.`
-      : `Ticket re-opened by student due to unsatisfied resolution${reopenReasonText}`;
+    const newStatus = 'Re-opened by Student';
+    const logText = `Ticket re-opened by student due to unsatisfied resolution${reopenReasonText}`;
 
     logs.push({ text: logText, time: timestamp });
 
@@ -2007,19 +1942,18 @@ app.put('/api/issues/:id/reopen', async (req, res) => {
       to: 'skandhayashu2906@gmail.com',
       replyTo: 'skandhayashas2906@gmail.com',
       fromName: `Student Portal (${studentId})`,
-      subject: isThirdAttempt ? `[ADMIN AUTO-ESCALATION - 3RD REOPEN] Ticket ${issueId}` : `[RO URGENT - TICKET REOPENED] Ticket ${issueId} Re-opened by Student`,
+      subject: `[RO URGENT - TICKET REOPENED] Ticket ${issueId} Re-opened by Student`,
       html: `<h3>Alert: Ticket Re-opened by Student</h3>
              <p>Student <strong>${studentId}</strong> (skandhayashas2906@gmail.com) has re-opened ticket <strong>${issueId}</strong> (Category: ${category}).</p>
              <p><strong>Reason:</strong> ${reason || 'Unsatisfied resolution'}</p>
-             <p><strong>Status:</strong> <span style="color: ${isThirdAttempt ? '#dc2626' : '#2563eb'}; font-weight: bold;">${newStatus}</span></p>
-             ${isThirdAttempt ? '<p style="color: #dc2626; font-weight: bold;">⚠️ 3rd Attempt reached. Automatically escalated directly to Admin Office.</p>' : ''}
+             <p><strong>Status:</strong> <span style="color: #2563eb; font-weight: bold;">${newStatus}</span></p>
              <hr/>
              <p><em>Dispatched via Gmail System: ${GMAIL_ADDRESS}</em></p>`,
       issueId,
       eventType: 'ISSUE_REOPENED'
     });
 
-    res.json({ success: true, status: newStatus, isThirdAttempt });
+    res.json({ success: true, status: newStatus });
   } catch (err) {
     console.error('Error reopening issue:', err);
     res.status(500).json({ error: 'Failed to reopen issue' });

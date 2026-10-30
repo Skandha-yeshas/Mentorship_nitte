@@ -1,4 +1,6 @@
 import React, { createContext, useState, useEffect } from 'react';
+import { getGrievanceQuota, getQuotaLockMessage } from '../../shared/grievanceQuota.js';
+import { getMeetingIssueId, getUniqueMeetings, mergeMeetingRecord } from '../utils/roMeetings';
 import {
   generateStudentOnboardingEmailHtml,
   generateStudentOnboardingEmailText,
@@ -991,19 +993,15 @@ export const DatabaseProvider = ({ children }) => {
                     (sm.id && (sm.id === dm.id || sm.id === dm.issueId)) ||
                     (sm.issueId && (sm.issueId === dm.issueId || sm.issueId === dm.id))
                   );
-                  if (savedMatch) {
-                    const isLocallyStarted = savedMatch.status === 'Started' || savedMatch.status === 'In-Progress';
-                    return {
-                      ...dm,
-                      status: isLocallyStarted ? savedMatch.status : (dm.status || savedMatch.status),
-                      startedAt: savedMatch.startedAt || dm.startedAt,
-                      endedAt: savedMatch.endedAt || dm.endedAt
-                    };
-                  }
+                  if (savedMatch) return mergeMeetingRecord(dm, savedMatch);
                   return dm;
                 });
-                const serverMeetIds = new Set(mergedMeetings.map(m => (m.id || m.issueId || '').toUpperCase()));
-                const missingSaved = savedMeetings.filter(sm => !serverMeetIds.has((sm.id || sm.issueId || '').toUpperCase()));
+                const serverMeetIds = new Set(mergedMeetings.map(m => String(m.id || '').trim().toUpperCase()));
+                const serverIssueIds = new Set(mergedMeetings.map(getMeetingIssueId).filter(Boolean));
+                const missingSaved = savedMeetings.filter(sm =>
+                  !serverMeetIds.has(String(sm.id || '').trim().toUpperCase()) &&
+                  !serverIssueIds.has(getMeetingIssueId(sm))
+                );
                 if (missingSaved.length > 0) {
                   mergedMeetings = [...missingSaved, ...mergedMeetings];
                 }
@@ -1012,18 +1010,9 @@ export const DatabaseProvider = ({ children }) => {
           }
         } catch (e) { }
 
-        // If prev React state had any live Started meeting, protect it from being downgraded
-        const prevStarted = (prev.meetings || []).find(m => m.status === 'Started' || m.status === 'In-Progress');
-        if (prevStarted) {
-          const pKey = (prevStarted.id || prevStarted.issueId || '').toUpperCase();
-          const matchMeet = mergedMeetings.find(m => (m.id || m.issueId || '').toUpperCase() === pKey);
-          if (matchMeet) {
-            matchMeet.status = prevStarted.status;
-          } else {
-            mergedMeetings.unshift(prevStarted);
-          }
-        }
+        // Server/cache lifecycle merging above preserves pending updates without reviving ended calls.
 
+        mergedMeetings = getUniqueMeetings(mergedMeetings);
         try {
           localStorage.setItem('nitte_saved_meetings', JSON.stringify(mergedMeetings));
         } catch (e) { }
@@ -1656,112 +1645,7 @@ export const DatabaseProvider = ({ children }) => {
   const [isDemoLimitBypassed, setIsDemoLimitBypassed] = useState(false);
   const toggleDemoLimitBypass = () => setIsDemoLimitBypassed(prev => !prev);
 
-  // Local issue creator for offline / client fallback mode
-  const createLocalIssue = (studentId, studentName, category, description, priority) => {
-    const catIdx = ALL_CATEGORIES.indexOf(category);
-    const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
-    const ro = (db.users?.ros || []).find(r => r.id === roId);
-
-    // Check total attempts in this category for this student
-    const prevCatIssues = (db.issues || []).filter(i =>
-      (i.studentId === studentId || i.student_id === studentId) &&
-      (i.category === category || i.roId === roId || i.ro_id === roId)
-    );
-    let totalAttempts = prevCatIssues.length;
-    prevCatIssues.forEach(iss => {
-      const lArr = Array.isArray(iss.logs) ? iss.logs : [];
-      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-      totalAttempts += reopens;
-    });
-
-    const isThirdAttempt = totalAttempts >= 2;
-    const initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
-    const initialLogText = isThirdAttempt
-      ? `[AUTO-ESCALATED TO ADMIN] 3rd issue attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-      : `Ticket raised by ${studentName} (Attempt #${totalAttempts + 1} for ${category}).`;
-
-    const newIssue = {
-      id: `TICK-${Math.floor(1000 + Math.random() * 9000)}`,
-      studentId,
-      studentName,
-      category,
-      description,
-      priority,
-      status: initialStatus,
-      roId,
-      roName: ro ? ro.name : (catIdx !== -1 ? `RO - ${category.split(' - ')[1] || 'Officer'}` : 'RO Officer'),
-      createdAt: new Date().toISOString(),
-      logs: [{ time: new Date().toLocaleString(), text: initialLogText }]
-    };
-
-    setDb(prev => {
-      const updatedIssues = [newIssue, ...(prev.issues || [])];
-      try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-      } catch (e) { }
-      return { ...prev, issues: updatedIssues };
-    });
-
-    // Sync issue directly to live Supabase Cloud
-    try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          id: newIssue.id,
-          student_id: studentId,
-          student_name: studentName,
-          category,
-          description,
-          priority,
-          status: initialStatus,
-          ro_id: roId,
-          logs: newIssue.logs
-        })
-      }).catch(() => {});
-    } catch (e) { }
-
-    // Automated Real Gmail Notification Dispatch
-    try {
-      // 1. Alert Email to Relationship Officer (skandhayashu2906@gmail.com)
-      fetch('/api/gmail/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: 'skandhayashu2906@gmail.com',
-          subject: `[${newIssue.id}] New Student Issue Registered: ${category}`,
-          html: `<h3>New Student Grievance Registered</h3><p><strong>Student:</strong> ${studentName} (${studentId})</p><p><strong>Category:</strong> ${category}</p><p><strong>Priority:</strong> ${priority}</p><p><strong>Description:</strong> ${description}</p><p>Assigned to: ${newIssue.roName}</p>`,
-          text: `New issue registered: ${newIssue.id} by ${studentName} (${studentId}) in category ${category}: ${description}`,
-          issueId: newIssue.id,
-          eventType: 'ISSUE_SUBMITTED'
-        })
-      }).catch(() => { });
-
-      // 2. Confirmation Email to Student (skandhayashas2906@gmail.com)
-      fetch('/api/gmail/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: 'skandhayashas2906@gmail.com',
-          subject: `[${newIssue.id}] Ticket Confirmation: Issue Logged`,
-          html: `<h3>NITTE Mentorship Grievance Confirmation</h3><p>Dear ${studentName},</p><p>Your issue has been logged under ticket ID <strong>${newIssue.id}</strong>.</p><p><strong>Category:</strong> ${category}</p><p><strong>Assigned Officer:</strong> ${newIssue.roName}</p><p>You will receive updates and meeting notices as your Relationship Officer reviews this request.</p>`,
-          text: `Your ticket ${newIssue.id} for ${category} has been logged and assigned to ${newIssue.roName}.`,
-          issueId: newIssue.id,
-          eventType: 'ISSUE_SUBMITTED'
-        })
-      }).catch(() => { });
-    } catch (e) { }
-
-    return newIssue.id;
-  };
-
-  // ISSUE SUBMISSION (Guaranteed Direct Supabase Cloud Write + Dual Backend Dispatch)
+  // Issue submission uses the server's authoritative seven-day quota guard.
   const submitIssue = async (studentId, category, description, priority) => {
     const cleanStudentId = String(studentId || authenticatedUser?.id || '').trim();
     const student = (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === cleanStudentId.toLowerCase()) ||
@@ -1771,46 +1655,20 @@ export const DatabaseProvider = ({ children }) => {
     const effectiveStudentId = student.id || cleanStudentId;
     const effectiveStudentName = student.name || 'Student';
 
-    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-
     const catIdx = ALL_CATEGORIES.indexOf(category);
     const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
     const ro = (db.users?.ros || []).find(r => r.id === roId);
 
-    // Count attempts for 3rd attempt auto-escalation
-    const prevCatIssues = (db.issues || []).filter(i =>
-      (String(i.studentId || i.student_id || '').toLowerCase() === effectiveStudentId.toLowerCase()) &&
-      (i.category === category || i.roId === roId || i.ro_id === roId)
-    );
-    let totalAttempts = prevCatIssues.length;
-    prevCatIssues.forEach(iss => {
-      const lArr = Array.isArray(iss.logs) ? iss.logs : [];
-      const reopens = lArr.filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-      totalAttempts += reopens;
-    });
-
-    // Strict Quota Guard: Maximum 2 active grievances per student
-    const activeStudentIssues = (db.issues || []).filter(i => {
-      const sId = String(i.studentId || i.student_id || '').trim().toLowerCase();
-      const sName = String(i.studentName || i.student_name || '').trim().toLowerCase();
-      const matchesStudent = sId === effectiveStudentId.toLowerCase() ||
-        (effectiveStudentName && effectiveStudentName.toLowerCase() !== 'student' && sName === effectiveStudentName.toLowerCase());
-      const isUnresolved = i.status !== 'Resolved' && i.status !== 'Closed';
-      return matchesStudent && isUnresolved;
-    });
-
-    if (activeStudentIssues.length >= 2) {
-      throw new Error(`Quota Limit Reached (2 / 2 Active Issues Used): You currently have ${activeStudentIssues.length} active grievances awaiting resolution. Institutional policy permits a maximum of 2 active issues simultaneously.`);
+    const localQuota = getGrievanceQuota({ issues: db.issues || [], studentId: effectiveStudentId });
+    if (localQuota.isLocked) {
+      const error = new Error(getQuotaLockMessage(localQuota));
+      error.quota = localQuota;
+      throw error;
     }
+    let initialStatus = 'Assigned to RO';
+    const logText = `Ticket raised by ${effectiveStudentName} and assigned to ${roId}.`;
 
-    const isThirdAttempt = totalAttempts >= 2;
-    let initialStatus = isThirdAttempt ? 'Escalated' : 'Assigned to RO';
-    const logText = isThirdAttempt
-      ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-      : `Ticket raised by ${effectiveStudentName} (Attempt #${totalAttempts + 1} for ${category}).`;
-
-    const timestamp = new Date().toISOString();
+    let timestamp = new Date().toISOString();
     let issueId = null;
 
     // 1. PRIMARY AUTHORITATIVE CALL: Dispatch to backend /api/issues
@@ -1831,71 +1689,20 @@ export const DatabaseProvider = ({ children }) => {
       if (res.ok) {
         const data = await res.json();
         issueId = data.id;
+        timestamp = data.createdAt || timestamp;
         if (data.status) initialStatus = data.status;
       } else {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Failed to submit issue (HTTP ${res.status})`);
+        const error = new Error(errJson.error || `Failed to submit issue (HTTP ${res.status})`);
+        error.quota = errJson.quota;
+        throw error;
       }
     } catch (apiErr) {
-      // Re-throw quota errors or any explicit server validation errors immediately
-      if (apiErr.message && !apiErr.message.includes('Failed to fetch') && !apiErr.message.includes('NetworkError')) {
-        throw apiErr;
-      }
-      console.warn('[submitIssue] Backend /api/issues offline, using direct Supabase fallback:', apiErr.message);
+      if (apiErr.quota || !['Failed to fetch', 'NetworkError'].some(message => apiErr.message?.includes(message))) throw apiErr;
+      throw new Error('Unable to verify the grievance quota. Please try again when the server is available.');
     }
 
-    // 2. Fallback only if backend was completely offline: generate ID & write to Supabase directly
-    if (!issueId) {
-      if (activeStudentIssues.length >= 2) {
-        throw new Error(`Quota Limit Reached (2 / 2 Active Issues Used): Institutional policy permits a maximum of 2 active issues simultaneously.`);
-      }
-      issueId = `ISS-${Math.floor(100 + Math.random() * 900)}`;
-      try {
-        // Ensure student exists in Supabase students table first
-        await fetch(`${SUPABASE_URL}/rest/v1/students`, {
-          method: 'POST',
-          headers: {
-            apikey: SUPABASE_KEY,
-            Authorization: `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'resolution=ignore-duplicates'
-          },
-          body: JSON.stringify({
-            id: effectiveStudentId,
-            name: effectiveStudentName,
-            email: student.email || `${effectiveStudentId.toLowerCase()}@nitte.edu.in`,
-            branch: student.branch || 'CSE',
-            sem: student.sem || 6,
-            password: 'Nit#Stu2026'
-          })
-        }).catch(() => {});
-
-        await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-          method: 'POST',
-          headers: {
-            apikey: SUPABASE_KEY,
-            Authorization: `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation,resolution=merge-duplicates'
-          },
-          body: JSON.stringify({
-            id: issueId,
-            student_id: effectiveStudentId,
-            student_name: effectiveStudentName,
-            category,
-            description,
-            priority,
-            status: initialStatus,
-            ro_id: roId,
-            created_at: timestamp,
-            logs: [{ time: new Date().toLocaleString(), text: logText }]
-          })
-        });
-        console.log(`[submitIssue] Fallback: Issue ${issueId} persisted directly to Supabase Cloud.`);
-      } catch (sbErr) {
-        console.warn('[submitIssue] Direct Supabase Cloud write warning:', sbErr.message);
-      }
-    }
+    if (!issueId) throw new Error('Unable to verify the grievance quota. Please try again when the server is available.');
 
     const newIssueObj = {
       id: issueId,
@@ -2010,7 +1817,8 @@ export const DatabaseProvider = ({ children }) => {
       mode: mode || 'Offline',
       location: meetingLocation,
       notes: finalNotes,
-      discussionSummary: mode === 'Online' ? (cleanMinutes || (existingMeet?.mode === 'Online' ? existingMeet.discussionSummary : '')) : '',
+      discussionSummary: '',
+      feedbackSubmittedAt: null,
       actionItems: cleanActions || (existingMeet ? existingMeet.actionItems : ''),
       status: 'Confirmed',
       endedByRo: false,
@@ -2181,6 +1989,8 @@ export const DatabaseProvider = ({ children }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: newMeeting.id,
+          isReschedule,
           issueId,
           studentId: validStudentId,
           studentName,
@@ -2916,6 +2726,8 @@ Office of Student Welfare & Academic Mentorship
     const timestamp = new Date().toLocaleString();
     const cleanDiscussion = (discussionSummary || '').trim();
     const cleanActions = (actionItems || '').trim();
+    if (!cleanDiscussion) throw new Error('Please enter the meeting discussion summary before submitting feedback.');
+    const feedbackSubmittedAt = new Date().toISOString();
 
     // 1. Update local meetings & ticket state
     setDb(prev => {
@@ -2929,6 +2741,7 @@ Office of Student Welfare & Academic Mentorship
           ...m,
           status: 'Completed',
           discussionSummary: cleanDiscussion,
+          feedbackSubmittedAt,
           actionItems: cleanActions,
           outcome: outcome || 'In-Progress',
           followUpNeeded: Boolean(followUpNeeded),
@@ -2946,6 +2759,7 @@ Office of Student Welfare & Academic Mentorship
           mode: 'Offline',
           location: 'RO Office Desk 1 (Admin Block)',
           discussionSummary: cleanDiscussion,
+          feedbackSubmittedAt,
           actionItems: cleanActions,
           outcome: outcome || 'In-Progress',
           followUpNeeded: Boolean(followUpNeeded),
@@ -3004,7 +2818,9 @@ Office of Student Welfare & Academic Mentorship
           status: 'Completed',
           notes: cleanDiscussion ? `Discussions: ${cleanDiscussion}` : undefined,
           discussionSummary: cleanDiscussion,
-          actionItems: cleanActions
+          actionItems: cleanActions,
+          outcome,
+          followUpNeeded
         })
       });
     } catch (e) {
@@ -3170,20 +2986,8 @@ Office of Student Welfare & Academic Mentorship
       return;
     }
 
-    // Check total attempts in this category for this student
-    const category = targetIssue?.category;
-    const prevCatIssues = (db.issues || []).filter(i => i.studentId === studentId && (i.category === category || i.roId === targetIssue?.roId));
-    let totalAttempts = prevCatIssues.length;
-    prevCatIssues.forEach(iss => {
-      const reopens = (iss.logs || []).filter(l => l.text && l.text.toLowerCase().includes('re-opened')).length;
-      totalAttempts += reopens;
-    });
-
-    const isThirdAttempt = totalAttempts >= 2;
-    const newStatus = isThirdAttempt ? 'Escalated' : 'Re-opened by Student';
-    const logMsg = isThirdAttempt
-      ? `[AUTO-ESCALATED TO ADMIN] 3rd attempt/re-escalation reached for category ${category}. Automatically escalated directly to Admin Office for priority resolution.`
-      : `Ticket re-opened by student due to unsatisfied resolution: ${reason || 'Additional advice required.'}`;
+    const newStatus = 'Re-opened by Student';
+    const logMsg = `Ticket re-opened by student due to unsatisfied resolution: ${reason || 'Additional advice required.'}`;
 
     // Update local state immediately for instant UI feedback
     setDb(prev => ({

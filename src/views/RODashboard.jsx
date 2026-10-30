@@ -6,6 +6,7 @@ import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 import SelfHelpManagerModal from '../components/SelfHelpManagerModal';
+import { getUniqueMeetings, getRoMeetingQueue, getMeetingIssueId, getRoMeetingState, hasRoMeetingFeedback, isRoMeetingAwaitingFeedback } from '../utils/roMeetings';
 
 export const RODashboard = ({ roId }) => {
   const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, updateCategoryVideo, submitRoMeetingFeedback } = useContext(DatabaseContext);
@@ -389,6 +390,11 @@ export const RODashboard = ({ roId }) => {
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
 
+  // One queue drives the cards, count, and filter until RO feedback is submitted.
+  const uniqueMeetings = getUniqueMeetings(db.meetings || []);
+  const scheduledMeetings = getRoMeetingQueue({ meetings: uniqueMeetings, issues: roIssues, roId: ro.id });
+  const scheduledIssueIds = new Set(scheduledMeetings.map(getMeetingIssueId));
+
   // Helper to check if search query matches ticket ID
   const isTicketIdMatch = (issue) => {
     if (!trimmedQuery) return false;
@@ -416,7 +422,9 @@ export const RODashboard = ({ roId }) => {
 
     // Active non-resolved issues
     const matchesStatus = statusFilter === 'All'
-      || issue.status === statusFilter
+      || (statusFilter === 'Meeting Scheduled'
+        ? scheduledIssueIds.has(String(issue.id || issue.issue_id || '').trim().toUpperCase())
+        : issue.status === statusFilter)
       || (statusFilter === 'Escalated' && (issue.status === 'Re-escalated' || Boolean(issue.isReEscalated)));
     if (!matchesStatus) return false;
 
@@ -431,14 +439,6 @@ export const RODashboard = ({ roId }) => {
 
   const selectedIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
 
-  // Meetings assigned to this RO (excluding meetings for resolved or escalated tickets)
-  const myMeetings = (db.meetings || []).filter(m => (m.roId || m.ro_id) === ro.id);
-  const scheduledMeetings = myMeetings.filter(m => {
-    if (m.status === 'Cancelled') return false;
-    const parentIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (m.issueId || m.issue_id)?.toUpperCase());
-    return parentIssue ? (parentIssue.status !== 'Resolved' && parentIssue.status !== 'Escalated') : true;
-  });
-
   const getLogText = (l) => {
     if (!l) return '';
     if (typeof l === 'string') {
@@ -452,7 +452,7 @@ export const RODashboard = ({ roId }) => {
   };
 
   // Find if selected issue has a meeting scheduled & count reassignments
-  const rawActiveMeeting = selectedIssue ? (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.toUpperCase()) : null;
+  const rawActiveMeeting = selectedIssue ? uniqueMeetings.find(m => (m.issueId || m.issue_id)?.trim().toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.trim().toUpperCase()) : null;
   const activeMeeting = rawActiveMeeting || (selectedIssue && (selectedIssue.status === 'Meeting Scheduled' || selectedIssue.status === 'Meeting Started') ? {
     id: `MEET-${selectedIssue.id}`,
     issueId: selectedIssue.id,
@@ -471,6 +471,7 @@ export const RODashboard = ({ roId }) => {
     status: 'Confirmed',
     endedByRo: false
   } : null);
+  const meetingState = getRoMeetingState(activeMeeting, selectedIssue);
   const meetingReassignLogs = selectedIssue ? (selectedIssue.logs || []).filter(l => {
     const txt = getLogText(l).toLowerCase();
     return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
@@ -480,6 +481,7 @@ export const RODashboard = ({ roId }) => {
 
   // Check if meeting date has passed without being conducted (Missed / Expired Meeting)
   const isMeetingExpired = (() => {
+    if (meetingState !== 'scheduled') return false;
     if (!selectedIssue || selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated') return false;
     if (!activeMeeting || !activeMeeting.date) return false;
 
@@ -498,21 +500,7 @@ export const RODashboard = ({ roId }) => {
   const isDoneThroughOnline = Boolean(activeMeeting && activeMeeting.mode === 'Online');
 
   // Check if RO has filed the official discussion minutes for this meeting or issue
-  const hasFiledDiscussionMinutes = Boolean(
-    (activeMeeting && (
-      (activeMeeting.discussionSummary && activeMeeting.discussionSummary.trim().length > 0) ||
-      (activeMeeting.discussion_summary && activeMeeting.discussion_summary.trim().length > 0)
-    )) ||
-    (selectedIssue && (
-      (selectedIssue.discussionSummary && selectedIssue.discussionSummary.trim().length > 0) ||
-      (selectedIssue.discussion_summary && selectedIssue.discussion_summary.trim().length > 0) ||
-      (selectedIssue.discussionMinutes && selectedIssue.discussionMinutes.trim().length > 0)
-    )) ||
-    (db.meetings || []).some(m => 
-      (m.issueId || m.issue_id)?.toUpperCase() === (selectedIssue?.id || selectedIssue?.issue_id)?.toUpperCase() &&
-      ((m.discussionSummary && m.discussionSummary.trim().length > 0) || (m.discussion_summary && m.discussion_summary.trim().length > 0))
-    )
-  );
+  const hasFiledDiscussionMinutes = activeMeeting ? hasRoMeetingFeedback(activeMeeting) : false;
 
   // If online, RO MUST file discussion minutes before ticket can be marked as Resolved
   const isOnlineMeetingPendingMinutes = isDoneThroughOnline && !hasFiledDiscussionMinutes;
@@ -563,7 +551,7 @@ export const RODashboard = ({ roId }) => {
   const handleLaunchOnlineMeeting = (directMeet = null, directIssue = null) => {
     const meetToUse = directMeet || activeMeeting;
     const issueToUse = directIssue || selectedIssue || (meetToUse ? (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (meetToUse.issueId || meetToUse.issue_id)?.toUpperCase()) : null);
-    if (!meetToUse && !issueToUse) return;
+    if (getRoMeetingState(meetToUse, issueToUse) !== 'scheduled') return;
     if (issueToUse && (issueToUse.status === 'Resolved' || issueToUse.status === 'Escalated' || issueToUse.status === 'Re-escalated' || issueToUse.isReEscalated)) {
       alert('🔒 Ticket Locked: Meeting cannot be launched because this ticket is resolved or escalated.');
       return;
@@ -637,6 +625,9 @@ export const RODashboard = ({ roId }) => {
     setMeetingOutcome(currentIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
     setFollowUpNeeded(false);
 
+    // Mark ended before recording finalization so the room cannot be reopened.
+    updateMeetingStatus(currentMeet.id || currentMeet.issueId, 'Completed');
+
     // 3. Immediately close meeting stage & open feedback modal (Zero UI delay)
     setShowOnlineMeetingModal(false);
     setActiveMeetingIssueId(null);
@@ -694,7 +685,23 @@ export const RODashboard = ({ roId }) => {
       finalVideoUrl,
       `Dual-Participant Live Session (RO: ${ro.name} & Student: ${currentIssue.studentName}) conducted and auto-archived with side-by-side video and dual-mic audio.`
     );
-    updateMeetingStatus(currentMeet.id || currentMeet.issueId, 'Completed');
+  };
+
+  const handleOpenMeetingFeedback = (meeting, issue) => {
+    setSelectedIssueId(issue.id || issue.issue_id);
+    setPostMeetingData({
+      meetingId: meeting.id || meeting.issueId || meeting.issue_id,
+      issueId: issue.id || issue.issue_id,
+      studentName: issue.studentName || issue.student_name || 'Student',
+      studentId: issue.studentId || issue.student_id || '',
+      category: issue.category || 'General',
+      durationText: 'Concluded Session'
+    });
+    setDiscussionSummary(meeting.discussionSummary || meeting.discussion_summary || '');
+    setActionItems(meeting.actionItems || '');
+    setMeetingOutcome('In-Progress');
+    setFollowUpNeeded(Boolean(meeting.followUpNeeded));
+    setShowMeetingFeedbackModal(true);
   };
 
   const handlePostMeetingFeedbackSubmit = async (e) => {
@@ -1213,7 +1220,7 @@ export const RODashboard = ({ roId }) => {
                 <span className="block text-xs font-semibold text-slate-500">Scheduled Meetings</span>
                 <div className="flex items-baseline gap-2 mt-0.5">
                   <span className="text-2xl font-extrabold text-slate-900 tracking-tight">{scheduledMeetings.length}</span>
-                  <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">WebRTC Ready</span>
+                  <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Until Feedback Submitted</span>
                 </div>
               </div>
             </div>
@@ -1289,7 +1296,7 @@ export const RODashboard = ({ roId }) => {
                   <span className="material-symbols-outlined text-base text-emerald-600">videocam</span> Scheduled Meetings
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs">
-                  {roIssues.filter(i => i.status === 'Meeting Scheduled').length}
+                  {scheduledMeetings.length}
                 </span>
               </button>
 
@@ -1340,7 +1347,7 @@ export const RODashboard = ({ roId }) => {
               <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-base text-blue-700">calendar_today</span>
-                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Upcoming Brief Meetings</h4>
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Scheduled Meetings</h4>
                 </div>
                 <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> {scheduledMeetings.length} Scheduled
@@ -1350,6 +1357,9 @@ export const RODashboard = ({ roId }) => {
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1 text-xs">
                 {scheduledMeetings.map(meet => {
                   const isOnline = meet.mode === 'Online';
+                  const targetIssue = roIssues.find(issue => String(issue.id || issue.issue_id).trim().toUpperCase() === getMeetingIssueId(meet));
+                  const entryState = getRoMeetingState(meet, targetIssue);
+                  const awaitingFeedback = isRoMeetingAwaitingFeedback(meet);
                   return (
                     <div
                       key={meet.id}
@@ -1372,7 +1382,7 @@ export const RODashboard = ({ roId }) => {
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${isOnline ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
-                          {isOnline ? 'WebRTC' : 'In-Person'}
+                          {awaitingFeedback ? 'Feedback Pending' : (isOnline ? 'WebRTC' : 'In-Person')}
                         </span>
                         <button
                           type="button"
@@ -1381,14 +1391,16 @@ export const RODashboard = ({ roId }) => {
                             const targetIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === (meet.issueId || meet.issue_id)?.toUpperCase());
                             if (targetIssue) {
                               setSelectedIssueId(targetIssue.id);
-                              if (isOnline) {
+                              if (awaitingFeedback) {
+                                handleOpenMeetingFeedback(meet, targetIssue);
+                              } else if (isOnline && getRoMeetingState(meet, targetIssue) === 'scheduled') {
                                 handleLaunchOnlineMeeting(meet, targetIssue);
                               }
                             }
                           }}
                           className={`px-2 py-1 font-bold text-[11px] rounded transition shadow-2xs ${isOnline ? 'bg-blue-700 hover:bg-blue-800 text-white' : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700'}`}
                         >
-                          {isOnline ? 'Join' : 'View'}
+                          {awaitingFeedback ? 'Fill Feedback' : (isOnline && entryState === 'scheduled' ? 'Start Meeting' : 'View')}
                         </button>
                       </div>
                     </div>
@@ -1606,13 +1618,13 @@ export const RODashboard = ({ roId }) => {
                   <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border ${
                     isMeetingExpired
                       ? 'bg-rose-50/50 border-rose-300'
-                      : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                      : meetingState === 'live'
                         ? 'bg-emerald-50/50 border-emerald-300'
                         : 'bg-blue-50/20 border-blue-200/80'
                   }`}>
                     <div className="flex items-center gap-3.5">
                       <div className={`w-11 h-11 rounded-xl flex items-center justify-center relative flex-shrink-0 border ${
-                        activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                        meetingState === 'live'
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : 'bg-blue-50 text-blue-700 border-blue-200'
                       }`}>
@@ -1620,7 +1632,7 @@ export const RODashboard = ({ roId }) => {
                           {activeMeeting.mode === 'Online' ? 'videocam' : 'meeting_room'}
                         </span>
                         <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
-                          activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                          meetingState === 'live'
                             ? 'bg-emerald-500 animate-ping'
                             : 'bg-blue-500'
                         }`}></span>
@@ -1633,15 +1645,13 @@ export const RODashboard = ({ roId }) => {
                           <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] border flex items-center gap-1 ${
                             isMeetingExpired
                               ? 'bg-rose-100 text-rose-800 border-rose-200'
-                              : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
+                              : meetingState === 'live'
                                 ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
                                 : 'bg-blue-100 text-blue-800 border-blue-200'
                           }`}>
                             {isMeetingExpired
                               ? '⚠️ Time Elapsed'
-                              : activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress'
-                                ? '🟢 Live Now'
-                                : '📅 Confirmed'}
+                              : ({ scheduled: 'Scheduled', live: 'Meeting In Progress', 'feedback-pending': 'Feedback Pending', completed: 'Feedback Submitted', locked: 'Meeting Closed', cancelled: 'Cancelled' }[meetingState] || 'Unavailable')}
                           </span>
                           <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
                             {activeMeeting.date} @ {activeMeeting.time}
@@ -1655,63 +1665,45 @@ export const RODashboard = ({ roId }) => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2.5">
-                      {activeMeeting.mode === 'Online' ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress') {
-                                setActiveMeetingIssueId(getCanonicalMeetingRoomId(activeMeeting.issueId || activeMeeting.issue_id || selectedIssue.id));
-                                setShowOnlineMeetingModal(true);
-                              } else {
-                                handleLaunchOnlineMeeting(activeMeeting, selectedIssue);
-                              }
-                            }}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-600 hover:from-blue-800 text-white font-bold text-xs sm:text-sm transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-base">videocam</span>
-                            <span>{activeMeeting.status === 'Started' || activeMeeting.status === 'In-Progress' ? 'Re-Enter Virtual Room' : 'Launch In-Meeting Room'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleOpenOnlineNotDoneModal}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition"
-                            title="Declare that online meeting could not be held and reassign to offline"
-                          >
-                            <span className="material-symbols-outlined text-sm">event_busy</span>
-                            <span>Not Held (Reassign)</span>
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {activeMeeting.status === 'Started' ? (
-                            <button
-                              type="button"
-                              onClick={handleConcludeOfflineMeeting}
-                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition shadow-sm active:scale-95"
-                            >
-                              <span className="material-symbols-outlined text-base">check_circle</span>
-                              <span>Conclude In-Person & Log Minutes</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started')}
-                              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition shadow-sm active:scale-95"
-                            >
-                              <span className="material-symbols-outlined text-base">play_arrow</span>
-                              <span>Mark Meeting as Started</span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={handleOpenScheduleModal}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold transition"
-                          >
-                            <span className="material-symbols-outlined text-sm">schedule</span>
-                            <span>Reschedule</span>
-                          </button>
-                        </>
+                      {meetingState === 'scheduled' && (
+                        <button
+                          type="button"
+                          onClick={() => activeMeeting.mode === 'Online'
+                            ? handleLaunchOnlineMeeting(activeMeeting, selectedIssue)
+                            : updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started')}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs sm:text-sm transition shadow-sm"
+                        >
+                          <span className="material-symbols-outlined text-base">play_arrow</span>
+                          <span>Start Meeting</span>
+                        </button>
+                      )}
+                      {meetingState === 'live' && (
+                        <button
+                          type="button"
+                          onClick={activeMeeting.mode === 'Online' ? handleStopAndSaveRecording : handleConcludeOfflineMeeting}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm transition shadow-sm"
+                        >
+                          <span className="material-symbols-outlined text-base">call_end</span>
+                          <span>End Meeting &amp; Log Minutes</span>
+                        </button>
+                      )}
+                      {meetingState === 'feedback-pending' && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenMeetingFeedback(activeMeeting, selectedIssue)}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition shadow-sm"
+                        >
+                          <span className="material-symbols-outlined text-base">edit_note</span>
+                          <span>Log Minutes / Fill Feedback</span>
+                        </button>
+                      )}
+                      {meetingState === 'completed' && <span className="text-xs font-semibold text-emerald-700">Meeting Completed · Feedback Submitted</span>}
+                      {meetingState === 'locked' && <span className="text-xs font-semibold text-slate-600">Meeting Closed</span>}
+                      {meetingState === 'cancelled' && <span className="text-xs font-semibold text-slate-600">Meeting Cancelled</span>}
+                      {meetingState === 'scheduled' && activeMeeting.mode === 'Online' && (
+                        <button type="button" onClick={handleOpenOnlineNotDoneModal} className="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold">
+                          Not Held (Reassign)
+                        </button>
                       )}
                     </div>
                   </div>
