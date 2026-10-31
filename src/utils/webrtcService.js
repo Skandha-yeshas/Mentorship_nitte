@@ -1,4 +1,5 @@
 // src/utils/webrtcService.js
+import { apiFetch as fetch } from './apiFetch.js';
 
 /**
  * WebRTC Real-Time Two-Way Video & Audio Meeting Session Manager

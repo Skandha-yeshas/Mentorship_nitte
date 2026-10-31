@@ -145,3 +145,14 @@ test('a local start survives a server response that is still confirming the same
   const merged = mergeMeetingRecord({ ...current, status: 'Confirmed' }, current);
   assert.equal(getRoMeetingState(merged, issue), 'live');
 });
+
+test('scheduled meetings use their issue priority, from High to Medium to Low', () => {
+  const issues = [
+    { ...issue, id: 'LOW-ISSUE', priority: 'low' },
+    { ...issue, id: 'MEDIUM-ISSUE', priority: 'MEDIUM' },
+    { ...issue, id: 'HIGH-ISSUE', priority: 'High' }
+  ];
+  const meetings = issues.map(item => ({ ...current, id: `MEET-${item.id}`, issueId: item.id, status: 'Confirmed' }));
+  assert.deepEqual(queue(meetings, issues).map(item => item.issueId), ['HIGH-ISSUE', 'MEDIUM-ISSUE', 'LOW-ISSUE']);
+  assert.deepEqual(meetings.map(item => item.issueId), ['LOW-ISSUE', 'MEDIUM-ISSUE', 'HIGH-ISSUE']);
+});

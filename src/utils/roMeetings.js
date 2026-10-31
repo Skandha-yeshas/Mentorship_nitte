@@ -1,3 +1,5 @@
+import { getRoPriorityRank } from './roInbox.js';
+
 const normalize = value => String(value || '').trim().toUpperCase();
 
 export const getMeetingIssueId = meeting => normalize(meeting.issueId || meeting.issue_id);
@@ -73,5 +75,5 @@ export function getRoMeetingQueue({ meetings = [], issues = [], roId }) {
     if (['RESOLVED', 'CLOSED', 'ESCALATED', 'RE-ESCALATED'].includes(normalize(issue.status)) || issue.isReEscalated) return false;
     if (hasRoMeetingFeedback(meeting)) return false;
     return ['SCHEDULED', 'CONFIRMED', 'PENDING', 'STARTED', 'IN-PROGRESS', 'COMPLETED', 'FINISHED', 'CONCLUDED'].includes(normalize(meeting.status));
-  });
+  }).sort((a, b) => getRoPriorityRank(assignedIssues.get(getMeetingIssueId(a))?.priority) - getRoPriorityRank(assignedIssues.get(getMeetingIssueId(b))?.priority));
 }

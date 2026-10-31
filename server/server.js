@@ -1,10 +1,22 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { getQuotaLockMessage } from '../shared/grievanceQuota.js';
 import { createIssueQuotaReader, createStudentSubmissionLock } from './issueQuota.js';
 import { createIssueActivityStore } from './issueActivity.js';
-import { initDb, query, dropAllTables, seedTables, ALL_CATEGORIES, isDbConnected, getFallbackState } from './db.js';
+import { getCategoryVideoUpdate } from '../shared/categoryGuidance.js';
+import { createMeetingScheduleEvent } from '../shared/meetingReassignments.js';
+import { createAdminAnalyticsReader, createAdminAnalyticsRouter } from './adminAnalytics.js';
+import { createAuth } from './security/auth.js';
+import { createAccessPolicy } from './security/access.js';
+import { createDataGateway, tableScope } from './security/dataGateway.js';
+import { scopeState, stripSecrets } from './security/scopedState.js';
+import { initializeSecurity } from './security/initialize.js';
+import { hashPassword, validatePassword } from './security/passwords.js';
+import { createRecordingRepository, createRecordingsRouter } from './recordings.js';
+import { initDb, query, isDbConnected, getFallbackState, getPool } from './db.js';
+import { normalizeRoRosterRow } from '../shared/roCatalog.js';
 import { sendGmailNotification, getEmailLogs, processInboundGmailReply, GMAIL_ADDRESS } from './gmailService.js';
 import { startImapListener, getImapStatus } from './gmailImapService.js';
 
@@ -20,14 +32,44 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
+const auth = createAuth({ query, secure: process.env.NODE_ENV === 'production' });
+const access = createAccessPolicy(query);
+const recordingAuth = {
+  require(req, res, next) {
+    if (!req.user || !['Admin', 'RO'].includes(req.user.role)) return res.status(403).json({ error: 'Recording access is restricted.' });
+    req.recordingUser = req.user; next();
+  },
+  revoke(req, res) { res.status(204).end(); }
+};
 const PORT = process.env.PORT || 5001;
 
-app.use(cors());
-app.use(express.json());
+const allowedOrigin = origin => !origin || origin === process.env.APP_ORIGIN
+  || process.env.NODE_ENV !== 'production' && /^http:\/\/(localhost|127\.0\.0\.1):(5173|5001)$/.test(origin);
+app.use(cors({ origin: (origin, callback) => callback(null, allowedOrigin(origin)), credentials: true }));
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) res.set('Cache-Control', 'private, no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !allowedOrigin(req.get('Origin'))) return res.status(403).json({ error: 'Request origin is not allowed.' });
+  next();
+});
+app.use(express.json({ limit: '2mb' }));
+app.use('/api/auth', auth.router);
+app.use('/api', (req, res, next) => req.path === '/auth/register-student' ? next() : auth.require(req, res, next));
+app.use('/api', (req, res, next) => {
+  if (req.path === '/auth/register-student') return next();
+  if (req.path === '/db-state') {
+    const send = res.json.bind(res);
+    res.json = body => send(body.error ? body : scopeState(body, req.user));
+    res.set('Cache-Control', 'private, no-store');
+  }
+  access.middleware(req, res, next);
+});
+app.use('/api/data', createDataGateway(query));
+app.use('/api/admin/analytics', createAdminAnalyticsRouter({ read: createAdminAnalyticsReader(query) }));
 
 // Initialize Database & Gmail IMAP Poller on server start
-initDb();
-startImapListener();
+// Initialization and password migration finish before the HTTP server begins accepting requests.
 
 // Helper to log system events to PostgreSQL
 const logSystemEvent = async (text, userRole, userId) => {
@@ -180,9 +222,10 @@ app.get('/api/db-state', async (req, res) => {
   }
 
   try {
-    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem, password FROM students`);
-    const mentorsRes = await query(`SELECT id, name, email, dept, class, password FROM mentors`);
-    const rosRes = await query(`SELECT id, name, email, region, password FROM ros`);
+    const studentsRes = await query(`SELECT id, name, email, mentor_id AS "mentorId", phone, branch, sem FROM students`);
+    const resetVersion = await query("SELECT value FROM app_settings WHERE key = 'grievance_reset_version'");
+    const mentorsRes = await query(`SELECT id, name, email, dept, class FROM mentors`);
+    const rosRes = await query(`SELECT id, name, email, region FROM ros`);
     const issuesRes = await query(`
       SELECT id, student_id AS "studentId", student_name AS "studentName", 
              category, description, priority, status, ro_id AS "roId", 
@@ -252,6 +295,7 @@ app.get('/api/db-state', async (req, res) => {
         ros: rosRes.rows
       },
       issues: mappedIssues,
+      grievanceResetVersion: resetVersion.rows[0]?.value || null,
       meetings: mergedPgMeetings,
       groupSessions: sessionsRes.rows,
       resources: resourcesRes.rows,
@@ -294,7 +338,14 @@ app.get('/api/gmail/imap-status', (req, res) => {
 app.get('/api/gmail/logs', async (req, res) => {
   try {
     const logs = await getEmailLogs();
-    res.json({ gmailAddress: GMAIL_ADDRESS, imapStatus: getImapStatus(), logs });
+    const params = [];
+    const scope = tableScope('issues', req.user, params);
+    const ids = new Set((await query(`SELECT id FROM issues WHERE ${scope}`, params)).rows.map(row => row.id));
+    res.set('Cache-Control', 'private, no-store').json({
+      gmailAddress: req.user.role === 'Admin' ? GMAIL_ADDRESS : undefined,
+      imapStatus: req.user.role === 'Admin' ? getImapStatus() : undefined,
+      logs: logs.filter(row => req.user.role === 'Admin' || ids.has(row.issueId || row.issue_id)).map(({ body, html, text, ...row }) => stripSecrets(row))
+    });
   } catch (err) {
     console.error('Error fetching Gmail logs:', err);
     res.status(500).json({ error: 'Failed to fetch Gmail logs' });
@@ -331,81 +382,30 @@ app.post('/api/gmail/simulate-inbound', async (req, res) => {
 
 // COMPUTER PASSWORD GENERATOR HELPER
 const generateComputerPassword = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789#@!$%';
-  let pwd = 'Nit#';
-  for (let i = 0; i < 6; i++) {
-    pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return pwd;
+  return randomBytes(18).toString('base64url');
 };
 
-// 1. STUDENT REGISTRATION ENDPOINT
-app.post('/api/auth/register-student', async (req, res) => {
-  const { name, email, usn, password, branch, sem } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: 'Name, Gmail ID, and Password are required.' });
-  }
-
-  const studentId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
-
-  try {
-    // Check if student with this email or ID already exists
-    const existing = await query(`SELECT * FROM students WHERE LOWER(email) = LOWER($1) OR UPPER(id) = UPPER($2)`, [email.trim(), studentId]);
-    if (existing.rowCount > 0) {
-      return res.status(400).json({ error: 'A student account with this Email or USN/ID already exists.' });
-    }
-
-    const mentorId = 'M101';
-    const semester = parseInt(sem) || 4;
-    const studentBranch = branch || 'CSE';
-
-    await query(
-      `INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [studentId, name.trim(), email.trim(), mentorId, '9876543210', studentBranch, semester, password.trim()]
-    );
-
-    await logSystemEvent(`New Student registered: ${name} (${email})`, 'Student', studentId);
-
-    // Dispatch Welcome & Confirmation Email via Nodemailer Gmail system
-    await sendGmailNotification({
-      to: email.trim(),
-      replyTo: 'skandhayashu2906@gmail.com',
-      fromName: 'NITTE Student Portal',
-      subject: `[WELCOME TO NITTE PORTAL] Registration Successful - ${studentId}`,
-      html: `<h3>Welcome to NITTE Mentorship Portal</h3>
-             <p>Dear <strong>${name.trim()}</strong>,</p>
-             <p>Your student account has been successfully registered!</p>
-             <ul>
-               <li><strong>Student ID / USN:</strong> ${studentId}</li>
-               <li><strong>Registered Gmail:</strong> ${email.trim()}</li>
-               <li><strong>Department:</strong> ${studentBranch}</li>
-               <li><strong>Semester:</strong> ${semester}</li>
-             </ul>
-             <p>You can now log into your student dashboard using your Gmail address and password.</p>
-             <hr/>
-             <p><em>Dispatched automatically by NITTE Mentorship System</em></p>`,
-      recipientName: name.trim(),
-      eventType: 'STUDENT_REGISTERED'
-    });
-
-    res.status(201).json({
-      success: true,
-      student: {
-        id: studentId,
-        name: name.trim(),
-        email: email.trim(),
-        branch: studentBranch,
-        sem: semester
-      }
-    });
-  } catch (err) {
-    console.error('Error registering student:', err);
-    res.status(500).json({ error: 'Failed to register student account' });
-  }
+// Student enrollment is managed by Admin roster imports.
+app.post('/api/auth/register-student', (req, res) => {
+  res.status(403).json({ error: 'Student accounts are created through Admin roster import. Contact your college administrator.' });
 });
 
 // ADMIN BULK STUDENT ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
+app.post('/api/admin/assign-students-to-mentor', async (req, res) => {
+  try {
+    const { mentorId, studentIdsToAssign = [], studentIdsToUnassign = [] } = req.body;
+    if (!Array.isArray(studentIdsToAssign) || !Array.isArray(studentIdsToUnassign) || studentIdsToAssign.length + studentIdsToUnassign.length > 2000) return res.status(400).json({ error: 'Invalid student assignment list.' });
+    if (!(await query('SELECT id FROM mentors WHERE id = $1', [mentorId])).rowCount) return res.status(400).json({ error: 'Mentor not found.' });
+    if (studentIdsToAssign.length) await query('UPDATE students SET mentor_id = $1 WHERE id = ANY($2::varchar[])', [mentorId, studentIdsToAssign]);
+    if (studentIdsToUnassign.length) await query('UPDATE students SET mentor_id = NULL WHERE mentor_id = $1 AND id = ANY($2::varchar[])', [mentorId, studentIdsToUnassign]);
+    res.json({ success: true, count: studentIdsToAssign.length });
+  } catch { res.status(503).json({ error: 'Could not update mentor assignments.' }); }
+});
+app.post('/api/admin/delete-ro', async (req, res) => {
+  try { await query('DELETE FROM ros WHERE id = $1', [req.body.roId]); res.json({ success: true }); }
+  catch { res.status(503).json({ error: 'Could not remove this RO.' }); }
+});
+
 app.post('/api/admin/bulk-upload-students', async (req, res) => {
   const { students } = req.body;
   if (!Array.isArray(students) || students.length === 0) {
@@ -417,6 +417,7 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
   let failureCount = 0;
 
   for (let i = 0; i < students.length; i++) {
+    const s = students[i];
     if (!s || typeof s !== 'object') continue;
     const rawId = s.id || s.usn || s.studentId || s.USN || s['Student ID'] || s['Student USN'] || s['USN / ID'] || s['Roll No'] || s['Roll Number'] || s['ID'];
     const rawName = s.name || s.studentName || s.Name || s['Student Name'] || s['Full Name'] || s['Student'];
@@ -450,6 +451,7 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
 
     try {
       // Upsert into PostgreSQL students table
+      validatePassword(generatedPassword);
       await query(
         `INSERT INTO students (id, name, email, mentor_id, phone, branch, sem, password)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -460,11 +462,12 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
            sem = EXCLUDED.sem,
            password = EXCLUDED.password,
            mentor_id = COALESCE(EXCLUDED.mentor_id, students.mentor_id)`,
-        [studentId, name, email, mentorId, phone, branch, sem, generatedPassword]
+        [studentId, name, email, mentorId, phone, branch, sem, await hashPassword(generatedPassword)]
       );
+      await query('DELETE FROM auth_sessions WHERE user_id = $1 AND user_role = $2', [studentId, 'Student']);
 
       const portalBaseUrl = process.env.APP_URL || (req.headers.host ? `http://${req.headers.host}` : 'http://localhost:5173');
-      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}`;
 
       // Send automated onboarding credential email via Gmail SMTP
       const emailHtml = `<!DOCTYPE html>
@@ -570,7 +573,7 @@ app.post('/api/admin/bulk-upload-students', async (req, res) => {
                       </tr>
                     </table>
                     <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
-                      ⚡ Pre-fills your USN & password on the login page. Simply click "Sign In" to enter.
+                      ⚡ Pre-fills your USN on the login page. Simply click "Sign In" to enter.
                     </p>
                   </td>
                 </tr>
@@ -760,6 +763,7 @@ app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
 
     try {
       // Upsert into PostgreSQL mentors table
+      validatePassword(generatedPassword);
       await query(
         `INSERT INTO mentors (id, name, email, dept, class, password)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -769,11 +773,12 @@ app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
            dept = EXCLUDED.dept,
            class = EXCLUDED.class,
            password = EXCLUDED.password`,
-        [mentorId, name, email, dept, assignedClass, generatedPassword]
+        [mentorId, name, email, dept, assignedClass, await hashPassword(generatedPassword)]
       );
+      await query('DELETE FROM auth_sessions WHERE user_id = $1 AND user_role = $2', [mentorId, 'Mentor']);
 
       const portalBaseUrl = process.env.APP_URL || (req.headers.host ? `http://${req.headers.host}` : 'http://localhost:5173');
-      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+      const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}`;
 
       // Send automated onboarding credential email via Gmail SMTP with identical institutional theme
       const emailHtml = `<!DOCTYPE html>
@@ -880,7 +885,7 @@ app.post('/api/admin/bulk-upload-mentors', async (req, res) => {
                       </tr>
                     </table>
                     <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
-                      ⚡ Pre-fills your Faculty ID & password on the login page. Simply click "Sign In to Faculty Mentor Portal" to enter.
+                      ⚡ Pre-fills your Faculty ID on the login page. Simply click "Sign In to Faculty Mentor Portal" to enter.
                     </p>
                   </td>
                 </tr>
@@ -961,7 +966,7 @@ Your Login Credentials:
 👉 Click the direct link below to open the faculty portal (pre-fills your credentials):
 ${directLoginUrl}
 
-⚡ Note: The link will pre-fill your Faculty ID and password. Simply click "Sign In to Faculty Mentor Portal" to enter your dashboard.
+⚡ Note: The link will pre-fill your Faculty ID. Simply click "Sign In to Faculty Mentor Portal" to enter your dashboard.
 
 Portal: ${portalBaseUrl}
 NITTE Mentorship & Academic Support Desk
@@ -1027,31 +1032,21 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
 
   for (let i = 0; i < ros.length; i++) {
     const r = ros[i];
-    const rawId = r.id || r.roId || r['RO ID'] || r['Officer ID'] || r['Officer Code'] || r['RO Id'];
-    const rawName = r.name || r.roName || r['Officer Name'] || r['RO Name'] || r['Name'] || r['Full Name'];
-    const rawEmail = r.email || r.roEmail || r['Officer Email'] || r['Email'] || r['Gmail'] || r['Email Address'] || GMAIL_ADDRESS;
-    const region = r.region || r['Region'] || r['Jurisdiction'] || r['Category Jurisdiction'] || r['Category'] || r['Department'] || 'General Student Support';
-
-    if (!rawId || !rawName) {
-      results.push({
-        status: 'FAILED',
-        index: i + 1,
-        id: rawId || 'N/A',
-        name: rawName || 'N/A',
-        email: rawEmail || 'N/A',
-        reason: 'Missing required RO ID or Officer Name.'
-      });
+    let parsed;
+    try { parsed = normalizeRoRosterRow(r); }
+    catch (error) {
+      results.push({ status: 'FAILED', index: i + 1, reason: error.message });
       failureCount++;
       continue;
     }
-
-    const roId = String(rawId).trim().toUpperCase();
-    const name = String(rawName).trim();
-    const email = String(rawEmail).trim().toLowerCase();
-    const generatedPassword = r.password && String(r.password).trim() ? String(r.password).trim() : generateComputerPassword();
+    const { id: roId, name, email, region } = parsed;
+    const generatedPassword = parsed.password || generateComputerPassword();
 
     try {
+      const assigned = await query('SELECT id FROM ros WHERE LOWER(TRIM(region)) = LOWER(TRIM($1)) AND UPPER(id) <> UPPER($2)', [region, roId]);
+      if (assigned.rowCount) throw new Error('This issue category is already assigned to another RO.');
       // Upsert into PostgreSQL ros table
+      validatePassword(generatedPassword);
       await query(
         `INSERT INTO ros (id, name, email, region, password)
          VALUES ($1, $2, $3, $4, $5)
@@ -1060,8 +1055,9 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
            email = EXCLUDED.email,
            region = EXCLUDED.region,
            password = EXCLUDED.password`,
-        [roId, name, email, region, generatedPassword]
+        [roId, name, email, region, await hashPassword(generatedPassword)]
       );
+      await query('DELETE FROM auth_sessions WHERE user_id = $1 AND user_role = $2', [roId, 'RO']);
 
       // Send automated onboarding credential email via Gmail SMTP
       const emailHtml = `
@@ -1078,7 +1074,7 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
               <h3 style="margin: 0 0 12px 0; color: #065f46; font-size: 1rem;">🔐 Your RO Login Credentials:</h3>
               <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Portal URL:</strong> <a href="http://localhost:5173" style="color: #059669; font-weight: 600; text-decoration: underline;">http://localhost:5173</a></p>
               <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Officer ID / Code:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-weight: bold;">${roId}</code></p>
-              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Jurisdiction Category:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${region}</code></p>
+              <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Assigned Issue Category:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${region}</code></p>
               <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Official Gmail:</strong> <code style="background: #e2e8f0; padding: 2px 8px; border-radius: 4px;">${email}</code></p>
               <p style="margin: 6px 0; font-size: 0.95rem;"><strong>Generated Password:</strong> <code style="background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 1.05rem;">${generatedPassword}</code></p>
             </div>
@@ -1095,17 +1091,23 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
         </div>
       `;
 
+      let emailStatus = 'NOT_SENT_TEST_ADDRESS';
+      if (!email.endsWith('.invalid')) {
+      try {
       await sendGmailNotification({
         to: email,
         replyTo: GMAIL_ADDRESS,
         fromName: 'NITTE Admin Desk',
         subject: `[NITTE RELATIONSHIP OFFICER CREDENTIALS] Welcome ${name} - RO Account Onboarding (${roId})`,
         html: emailHtml,
-        text: `Welcome ${name}! Your Relationship Officer account has been registered. RO ID: ${roId}, Category Jurisdiction: ${region}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
+        text: `Welcome ${name}! Your Relationship Officer account has been registered. RO ID: ${roId}, Assigned Issue Category: ${region}, Email: ${email}, Password: ${generatedPassword}. Log in at http://localhost:5173`,
         eventType: 'BULK_RO_ONBOARDING'
       });
+      emailStatus = 'DELIVERED_GMAIL';
+      } catch { emailStatus = 'FAILED'; }
+      }
 
-      await logSystemEvent(`Bulk Upload: Registered relationship officer ${name} (${roId}, ${region}) with generated password and dispatched Gmail credentials to ${email}`, 'Admin', 'ADMIN');
+      await logSystemEvent(`Bulk Upload: Registered relationship officer ${name} (${roId}, ${region}); credential email status: ${emailStatus}.`, 'Admin', 'ADMIN');
 
       results.push({
         status: 'SUCCESS',
@@ -1115,7 +1117,7 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
         email,
         region,
         password: generatedPassword,
-        emailStatus: 'DELIVERED_GMAIL'
+        emailStatus
       });
       successCount++;
     } catch (err) {
@@ -1142,55 +1144,6 @@ app.post('/api/admin/bulk-upload-ros', async (req, res) => {
 });
 
 
-app.post('/api/auth/login', async (req, res) => {
-  const { id, email, password, role } = req.body;
-  const loginIdentifier = (email || id || '').trim();
-  if (!loginIdentifier || !password) {
-    return res.status(400).json({ error: 'Email / User ID and Password are required' });
-  }
-
-  if (role === 'Admin' || loginIdentifier.toUpperCase() === 'ADMIN' || loginIdentifier === 'skandhayashu2906@gmail.com') {
-    if (password === 'Admin@2026' || password.startsWith('Nit#') || password === 'Nitte@2026') {
-      return res.json({ success: true, user: { id: 'ADMIN', name: 'System Administrator', role: 'Admin', email: 'skandhayashu2906@gmail.com' } });
-    }
-  }
-
-  let tableName = role === 'RO' ? 'ros' : (role === 'Mentor' ? 'mentors' : 'students');
-
-  try {
-    const userRes = await query(
-      `SELECT * FROM ${tableName} WHERE UPPER(id) = UPPER($1) OR LOWER(email) = LOWER($1)`,
-      [loginIdentifier]
-    );
-
-    if (userRes.rowCount === 0) {
-      return res.status(404).json({ error: 'No account found with this Email or User ID.' });
-    }
-
-    // 1. Direct ID match first
-    let user = userRes.rows.find(u => u.id && u.id.toUpperCase() === loginIdentifier.toUpperCase());
-    
-    // 2. If multiple users share this email, find the one with matching password
-    if (!user) {
-      user = userRes.rows.find(u => u.password && (u.password === password.trim() || password.trim() === 'Nitte@2026'));
-    }
-
-    // 3. Fallback to first row for standard password failure
-    if (!user) {
-      user = userRes.rows[0];
-    }
-
-    if (user.password && user.password !== password.trim() && password.trim() !== 'Nitte@2026') {
-      return res.status(401).json({ error: 'Incorrect password. Please check your credentials.' });
-    }
-
-    await logSystemEvent(`User ${user.id} (${user.email}) logged in as ${role || 'User'}`, role || 'Student', user.id);
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, role: role || 'Student' } });
-  } catch (err) {
-    console.error('Error logging in:', err);
-    res.status(500).json({ error: 'Authentication failed' });
-  }
-});
 
 const issueActivity = createIssueActivityStore({
   query, getMemoryIssues: () => inMemoryIssues,
@@ -1211,6 +1164,15 @@ const issueActivity = createIssueActivityStore({
     if (!response.ok) throw new Error('Could not save ticket activity');
   }
 });
+
+app.use('/api/recordings', createRecordingsRouter({
+  repository: createRecordingRepository(query), auth: recordingAuth,
+  onSaved: row => issueActivity.append(row.issue_id, {
+    id: `recording:${row.id}`, eventType: 'MEETING_RECORDING_SAVED', actor: row.ro_id,
+    text: `Meeting recording saved to the database (${row.duration_seconds} seconds).`,
+    time: new Date(row.recorded_at).toISOString()
+  })
+}));
 
 app.get('/api/issues/:id/activity', async (req, res) => {
   try {
@@ -1248,7 +1210,7 @@ app.get('/api/students/:id/issue-limit', async (req, res) => {
 
 // 2. SUBMIT AN ISSUE (Two submissions per rolling seven-day period)
 app.post('/api/issues', async (req, res) => {
-  const { issueId: clientIssueId, studentId, category, description, priority, studentName } = req.body;
+  const { studentId, category, description, priority, studentName } = req.body;
   if (!studentId || !category || !description || !priority) {
     return res.status(400).json({ error: 'Missing required parameters' });
   }
@@ -1260,98 +1222,24 @@ app.post('/api/issues', async (req, res) => {
       return res.status(429).json({ code: 'GRIEVANCE_QUOTA_LOCKED', error: getQuotaLockMessage(quota), quota });
     }
 
-    const idx = ALL_CATEGORIES.indexOf(category);
-    const calculatedRoId = idx !== -1 ? `RO-${String(idx + 1).padStart(2, '0')}` : 'RO-01';
+    const assigned = await query('SELECT id FROM ros WHERE LOWER(TRIM(region)) = LOWER(TRIM($1)) ORDER BY id', [category]);
+    if (assigned.rows.length !== 1) return res.status(400).json({ error: 'This issue category must have exactly one imported Relationship Officer.' });
+    const calculatedRoId = assigned.rows[0].id;
 
     const initialStatus = 'Assigned to RO';
     const logText = `Issue submitted by ${studentName} and assigned to ${calculatedRoId}.`;
 
-    // Use the client-provided issueId if given (so we don't create a duplicate ticket),
-    // otherwise fall back to generating a new one.
-    const issueId = clientIssueId || `ISS-${Math.floor(100 + Math.random() * 900)}`;
+    // IDs are generated by the server so another ticket cannot be overwritten.
+    const issueId = `ISS-${randomUUID()}`;
     const timestamp = new Date().toISOString();
     const initialLogs = JSON.stringify([{ text: logText, time: timestamp }]);
 
-    // Always record in-memory so it can never be lost
-    const memoryIssue = {
-      id: issueId,
-      studentId,
-      student_id: studentId,
-      studentName,
-      student_name: studentName,
-      category,
-      description,
-      priority,
-      status: initialStatus,
-      roId: calculatedRoId,
-      ro_id: calculatedRoId,
-      createdAt: timestamp,
-      created_at: timestamp,
-      logs: [{ text: logText, time: timestamp }]
-    };
-    inMemoryIssues.unshift(memoryIssue);
-
-    // Dual-sync: 1. PostgreSQL pool query
-    try {
       await query(
         `INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (id) DO UPDATE SET
-           status = EXCLUDED.status,
-           description = EXCLUDED.description,
-           logs = EXCLUDED.logs`,
+`,
         [issueId, studentId, studentName, category, description, priority, initialStatus, calculatedRoId, timestamp, initialLogs]
       );
-    } catch (pgErr) {
-      console.warn('[Server issues] Direct PG insert notice, falling back to Supabase REST:', pgErr.message);
-    }
-
-    // Dual-sync: 2. Direct Supabase Cloud REST API
-    try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      // Ensure student exists in Supabase students table so FK constraint never fails
-      await fetch(`${SUPABASE_URL}/rest/v1/students`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=ignore-duplicates'
-        },
-        body: JSON.stringify({
-          id: studentId,
-          name: studentName || 'Student',
-          email: `${String(studentId).toLowerCase()}@nitte.edu.in`,
-          branch: 'CSE',
-          sem: 6,
-          password: 'Nit#Stu2026'
-        })
-      }).catch(() => {});
-
-      await fetch(`${SUPABASE_URL}/rest/v1/issues`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: issueId,
-          student_id: studentId,
-          student_name: studentName,
-          category,
-          description,
-          priority,
-          status: initialStatus,
-          ro_id: calculatedRoId,
-          created_at: timestamp,
-          logs: [{ text: logText, time: timestamp }]
-        })
-      });
-    } catch (restErr) {
-      console.warn('[Server issues] Supabase REST sync notice:', restErr.message);
-    }
 
     await logSystemEvent(`Student ${studentName} submitted issue: ${category} (${initialStatus})`, 'Student', studentId);
 
@@ -1413,7 +1301,7 @@ app.post('/api/issues', async (req, res) => {
 
 // 3. SCHEDULE / RESCHEDULE A MEETING (RO ASSIGNED)
 app.post('/api/meetings', async (req, res) => {
-  const { id: requestedMeetingId, isReschedule: requestedReschedule, issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
+  const { id: requestedMeetingId, scheduleEventId, isReschedule: requestedReschedule, issueId, studentId, studentName, roId, date, time, mode, location, notes, discussionSummary, actionItems, reassignFeedback } = req.body;
   
   // Resolve valid studentId from parameter or fallback to issues table
   let validStudentId = studentId;
@@ -1448,15 +1336,6 @@ app.post('/api/meetings', async (req, res) => {
   const meetId = requestedMeetingId || existingMemMeet?.id || `MEET-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
   let isReschedule = Boolean(existingMemMeet || requestedReschedule);
 
-  let logMessage = isReschedule
-    ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`
-    : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} at ${meetLoc}`;
-  if (cleanFeedback) {
-    logMessage += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
-  } else if (cleanSummary) {
-    logMessage += ` | [LOGGED DISCUSSION MINUTES]: "${cleanSummary}"`;
-  }
-
   try {
     try {
       // Ensure student_id exists in database or fallback to issue's student_id
@@ -1472,7 +1351,6 @@ app.post('/api/meetings', async (req, res) => {
       const existingMeet = await query(`SELECT id FROM meetings WHERE UPPER(issue_id) = UPPER($1)`, [issueId]);
       if (existingMeet.rowCount > 0 && !isReschedule) {
         isReschedule = true;
-        logMessage = logMessage.replace('Meeting scheduled', 'Meeting rescheduled / reassigned');
       }
       const issueStatusCheck = await query(`SELECT status, logs FROM issues WHERE UPPER(id) = UPPER($1)`, [issueId]);
 
@@ -1496,11 +1374,11 @@ app.post('/api/meetings', async (req, res) => {
       console.warn('[Server] Direct PG meeting insert notice (using Supabase & in-memory):', pgErr.message);
     }
 
-    await issueActivity.append(issueId, {
-      id: `schedule:${meetId}:${timestamp}`,
-      eventType: isReschedule ? 'MEETING_RESCHEDULED' : 'MEETING_SCHEDULED',
-      text: logMessage, time: timestamp, actor: roId || 'RO'
-    }, 'Meeting Scheduled');
+    const eventId = /^schedule:[a-f0-9-]{36}$/i.test(String(scheduleEventId || '')) ? scheduleEventId : `schedule:${randomUUID()}`;
+    await issueActivity.append(issueId, createMeetingScheduleEvent({
+      id: eventId, timestamp, isReschedule, meetingId: meetId, date, time,
+      mode: mode || 'Offline', location: meetLoc, roId, feedback: cleanFeedback, discussionMinutes: cleanSummary
+    }), 'Meeting Scheduled');
     await logSystemEvent(`RO ${roId} ${isReschedule ? 'rescheduled' : 'scheduled'} a meeting with Student ${studentName} for ${date} at ${time}`, 'RO', roId);
 
     // Dynamically resolve student email from database
@@ -1763,26 +1641,18 @@ app.get('/api/category-videos', async (req, res) => {
 
 app.put('/api/category-videos/:category', async (req, res) => {
   const rawCat = decodeURIComponent(req.params.category || '').trim();
-  const { title, videoUrl, video_url, description, roId } = req.body;
+  const { title, videoUrl, video_url, description, roId, noVideo } = req.body;
   const finalCat = (req.body.category || rawCat).trim();
-  const finalVideoUrl = videoUrl || video_url;
-
-  if (!finalVideoUrl) {
-    return res.status(400).json({ error: 'videoUrl is required' });
-  }
+  let setting;
+  try { setting = getCategoryVideoUpdate({ videoUrl, video_url, noVideo }); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  const finalVideoUrl = setting.videoUrl;
 
   try {
     // 1. Authorization check: Verify that RO is authorized to edit video for this category
     if (roId && roId !== 'ADMIN') {
       const cleanRoId = String(roId).trim().toUpperCase();
-      const catIdx = ALL_CATEGORIES.indexOf(finalCat);
-      const expectedRoId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : null;
-      
-      const isDesignatedRo = Boolean(expectedRoId && (
-        cleanRoId === expectedRoId ||
-        cleanRoId.includes(expectedRoId) ||
-        expectedRoId.includes(cleanRoId)
-      ));
+      // Authorization follows the imported category assignment, never an RO ID position.
 
       // Also check if this RO has assigned issues in this specific category or if RO region matches
       const roCheck = await query(
@@ -1795,7 +1665,7 @@ app.put('/api/category-videos/:category', async (req, res) => {
         [cleanRoId, `RO-${cleanRoId}`, finalCat, `%${finalCat}%`]
       );
 
-      if (!isDesignatedRo && roCheck.rowCount === 0 && regionCheck.rowCount === 0) {
+      if (roCheck.rowCount === 0 && regionCheck.rowCount === 0) {
         return res.status(403).json({
           error: `Access Denied: Relationship Officer (${roId}) is only permitted to update solution videos for their own assigned issues and categories.`
         });
@@ -1846,8 +1716,8 @@ app.put('/api/category-videos/:category', async (req, res) => {
       `, [matchedDept, title || `${matchedDept} Guidance Video`, finalVideoUrl, description || '', roId || 'RO']);
     }
 
-    await logSystemEvent(`RO ${roId || 'RO'} updated solution video for category "${finalCat}"`, 'RO', roId || 'RO');
-    res.json({ success: true, category: finalCat });
+    await logSystemEvent(`RO ${roId || 'RO'} ${setting.noVideo ? 'marked No Video Available' : 'updated solution video'} for category "${finalCat}"`, 'RO', roId || 'RO');
+    res.json({ success: true, category: finalCat, videoUrl: finalVideoUrl, noVideo: setting.noVideo });
   } catch (err) {
     console.error('Error updating category video:', err);
     res.status(500).json({ error: 'Failed to update category video' });
@@ -2183,18 +2053,17 @@ app.post('/api/mentor-feedbacks', async (req, res) => {
   }
 });
 
-// 11. RESET SYSTEM DATABASE (Drop + Re-seed)
-app.post('/api/reset', async (req, res) => {
-  try {
-    await dropAllTables();
-    await initDb();
-    res.json({ success: true, message: 'Database reset to mock defaults successfully.' });
-  } catch (err) {
-    console.error('Error resetting database:', err);
-    res.status(500).json({ error: 'Failed to reset database' });
-  }
-});
-
+await initDb();
+const securityClient = await getPool().connect();
+try {
+  await securityClient.query('BEGIN');
+  await initializeSecurity((sql, params) => securityClient.query(sql, params));
+  await securityClient.query('COMMIT');
+} catch (error) {
+  await securityClient.query('ROLLBACK');
+  throw error;
+} finally { securityClient.release(); }
+if (process.env.DISABLE_EMAIL !== '1') startImapListener();
 app.listen(PORT, () => {
   console.log(`Express API Server running on port ${PORT}`);
 });

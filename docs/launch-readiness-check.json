@@ -1,0 +1,172 @@
+{
+  "assessedAt": "2026-10-31T10:39:35.130Z",
+  "method": "Read-only metadata queries and anonymous GET requests; no load testing or mutation requests.",
+  "tableSecurity": [
+    {
+      "table_name": "app_settings",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "email_logs",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "issues",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "meeting_recordings",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "meetings",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "mentors",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "ros",
+      "rls_enabled": true
+    },
+    {
+      "table_name": "students",
+      "rls_enabled": true
+    }
+  ],
+  "policies": [],
+  "publicRolePrivileges": [
+    {
+      "role": "authenticated",
+      "table": "app_settings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "email_logs",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "issues",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "meeting_recordings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "meetings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "mentors",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "ros",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "authenticated",
+      "table": "students",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "app_settings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "email_logs",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "issues",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "meeting_recordings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "meetings",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "mentors",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "ros",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    },
+    {
+      "role": "anon",
+      "table": "students",
+      "can_select": false,
+      "can_insert": false,
+      "can_update": false,
+      "can_delete": false
+    }
+  ],
+  "anonymousDbState": {
+    "status": 401
+  }
+}

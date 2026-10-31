@@ -7,6 +7,7 @@
     "dev": "concurrently \"node server/server.js\" \"vite\"",
     "dev:frontend": "vite",
     "server": "node server/server.js",
+    "admin:add": "node scripts/add-admin.mjs",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

@@ -7,14 +7,14 @@ import {
 import { NitteLogo } from '../components/NitteLogo';
 
 export const LoginPage = ({ onLoginSuccess }) => {
-  const { db, loginUser } = useContext(DatabaseContext);
+  const { loginUser } = useContext(DatabaseContext);
 
   // Selected Role: 'Admin', 'Student', 'Mentor', 'RO' (Default to Admin)
   const [selectedRole, setSelectedRole] = useState('Admin');
 
   // Credentials Form State (Default to Admin)
-  const [identifier, setIdentifier] = useState('admin@nitte.edu.in');
-  const [password, setPassword] = useState('Admin@2026');
+  const [identifier, setIdentifier] = useState('ADMIN');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -22,41 +22,16 @@ export const LoginPage = ({ onLoginSuccess }) => {
   const [capsLockOn, setCapsLockOn] = useState(false);
   const [isTypingPassword, setIsTypingPassword] = useState(false);
 
-  // Handle URL query parameters for One-Click Direct Sign-In (from Roster Onboarding Gmail)
+  // Links can prefill an ID and role, never a password.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const roleParam = params.get('role');
-      const idParam = params.get('id') || params.get('user') || params.get('usn') || params.get('email');
-      const pwdParam = params.get('pwd') || params.get('password') || params.get('key');
-
-      if (idParam || pwdParam || roleParam) {
-        let targetRole = 'Student';
-        if (roleParam) {
-          const matched = ['Student', 'Mentor', 'RO', 'Admin'].find(
-            r => r.toLowerCase() === roleParam.toLowerCase()
-          );
-          if (matched) targetRole = matched;
-        }
-
-        setSelectedRole(targetRole);
-
-        const cleanId = idParam ? decodeURIComponent(idParam).trim() : '';
-        const cleanPwd = pwdParam ? decodeURIComponent(pwdParam).trim() : '';
-
-        if (cleanId) setIdentifier(cleanId);
-        if (cleanPwd) setPassword(cleanPwd);
-
-        // If credentials are provided from the invitation link:
-        if (cleanId && cleanPwd) {
-          const targetRoleLabel = targetRole === 'Mentor' ? 'Faculty Mentor' : targetRole;
-          setSuccessMsg(`⚡ Credentials pre-filled for ${cleanId}. Please click "Sign In to ${targetRoleLabel} Portal" below to access your dashboard.`);
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading URL login parameters:', e);
-    }
+    const params = new URLSearchParams(window.location.search);
+    const role = ['Student', 'Mentor', 'RO', 'Admin'].find(item => item.toLowerCase() === (params.get('role') || '').toLowerCase());
+    if (role) setSelectedRole(role);
+    const id = params.get('id') || params.get('email') || params.get('usn');
+    if (id) setIdentifier(id);
+    for (const key of ['pwd', 'password', 'key']) params.delete(key);
+    const query = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
   }, []);
 
   // Role details mapping
@@ -76,7 +51,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
     Student: {
       label: 'Student (Mentee)',
       title: 'Student Mentorship Portal',
-      subtitle: 'Sign in with your institutional credentials to submit issues and track mentorship.',
+      subtitle: 'Sign in with your institutional credentials to submit issues and track mentorship. Accounts are provided by your college administrator.',
       icon: GraduationCap,
       color: '#2563eb',
       bg: '#eff6ff',
@@ -107,26 +82,18 @@ export const LoginPage = ({ onLoginSuccess }) => {
       border: '#fde68a',
       defaultId: 'RO-01',
       idPlaceholder: 'e.g. RO-01 or officer@nitte.edu.in',
-      idLabel: 'Relationship Officer ID (RO-01 to RO-49) / Email *'
+      idLabel: 'Relationship Officer ID / Email *'
     }
   };
 
-  // When role changes, set appropriate default credentials
+  // A role selection never supplies a password or grants access.
   const handleRoleSelect = (role) => {
     setSelectedRole(role);
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (role === 'Admin') {
-      setIdentifier('admin@nitte.edu.in');
-      setPassword('Admin@2026');
-    } else if (role === 'RO') {
-      setIdentifier('RO-01');
-      setPassword('Nit#Ro2026');
-    } else {
-      setIdentifier('');
-      setPassword('');
-    }
+    setIdentifier(role === 'Admin' ? 'ADMIN' : '');
+    setPassword('');
   };
 
   // Track Caps Lock and typing status on password input
@@ -172,7 +139,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
     setSuccessMsg('');
 
     try {
-      const res = await loginUser(identifier.trim(), password.trim(), selectedRole);
+      const res = await loginUser(identifier.trim(), password, selectedRole);
       if (res.success) {
         const targetRole = res.user.role || selectedRole;
         setSuccessMsg(`Welcome, ${res.user.name || identifier}! Redirecting to ${targetRole} Dashboard...`);
@@ -467,7 +434,6 @@ export const LoginPage = ({ onLoginSuccess }) => {
                     }}
                     onKeyDown={handlePasswordKeyDown}
                     onKeyUp={handlePasswordKeyUp}
-                    onBlur={() => setIsTypingPassword(false)}
                     placeholder="Enter account password..."
                     style={{
                       width: '100%',

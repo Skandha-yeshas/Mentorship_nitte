@@ -1,19 +1,34 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl } from '../context/DatabaseContext';
+import { DatabaseContext, getYoutubeEmbedUrl } from '../context/DatabaseContext';
 import { Inbox, CheckCircle2, AlertTriangle, Calendar, User, Search, RefreshCw, Send, RotateCcw, Video, Mic, MicOff, VideoOff, Square, Shield, Play, Camera, AlertCircle, X, Download, PhoneOff, Volume2, VolumeX, FileText, MessageSquare } from 'lucide-react';
 import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtcService';
 import { CompositeMeetingRecorder } from '../utils/compositeRecorder';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 import SelfHelpManagerModal from '../components/SelfHelpManagerModal';
+import RecordingSaveStatus from '../components/RecordingSaveStatus';
+import { isStoredRecording, recordingExtension } from '../../shared/meetingRecordings.js';
+import { getMeetingReassignmentCount, MEETING_REASSIGNMENT_LIMIT } from '../../shared/meetingReassignments.js';
+import { resolveCategoryGuidance } from '../../shared/categoryGuidance.js';
+import { getRoPriorityRank, sortRoIssuesByPriority, getRoIssueReadKey, getRoMeetingReadKey, RO_SEEN_STORAGE_KEY, getRoBrowserStorage, readRoSeenEntries, markRoItemsSeen } from '../utils/roInbox';
 import { getUniqueMeetings, getRoMeetingQueue, getMeetingIssueId, getRoMeetingState, hasRoMeetingFeedback, isRoMeetingAwaitingFeedback } from '../utils/roMeetings';
 
 export const RODashboard = ({ roId }) => {
-  const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, updateCategoryVideo, submitRoMeetingFeedback } = useContext(DatabaseContext);
+  const { db, updateMeetingStatus, resolveIssue, escalateIssue, scheduleRoMeeting, saveMeetingRecording, loadMeetingRecording, updateCategoryVideo, submitRoMeetingFeedback } = useContext(DatabaseContext);
 
   // RO filters
   const [statusFilter, setStatusFilter] = useState('All'); // 'All', 'Assigned to RO', 'Meeting Scheduled', 'Re-opened by Student', 'Resolved', 'Escalated'
   const [selectedIssueId, setSelectedIssueId] = useState(null);
+  const [seenItems, setSeenItems] = useState(() => readRoSeenEntries(getRoBrowserStorage()));
+
+  useEffect(() => {
+    const syncSeenItems = event => {
+      if (event.key !== RO_SEEN_STORAGE_KEY) return;
+      setSeenItems(previous => ({ ...previous, ...readRoSeenEntries(getRoBrowserStorage()) }));
+    };
+    window.addEventListener('storage', syncSeenItems);
+    return () => window.removeEventListener('storage', syncSeenItems);
+  }, []);
 
   // Search query
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,18 +53,25 @@ export const RODashboard = ({ roId }) => {
   const [managerVideoTitle, setManagerVideoTitle] = useState('');
   const [managerVideoUrl, setManagerVideoUrl] = useState('');
   const [managerVideoDesc, setManagerVideoDesc] = useState('');
+  const [managerNoVideo, setManagerNoVideo] = useState(false);
   const [managerSaveSuccess, setManagerSaveSuccess] = useState(false);
   const [managerTargetIssueId, setManagerTargetIssueId] = useState(null);
 
   // Online Meeting Video & Auto-Recorder Modal State
   const [showOnlineMeetingModal, setShowOnlineMeetingModal] = useState(false);
   const [activeMeetingIssueId, setActiveMeetingIssueId] = useState(null);
+  const activeMeetingIssueRef = useRef(null);
+  activeMeetingIssueRef.current = activeMeetingIssueId;
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [mediaPermissionState, setMediaPermissionState] = useState('idle'); // 'idle' | 'requesting' | 'granted' | 'denied'
   const [mediaPermissionError, setMediaPermissionError] = useState('');
   const [playingRecording, setPlayingRecording] = useState(null);
+  const [recordingPlaybackError, setRecordingPlaybackError] = useState('');
+  const [playbackRevision, setPlaybackRevision] = useState(0);
+  const [recordingUploads, setRecordingUploads] = useState([]);
+  const pendingRecordingsRef = useRef(new Map());
 
   // WebRTC Peer Connection States & References
   const [remoteStream, setRemoteStream] = useState(null);
@@ -58,9 +80,8 @@ export const RODashboard = ({ roId }) => {
   const [isStudentMicMuted, setIsStudentMicMuted] = useState(false);
   const [isStudentCameraOff, setIsStudentCameraOff] = useState(false);
   const localStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const compositeRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
   const webrtcSessionRef = useRef(null);
   const isEndingMeetingRef = useRef(false);
 
@@ -82,6 +103,8 @@ export const RODashboard = ({ roId }) => {
   const [isSubmittingEscalate, setIsSubmittingEscalate] = useState(false);
 
   // Schedule meeting form states
+  const meetingScheduleSubmittingRef = useRef(false);
+  const [isSchedulingMeeting, setIsSchedulingMeeting] = useState(false);
   const [meetDate, setMeetDate] = useState('');
   const [meetTime, setMeetTime] = useState('10:00');
   const [meetMode, setMeetMode] = useState('Offline');
@@ -113,6 +136,8 @@ export const RODashboard = ({ roId }) => {
   const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const requestMediaPermissions = async () => {
+    const requestedRoom = activeMeetingIssueRef.current;
+    if (!requestedRoom) return;
     setMediaPermissionState('requesting');
     setMediaPermissionError('');
     try {
@@ -163,6 +188,10 @@ export const RODashboard = ({ roId }) => {
         });
       }
 
+      if (activeMeetingIssueRef.current !== requestedRoom || isEndingMeetingRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
       localStreamRef.current = stream;
       setLocalStream(stream);
       setMediaPermissionState('granted');
@@ -189,6 +218,7 @@ export const RODashboard = ({ roId }) => {
             role: 'ro',
             localStream: stream,
             onRemoteStream: (remStream) => {
+              remoteStreamRef.current = remStream;
               setRemoteStream(remStream);
               if (compositeRecorderRef.current) {
                 compositeRecorderRef.current.setRemoteStream(remStream);
@@ -198,7 +228,10 @@ export const RODashboard = ({ roId }) => {
               setPeerConnected(Boolean(status.connected));
             },
             onRemoteMediaState: (state) => {
-              if (typeof state.video === 'boolean') setIsStudentCameraOff(!state.video);
+              if (typeof state.video === 'boolean') {
+                setIsStudentCameraOff(!state.video);
+                compositeRecorderRef.current?.setRemoteCamOff(!state.video);
+              }
               if (typeof state.audio === 'boolean') setIsStudentMicMuted(!state.audio);
             },
             onMeetingEnded: () => {
@@ -211,10 +244,10 @@ export const RODashboard = ({ roId }) => {
 
       // Initialize CompositeMeetingRecorder to capture BOTH RO and Student side-by-side
       try {
-        if (compositeRecorderRef.current) {
-          try { compositeRecorderRef.current.stop(); } catch (e) {}
-        }
-        compositeRecorderRef.current = new CompositeMeetingRecorder({
+        if (compositeRecorderRef.current?.isRecording) {
+          compositeRecorderRef.current.setLocalStream(stream);
+        } else {
+          compositeRecorderRef.current = new CompositeMeetingRecorder({
           localStream: stream,
           localLabel: ro?.name || 'Relationship Officer',
           remoteLabel: selectedIssue ? (selectedIssue.studentName || 'Student') : 'Student',
@@ -225,11 +258,14 @@ export const RODashboard = ({ roId }) => {
           height: 540,
           fps: 20
         });
-        compositeRecorderRef.current.start();
+          compositeRecorderRef.current.setRemoteStream(remoteStreamRef.current);
+          compositeRecorderRef.current.start();
+        }
       } catch (recErr) {
         console.warn('CompositeMeetingRecorder error:', recErr);
       }
     } catch (err) {
+      if (activeMeetingIssueRef.current !== requestedRoom || isEndingMeetingRef.current) return;
       console.warn('RO camera/mic permission error fallback:', err);
       const fallbackStream = createFallbackMediaStream({
         label: ro?.name || 'Relationship Officer',
@@ -309,7 +345,7 @@ export const RODashboard = ({ roId }) => {
   // Auto-recording timer & media cleanup effect
   useEffect(() => {
     let timer;
-    if (showOnlineMeetingModal) {
+    if (activeMeetingIssueId) {
       timer = setInterval(() => {
         setRecordingSeconds(prev => prev + 1);
       }, 1000);
@@ -318,7 +354,7 @@ export const RODashboard = ({ roId }) => {
       setRecordingSeconds(0);
       setMediaPermissionState('idle');
       if (compositeRecorderRef.current) {
-        try { compositeRecorderRef.current.stop(); } catch(e) {}
+        compositeRecorderRef.current.stop().catch(() => {});
         compositeRecorderRef.current = null;
       }
       if (webrtcSessionRef.current) {
@@ -331,15 +367,12 @@ export const RODashboard = ({ roId }) => {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch(e) {}
       }
     }
     return () => {
       clearInterval(timer);
       if (compositeRecorderRef.current) {
-        try { compositeRecorderRef.current.stop(); } catch(e) {}
+        compositeRecorderRef.current.stop().catch(() => {});
         compositeRecorderRef.current = null;
       }
       if (webrtcSessionRef.current) {
@@ -353,11 +386,8 @@ export const RODashboard = ({ roId }) => {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
       }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch(e) {}
-      }
     };
-  }, [showOnlineMeetingModal]);
+  }, [activeMeetingIssueId]);
 
   const formatTimer = (totalSecs) => {
     const mins = String(Math.floor(totalSecs / 60)).padStart(2, '0');
@@ -375,17 +405,14 @@ export const RODashboard = ({ roId }) => {
   const ro = (db.users?.ros || []).find(r => r.id === roId) || db.users?.ros?.[0] || { id: 'RO-01', name: 'Relationship Officer' };
 
   // Issues assigned to this RO
-  const roIssues = (db.issues || []).filter(i => (i.roId === ro.id || i.ro_id === ro.id));
+  const roIssues = sortRoIssuesByPriority((db.issues || []).filter(i => (i.roId === ro.id || i.ro_id === ro.id)));
   const activeRoIssues = roIssues.filter(i => i.status !== 'Resolved' && i.status !== 'Closed');
 
   // Categories belonging strictly to this RO's assigned issues & assigned region
   const myAssignedIssueCategories = Array.from(new Set([
     ...roIssues.map(i => i.category),
     ro?.region,
-    (() => {
-      const num = parseInt(String(ro?.id || '').replace('RO-', ''), 10);
-      return (!isNaN(num) && num > 0 && num <= ALL_CATEGORIES.length) ? ALL_CATEGORIES[num - 1] : null;
-    })()
+    ro?.category
   ].filter(Boolean)));
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
@@ -437,19 +464,18 @@ export const RODashboard = ({ roId }) => {
     return matchesSearch;
   });
 
-  const selectedIssue = db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
+  const selectedIssue = roIssues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
+  const selectedIssueReadKey = getRoIssueReadKey(ro.id, selectedIssue);
+  const selectedMeetingReadKeys = uniqueMeetings
+    .filter(meeting => String(meeting.roId || meeting.ro_id || '').trim().toUpperCase() === String(ro.id).trim().toUpperCase() &&
+      getMeetingIssueId(meeting) === String(selectedIssue?.id || selectedIssue?.issue_id || '').trim().toUpperCase())
+    .map(meeting => getRoMeetingReadKey(ro.id, meeting)).join('\n');
 
-  const getLogText = (l) => {
-    if (!l) return '';
-    if (typeof l === 'string') {
-      if (l.trim().startsWith('{') && l.includes('"text"')) {
-        try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) { }
-      }
-      return l;
-    }
-    if (typeof l === 'object' && l.text) return String(l.text);
-    return String(l);
-  };
+  // Only opening the issue detail marks it read; polling and hovering do not.
+  useEffect(() => {
+    if (!selectedIssueReadKey) return;
+    setSeenItems(previous => markRoItemsSeen(previous, [selectedIssueReadKey, ...selectedMeetingReadKeys.split('\n')], getRoBrowserStorage()));
+  }, [selectedIssueReadKey, selectedMeetingReadKeys]);
 
   // Find if selected issue has a meeting scheduled & count reassignments
   const rawActiveMeeting = selectedIssue ? uniqueMeetings.find(m => (m.issueId || m.issue_id)?.trim().toUpperCase() === (selectedIssue.id || selectedIssue.issue_id)?.trim().toUpperCase()) : null;
@@ -472,12 +498,8 @@ export const RODashboard = ({ roId }) => {
     endedByRo: false
   } : null);
   const meetingState = getRoMeetingState(activeMeeting, selectedIssue);
-  const meetingReassignLogs = selectedIssue ? (selectedIssue.logs || []).filter(l => {
-    const txt = getLogText(l).toLowerCase();
-    return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
-  }) : [];
-  const meetingReassignCount = meetingReassignLogs.length;
-  const isReassignLimitReached = Boolean(activeMeeting && meetingReassignCount >= 2);
+  const meetingReassignCount = getMeetingReassignmentCount(selectedIssue, activeMeeting);
+  const isReassignLimitReached = Boolean(activeMeeting && meetingReassignCount >= MEETING_REASSIGNMENT_LIMIT);
 
   // Check if meeting date has passed without being conducted (Missed / Expired Meeting)
   const isMeetingExpired = (() => {
@@ -549,6 +571,10 @@ export const RODashboard = ({ roId }) => {
   };
 
   const handleLaunchOnlineMeeting = (directMeet = null, directIssue = null) => {
+    if (activeMeetingIssueId) {
+      alert('End the current meeting before starting another meeting.');
+      return;
+    }
     const meetToUse = directMeet || activeMeeting;
     const issueToUse = directIssue || selectedIssue || (meetToUse ? (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (meetToUse.issueId || meetToUse.issue_id)?.toUpperCase()) : null);
     if (getRoMeetingState(meetToUse, issueToUse) !== 'scheduled') return;
@@ -595,96 +621,90 @@ export const RODashboard = ({ roId }) => {
     setShowMeetingFeedbackModal(true);
   };
 
+  const updateRecordingUpload = (id, details) => setRecordingUploads(previous => {
+    const current = previous.find(upload => upload.id === id) || { id };
+    return [{ ...current, ...details }, ...previous.filter(upload => upload.id !== id)];
+  });
+
+  const uploadPendingRecording = async id => {
+    const pending = pendingRecordingsRef.current.get(id);
+    if (!pending || pending.uploading) return;
+    pending.uploading = true;
+    updateRecordingUpload(id, { issueId: pending.issueId, status: 'saving', hasBlob: true, message: 'Keep this page open until the upload finishes.' });
+    try {
+      await saveMeetingRecording(pending.meetingId, pending.issueId, pending.durationSeconds, pending.blob, pending.summary, { recordingId: id });
+      pendingRecordingsRef.current.delete(id);
+      updateRecordingUpload(id, { status: 'saved', hasBlob: false, message: 'The video is available in the recording archive and will remain after refresh.' });
+      setTimeout(() => setRecordingUploads(previous => previous.filter(upload => upload.id !== id)), 8000);
+    } catch (error) {
+      updateRecordingUpload(id, { status: 'error', hasBlob: true, message: error.message || 'Upload failed. Retry or download the recording before leaving this page.' });
+    } finally { pending.uploading = false; }
+  };
+
+  const downloadPendingRecording = id => {
+    const pending = pendingRecordingsRef.current.get(id);
+    if (!pending?.blob) return;
+    const url = URL.createObjectURL(pending.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `recording-${pending.issueId}.${recordingExtension(pending.blob.type)}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  const openRecording = async recording => {
+    setRecordingPlaybackError('');
+    setPlayingRecording(recording);
+    try {
+      const saved = await loadMeetingRecording(recording.id);
+      setRecordingPlaybackError('');
+      setPlayingRecording(current => current?.id === recording.id ? saved : current);
+      setPlaybackRevision(previous => previous + 1);
+    } catch (error) {
+      setRecordingPlaybackError(error.message || 'Could not open the saved recording.');
+    }
+  };
+
   const handleStopAndSaveRecording = async () => {
     if (isEndingMeetingRef.current) return;
     isEndingMeetingRef.current = true;
+    const targetIssueId = activeMeetingIssueId || selectedIssue?.id;
+    const currentIssue = roIssues.find(issue => getCanonicalMeetingRoomId(issue.id || issue.issue_id) === getCanonicalMeetingRoomId(targetIssueId));
+    if (!currentIssue) { setShowOnlineMeetingModal(false); setActiveMeetingIssueId(null); return; }
+    const currentMeet = uniqueMeetings.find(meeting => getMeetingIssueId(meeting) === String(currentIssue.id || currentIssue.issue_id).trim().toUpperCase()) || activeMeeting;
+    const meetingId = currentMeet?.id || currentMeet?.issueId || `MEET-${currentIssue.id}`;
+    const recordingId = `REC-${crypto.randomUUID()}`;
 
-    // 1. Resolve issue & meeting references safely
-    const currentIssue = selectedIssue || db.issues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
-    if (!currentIssue) {
-      setShowOnlineMeetingModal(false);
-      return;
+    // Detach and stop the recorder before hiding the stage triggers React cleanup.
+    const recorder = compositeRecorderRef.current;
+    compositeRecorderRef.current = null;
+    const completion = recorder ? recorder.stop() : Promise.reject(new Error('No video was captured for this meeting. The recording was not saved.'));
+    updateRecordingUpload(recordingId, { issueId: currentIssue.id, status: 'saving', hasBlob: false, message: 'Finalizing the video file…' });
+    if (webrtcSessionRef.current) {
+      try { webrtcSessionRef.current.sendSignal({ type: 'meeting-ended' }); } catch { }
     }
-    const currentMeet = activeMeeting || (db.meetings || []).find(m => (m.issueId || m.issue_id)?.toUpperCase() === (currentIssue.id || currentIssue.issue_id)?.toUpperCase()) || { id: `MEET-${currentIssue.id}`, issueId: currentIssue.id };
-
-    const finalSecs = Math.max(recordingSeconds, 5);
-    const formattedDuration = formatTimer(finalSecs);
-    let finalVideoUrl = `https://nitte-cloud-storage.edu/recordings/rec_${currentIssue.id}_${Date.now()}.mp4`;
-
-    // 2. Prepare feedback data and IMMEDIATELY popup the Post-Meeting Discussion Form
-    setPostMeetingData({
-      meetingId: currentMeet.id || currentMeet.issueId,
-      issueId: currentIssue.id,
-      studentName: currentIssue.studentName || 'Student',
-      studentId: currentIssue.studentId || '',
-      category: currentIssue.category || 'General',
-      durationText: formattedDuration
-    });
+    updateMeetingStatus(meetingId, 'Completed');
+    setPostMeetingData({ meetingId, issueId: currentIssue.id, studentName: currentIssue.studentName || 'Student', studentId: currentIssue.studentId || '', category: currentIssue.category || 'General', durationText: formatTimer(recordingSeconds) });
     setDiscussionSummary('');
     setActionItems('');
     setMeetingOutcome(currentIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
     setFollowUpNeeded(false);
-
-    // Mark ended before recording finalization so the room cannot be reopened.
-    updateMeetingStatus(currentMeet.id || currentMeet.issueId, 'Completed');
-
-    // 3. Immediately close meeting stage & open feedback modal (Zero UI delay)
     setShowOnlineMeetingModal(false);
     setActiveMeetingIssueId(null);
     setShowMeetingFeedbackModal(true);
-    setMediaPermissionState('idle');
-
-    // 4. Finalize CompositeMeetingRecorder in background
-    if (compositeRecorderRef.current) {
-      try {
-        const result = await compositeRecorderRef.current.stop();
-        if (result && result.videoUrl) {
-          finalVideoUrl = result.videoUrl;
-        }
-      } catch (e) {
-        console.warn('CompositeMeetingRecorder stop error:', e);
-      }
-      compositeRecorderRef.current = null;
+    remoteStreamRef.current = null;
+    try {
+      const result = await completion;
+      pendingRecordingsRef.current.set(recordingId, {
+        meetingId, issueId: currentIssue.id, durationSeconds: result.durationSeconds, blob: result.blob,
+        summary: `Meeting between RO ${ro.name} and ${currentIssue.studentName || 'Student'}; includes both video feeds and microphones.`
+      });
+      await uploadPendingRecording(recordingId);
+    } catch (error) {
+      updateRecordingUpload(recordingId, { status: 'error', hasBlob: false, message: error.message || 'The browser could not finish the recording.' });
     }
-
-    // 5. Stop MediaRecorder fallback if active
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        if (mediaRecorderRef.current.requestData) mediaRecorderRef.current.requestData();
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
-    }
-
-    // 6. Release camera and mic tracks
-    setLocalStream(null);
-    setRemoteStream(null);
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-
-    // 7. Send meeting-ended signal to student and close WebRTC session
-    if (webrtcSessionRef.current) {
-      try {
-        webrtcSessionRef.current.sendSignal({ type: 'meeting-ended' });
-      } catch (e) {}
-      const sessionToClose = webrtcSessionRef.current;
-      webrtcSessionRef.current = null;
-      setTimeout(() => {
-        try { sessionToClose.close(); } catch (e) {}
-      }, 800);
-    }
-    setRemoteStream(null);
-    setPeerConnected(false);
-
-    // 8. Commit meeting recording & mark Completed
-    saveMeetingRecording(
-      currentMeet.id || currentMeet.issueId,
-      currentIssue.id,
-      finalSecs,
-      finalVideoUrl,
-      `Dual-Participant Live Session (RO: ${ro.name} & Student: ${currentIssue.studentName}) conducted and auto-archived with side-by-side video and dual-mic audio.`
-    );
   };
 
   const handleOpenMeetingFeedback = (meeting, issue) => {
@@ -876,6 +896,7 @@ export const RODashboard = ({ roId }) => {
 
   const handleScheduleSubmit = async (e) => {
     e.preventDefault();
+    if (meetingScheduleSubmittingRef.current) return;
     if (!meetDate || !meetTime || !selectedIssueId) return;
 
     if (selectedIssue && (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated)) {
@@ -898,6 +919,8 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
+    meetingScheduleSubmittingRef.current = true;
+    setIsSchedulingMeeting(true);
     try {
       await scheduleRoMeeting(
         selectedIssueId,
@@ -915,6 +938,9 @@ export const RODashboard = ({ roId }) => {
       setShowScheduleModal(false);
     } catch (err) {
       console.error('Schedule error:', err);
+    } finally {
+      meetingScheduleSubmittingRef.current = false;
+      setIsSchedulingMeeting(false);
     }
   };
 
@@ -941,6 +967,7 @@ export const RODashboard = ({ roId }) => {
 
   const handleOfflineNotDoneSubmit = async (e) => {
     e.preventDefault();
+    if (meetingScheduleSubmittingRef.current) return;
     if (selectedIssue && (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated)) {
       alert('🔒 Ticket Locked: You cannot reschedule or modify meetings for a resolved or escalated ticket.');
       setShowOnlineNotDoneModal(false);
@@ -966,6 +993,7 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
+    meetingScheduleSubmittingRef.current = true;
     setIsSubmittingOfflineReschedule(true);
     try {
       await scheduleRoMeeting(
@@ -987,55 +1015,18 @@ export const RODashboard = ({ roId }) => {
       console.error('Failed to reschedule offline:', err);
       alert(err.message || 'Could not reschedule meeting.');
     } finally {
+      meetingScheduleSubmittingRef.current = false;
       setIsSubmittingOfflineReschedule(false);
     }
   };
 
   const loadCategoryVideoData = (cat) => {
-    const cleanCat = (cat || '').trim();
-    let list = db.categoryVideos || [];
-    try {
-      const saved = localStorage.getItem('nitte_saved_category_videos');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const parsedMap = new Map(parsed.map(v => [v.category?.toLowerCase()?.trim(), v]));
-          list.forEach(v => {
-            const k = v.category?.toLowerCase()?.trim();
-            if (!parsedMap.has(k)) parsedMap.set(k, v);
-          });
-          list = Array.from(parsedMap.values());
-        }
-      }
-    } catch (e) {}
-
-    // Priority 1: Exact match
-    let found = list.find(v => v.category?.toLowerCase()?.trim() === cleanCat.toLowerCase());
-
-    // Priority 2: Match by main prefix
-    if (!found && cleanCat.includes(' - ')) {
-      const prefix = cleanCat.split(' - ')[0]?.trim();
-      found = list.find(v => v.category?.toLowerCase()?.trim() === prefix?.toLowerCase());
-    }
-
-    // Priority 3: Match Support Desk or substring
-    if (!found) {
-      const prefix = cleanCat.split(' - ')[0]?.trim();
-      found = list.find(v => {
-        const vCat = v.category?.toLowerCase()?.trim() || '';
-        return (prefix && vCat.includes(prefix.toLowerCase())) || vCat.includes(cleanCat.toLowerCase()) || cleanCat.toLowerCase().includes(vCat);
-      });
-    }
-
-    if (found) {
-      setManagerVideoTitle(found.title || '');
-      setManagerVideoUrl(found.videoUrl || found.video_url || '');
-      setManagerVideoDesc(found.description || '');
-    } else {
-      setManagerVideoTitle(`${cleanCat} Guidance & Solution Video`);
-      setManagerVideoUrl('https://www.youtube.com/watch?v=kqtD5dpn9C8');
-      setManagerVideoDesc(`1. Check student portal for requirements.\n2. Submit documentation to your department coordinator.\n3. Contact RO office for special cases.`);
-    }
+    setManagerSaveSuccess(false);
+    const guidance = resolveCategoryGuidance(cat, db.categoryVideos || []);
+    setManagerNoVideo(!guidance.available);
+    setManagerVideoTitle(guidance.record?.title || `${cat} Guidance & Solution Video`);
+    setManagerVideoUrl(guidance.videoUrl);
+    setManagerVideoDesc(guidance.record?.description || '');
   };
 
   const openVideoManagerForCategory = (cat, issueId = null) => {
@@ -1074,7 +1065,7 @@ export const RODashboard = ({ roId }) => {
 
   const handleSaveCategoryVideo = async (e) => {
     e.preventDefault();
-    if (!managerVideoUrl.trim()) {
+    if (!managerNoVideo && !managerVideoUrl.trim()) {
       alert('Please enter a valid YouTube or video link.');
       return;
     }
@@ -1084,29 +1075,26 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
-    await updateCategoryVideo(managerCategory, managerVideoUrl, managerVideoTitle, managerVideoDesc, ro.id);
+    await updateCategoryVideo(managerCategory, managerVideoUrl, managerVideoTitle, managerVideoDesc, ro.id, { noVideo: managerNoVideo });
     setManagerSaveSuccess(true);
     setTimeout(() => setManagerSaveSuccess(false), 3000);
-    alert(`🎥 Solution Video Updated!\n\nCategory: ${managerCategory}\nStudents with issues in this category will now see your updated video guidance immediately.`);
+    alert(managerNoVideo
+      ? `No Video Available saved for ${managerCategory}. Students will skip video playback for this issue.`
+      : `Solution video updated for ${managerCategory}. Students will see the configured video.`);
   };
 
   return (
     <div className="text-slate-800 font-sans antialiased w-full selection:bg-blue-700 selection:text-white space-y-6">
+      {!showMeetingFeedbackModal && <RecordingSaveStatus uploads={recordingUploads} onRetry={uploadPendingRecording} onDownload={downloadPendingRecording} />}
       {/* Top Command & Officer Identity Banner */}
-      <div className="bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-300 p-6 border border-slate-200 relative overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm p-6 border border-slate-200 relative overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-700 via-indigo-600 to-blue-500"></div>
         <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-6">
           {/* Officer Profile & Accreditation Pill */}
-          <div className="flex items-start sm:items-center gap-4.5 min-w-0">
-            <div className="relative flex-shrink-0">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md ring-4 ring-blue-50">
-                <span className="material-symbols-outlined text-3xl">account_circle</span>
-              </div>
-              {/* Subtle Live Status Indicator */}
-              <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-white shadow-xs"></span>
-              </span>
+          <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-4 min-w-0">
+            <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-2xl border border-blue-100 bg-blue-50 text-blue-700">
+              <span className="material-symbols-outlined text-3xl">account_circle</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true"></span>
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1355,11 +1343,14 @@ export const RODashboard = ({ roId }) => {
               </div>
 
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1 text-xs">
+                <p className="text-[10px] font-medium text-slate-500">Priority: High → Medium → Low</p>
                 {scheduledMeetings.map(meet => {
                   const isOnline = meet.mode === 'Online';
                   const targetIssue = roIssues.find(issue => String(issue.id || issue.issue_id).trim().toUpperCase() === getMeetingIssueId(meet));
                   const entryState = getRoMeetingState(meet, targetIssue);
                   const awaitingFeedback = isRoMeetingAwaitingFeedback(meet);
+                  const priorityRank = getRoPriorityRank(targetIssue?.priority);
+                  const isNewMeeting = !seenItems[getRoMeetingReadKey(ro.id, meet)];
                   return (
                     <div
                       key={meet.id}
@@ -1370,11 +1361,13 @@ export const RODashboard = ({ roId }) => {
                       className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-blue-300 transition flex items-center justify-between gap-2 cursor-pointer"
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${isOnline ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
                             {meet.time}
                           </span>
                           <span className="font-bold text-slate-900 truncate">{meet.studentName}</span>
+                          <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${priorityRank === 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : priorityRank === 1 ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-100 text-slate-700'}`}>{['High', 'Medium', 'Low'][priorityRank]}</span>
+                          {isNewMeeting && <span className="rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">New</span>}
                         </div>
                         <p className="text-[11px] text-slate-500 truncate mt-0.5">
                           📅 {meet.date} • {isOnline ? 'WebRTC Online Call' : (meet.location || 'Cabin 302')}
@@ -1441,9 +1434,11 @@ export const RODashboard = ({ roId }) => {
                 filteredIssues.map(issue => {
                   const isSelected = selectedIssueId === issue.id;
                   const isResolved = issue.status === 'Resolved';
-                  const priorityClass = issue.priority === 'high' || issue.priority === 'High'
+                  const isNewIssue = !isResolved && issue.status !== 'Closed' && !seenItems[getRoIssueReadKey(ro.id, issue)];
+                  const priorityRank = getRoPriorityRank(issue.priority);
+                  const priorityClass = priorityRank === 0
                     ? 'bg-rose-50 text-rose-700 border-rose-200'
-                    : issue.priority === 'medium' || issue.priority === 'Medium'
+                    : priorityRank === 1
                       ? 'bg-amber-50 text-amber-700 border-amber-200'
                       : 'bg-slate-100 text-slate-700 border-slate-200';
 
@@ -1465,11 +1460,12 @@ export const RODashboard = ({ roId }) => {
                             #{issue.id}
                           </span>
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${priorityClass}`}>
-                            {(issue.priority === 'high' || issue.priority === 'High') && (
+                            {priorityRank === 0 && (
                               <span className="w-1 h-1 rounded-full bg-rose-600 animate-pulse"></span>
                             )}
-                            {issue.priority || 'Normal'}
+                            {['High', 'Medium', 'Low'][priorityRank]}
                           </span>
+                          {isNewIssue && <span className="rounded-full border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">New</span>}
                         </div>
                         {isSelected ? (
                           <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -1576,7 +1572,6 @@ export const RODashboard = ({ roId }) => {
                   <div className="space-y-0.5">
                     <p className="text-slate-500 text-[11px] font-semibold uppercase">Academic Record</p>
                     <p className="text-slate-800 font-medium">Department Verified Student</p>
-                    <p className="text-[11px] text-emerald-600 font-semibold">Contact: {db.users.students.find(s => s.id === selectedIssue.studentId)?.phone || 'On Record'}</p>
                   </div>
                   <div className="space-y-0.5">
                     <p className="text-slate-500 text-[11px] font-semibold uppercase">Submission Details</p>
@@ -1841,6 +1836,7 @@ export const RODashboard = ({ roId }) => {
                 </div>
               )}
 
+
               {/* Deliberation Audit Stepper & Action Log */}
               <div className="bg-white rounded-xl p-5 sm:p-6 shadow-card border border-slate-200 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -1895,20 +1891,21 @@ export const RODashboard = ({ roId }) => {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setPlayingRecording(rec)}
+                            onClick={() => openRecording(rec)}
+                            disabled={!isStoredRecording(rec)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition shadow-xs"
                           >
                             <span className="material-symbols-outlined text-sm">play_arrow</span>
-                            <span>Play Recording</span>
+                            <span>{isStoredRecording(rec) ? 'Play Recording' : 'Original File Unavailable'}</span>
                           </button>
-                          {rec.videoUrl && (
+                          {isStoredRecording(rec) && (
                             <a
-                              href={rec.videoUrl}
-                              download={`recording_${selectedIssue.id}.webm`}
+                              href={`${rec.videoUrl}?download=1`}
+                              download={`recording_${selectedIssue.id}.${recordingExtension(rec.mimeType)}`}
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
                             >
                               <span className="material-symbols-outlined text-sm">download</span>
-                              <span>.webm</span>
+                              <span>Download</span>
                             </a>
                           )}
                         </div>
@@ -1951,6 +1948,7 @@ export const RODashboard = ({ roId }) => {
               </button>
             </div>
 
+            <RecordingSaveStatus uploads={recordingUploads} onRetry={uploadPendingRecording} onDownload={downloadPendingRecording} />
             {/* Top Meeting Metadata Card */}
             <div style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', padding: '12px 20px', display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '0.8rem' }}>
               <div>
@@ -2317,7 +2315,7 @@ export const RODashboard = ({ roId }) => {
                       </div>
                     </div>
                     <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 self-start sm:self-auto flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Slot {meetingReassignCount + 1}/2
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {meetingReassignCount}/{MEETING_REASSIGNMENT_LIMIT} reassignments used
                     </span>
                   </div>
                 )}
@@ -2458,10 +2456,11 @@ export const RODashboard = ({ roId }) => {
                   </button>
                   <button
                     type="submit"
+                    disabled={isSchedulingMeeting}
                     className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs shadow-md shadow-blue-700/20 transition-all active:scale-95 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px]">send</span>
-                    <span>{activeMeeting ? 'Save & Reassign Meeting' : 'Confirm & Dispatch Meeting Invite'}</span>
+                    <span>{isSchedulingMeeting ? 'Saving Meeting...' : activeMeeting ? 'Save & Reassign Meeting' : 'Confirm & Dispatch Meeting Invite'}</span>
                   </button>
                 </div>
               </div>
@@ -2537,7 +2536,7 @@ export const RODashboard = ({ roId }) => {
                     rows={3}
                     value={offlineReassignFeedback}
                     onChange={(e) => setOfflineReassignFeedback(e.target.value)}
-                    placeholder="e.g. Student reported network connectivity issues during online attempt; spoke on phone and agreed to meet at RO desk for in-person document review."
+                    placeholder="e.g. Student reported network connectivity issues during the online attempt and requested an in-person document review at the RO desk."
                   />
                 </div>
 
@@ -3147,14 +3146,22 @@ export const RODashboard = ({ roId }) => {
             <div className="modal-body" style={{ padding: '20px 0' }}>
               <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', marginBottom: '14px' }}>
                 <video
+                  key={`${playingRecording.id}:${playbackRevision}`}
                   src={playingRecording.videoUrl}
                   controls
                   autoPlay
+                  playsInline
+                  preload="metadata"
+                  onError={() => setRecordingPlaybackError('The video could not be loaded. Retry playback to renew recording access.')}
                   style={{ width: '100%', maxHeight: '420px', display: 'block' }}
                 >
                   Your browser does not support HTML5 video playback.
                 </video>
               </div>
+              {recordingPlaybackError && <div role="alert" className="p-3 mb-3 rounded bg-amber-950 text-amber-100 text-sm">
+                <p>{recordingPlaybackError}</p>
+                <button type="button" className="underline font-bold mt-2" onClick={() => openRecording(playingRecording)}>Retry Playback</button>
+              </div>}
               <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '12px 14px', borderRadius: '6px', fontSize: '0.8rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <span style={{ color: '#10b981', fontWeight: '700' }}>Mode: {playingRecording.mode}</span>
@@ -3164,14 +3171,14 @@ export const RODashboard = ({ roId }) => {
               </div>
             </div>
             <div className="modal-footer" style={{ borderTop: '1px solid #334155', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              {playingRecording.videoUrl && playingRecording.videoUrl.startsWith('blob:') && (
+              {isStoredRecording(playingRecording) && (
                 <a
-                  href={playingRecording.videoUrl}
-                  download={`recording_${playingRecording.issueId || 'session'}.webm`}
+                  href={`${playingRecording.videoUrl}?download=1`}
+                  download={`recording_${playingRecording.issueId || 'session'}.${recordingExtension(playingRecording.mimeType)}`}
                   className="btn btn-secondary"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}
                 >
-                  <Download size={14} /> Download Recording (.webm)
+                  <Download size={14} /> Download Recording
                 </a>
               )}
               <button
@@ -3205,6 +3212,8 @@ export const RODashboard = ({ roId }) => {
         setVideoUrl={setManagerVideoUrl}
         videoDesc={managerVideoDesc}
         setVideoDesc={setManagerVideoDesc}
+        noVideo={managerNoVideo}
+        setNoVideo={(value) => { setManagerNoVideo(value); setManagerSaveSuccess(false); }}
         onSave={handleSaveCategoryVideo}
         saveSuccess={managerSaveSuccess}
         getYoutubeEmbedUrl={getYoutubeEmbedUrl}

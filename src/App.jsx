@@ -22,6 +22,9 @@ function AppContent() {
   const [selectedSubProfile, setSelectedSubProfile] = useState('');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isLoginPageVisible, setIsLoginPageVisible] = useState(true);
+  useEffect(() => {
+    setIsLoginPageVisible(!authenticatedUser);
+  }, [authenticatedUser]);
 
   // Automatically initialize default sub-profile when switching roles or if selectedSubProfile is invalid
   useEffect(() => {
@@ -75,15 +78,6 @@ function AppContent() {
     setIsLoginPageVisible(false);
   };
 
-  // Handle fast demo bypass from LoginPage
-  const handleBypassToDashboard = (role, profileId) => {
-    setCurrentUser(role);
-    if (profileId) {
-      setSelectedSubProfile(profileId);
-    }
-    setIsLoginPageVisible(false);
-  };
-
   // Loading Screen
   if (loading) {
     return (
@@ -129,7 +123,6 @@ function AppContent() {
     return (
       <LoginPage
         onLoginSuccess={handleLoginSuccess}
-        onBypassToDashboard={handleBypassToDashboard}
       />
     );
   }
@@ -139,9 +132,9 @@ function AppContent() {
     return (
       <div className="min-h-screen bg-[#f8fafc]">
         <AdminDashboard
-          onLogout={() => {
-            logoutUser();
-            setIsLoginPageVisible(true);
+          onLogout={async () => {
+            try { await logoutUser(); setIsLoginPageVisible(true); }
+            catch (error) { window.alert(error.message); }
           }}
         />
         <LoginModal

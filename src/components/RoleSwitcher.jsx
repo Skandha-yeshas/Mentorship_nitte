@@ -2,15 +2,16 @@ import React, { useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
 import { LogOut } from 'lucide-react';
 import { NitteLogo } from './NitteLogo';
+import { AccountSecurity } from './AccountSecurity';
 
 export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
   const { currentUser, db, authenticatedUser, logoutUser } = useContext(DatabaseContext);
 
-  const handleLogout = () => {
-    logoutUser();
-    if (onOpenLoginPage) {
-      onOpenLoginPage();
-    }
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      if (onOpenLoginPage) onOpenLoginPage();
+    } catch (error) { window.alert(error.message); }
   };
 
   const getDisplayName = () => {
@@ -41,7 +42,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
   ) : null;
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-[0_1px_4px_rgba(0,0,0,0.03)]">
+    <header className={`${currentUser === 'RO' ? 'relative' : 'sticky top-0 z-40'} bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-[0_1px_4px_rgba(0,0,0,0.03)]`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
         {/* Brand & University Seal */}
         <div className="flex items-center gap-3.5">
@@ -71,7 +72,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
         {/* Profile Pill & Prominent Log Out */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-3 pl-1">
-            <div className="relative">
+            <div className={currentUser === 'RO' ? 'relative h-10 w-10 shrink-0 self-center' : 'relative'}>
               {/* Profile photo is EMPTY (clean silhouette placeholder) */}
               <div className="w-10 h-10 rounded-full bg-slate-100 border-2 border-slate-200 flex items-center justify-center text-slate-400 shadow-sm">
                 <span className="material-symbols-outlined text-[22px]">person</span>
@@ -106,6 +107,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
           <div className="h-8 w-px bg-slate-200"></div>
 
           {/* Prominent Log Out Button */}
+          <div className="flex shrink-0 flex-col items-stretch gap-1">
           <button
             onClick={handleLogout}
             style={{
@@ -128,6 +130,8 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
             <LogOut size={14} />
             <span>Log Out</span>
           </button>
+          <AccountSecurity />
+          </div>
         </div>
       </div>
     </header>

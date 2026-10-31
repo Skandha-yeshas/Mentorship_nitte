@@ -1,23 +1,15 @@
 import React, { useContext, useState, useEffect, useRef, useMemo } from 'react';
-import { DatabaseContext, ALL_CATEGORIES, getYoutubeEmbedUrl, isMatchingMentorId } from '../context/DatabaseContext';
+import { DatabaseContext, getYoutubeEmbedUrl, isMatchingMentorId } from '../context/DatabaseContext';
+import { getRoCategories, findRoForCategory, getCategoryDomain } from '../../shared/roCatalog.js';
 import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtcService';
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 import IssueActivityLog from '../components/IssueActivityLog';
 import { buildIssueSlipHtml, printIssueSlip } from '../utils/issueSlip';
+import { resolveCategoryGuidance } from '../../shared/categoryGuidance.js';
 import { getGrievanceQuota, formatQuotaDate } from '../../shared/grievanceQuota.js';
 import { getStudentIssues, getLiveStudentMeetings } from '../utils/studentMeetings';
 
-// 7 Domain models mapping the 49/50 specialized categories
-const DOMAIN_MODELS = [
-  { id: 'Academic', name: 'Academics', icon: 'school', count: 8 },
-  { id: 'Hostels', name: 'Hostel & Infra', icon: 'apartment', count: 8 },
-  { id: 'Facilities', name: 'Lab & Systems', icon: 'memory', count: 5 },
-  { id: 'Financial', name: 'Fee & Grants', icon: 'payments', count: 8 },
-  { id: 'Exams', name: 'Examinations', icon: 'assignment', count: 8 },
-  { id: 'Personal', name: 'Student Welfare', icon: 'shield', count: 4 },
-  { id: 'Placements', name: 'Placement & Career', icon: 'work', count: 8 }
-];
 
 export const StudentDashboard = ({ studentId }) => {
   const {
@@ -36,9 +28,17 @@ export const StudentDashboard = ({ studentId }) => {
   const [selectedIssueId, setSelectedIssueId] = useState(null);
 
   // Form states
-  const [selectedDomain, setSelectedDomain] = useState('Academic');
+  const [selectedDomain, setSelectedDomain] = useState('');
   const [categorySearchQuery, setCategorySearchQuery] = useState('');
-  const [category, setCategory] = useState(ALL_CATEGORIES[0] || 'Academic - Internal marks discrepancy');
+  const [category, setCategory] = useState('');
+  const categories = useMemo(() => getRoCategories(db.users?.ros || []), [db.users?.ros]);
+  const domainModels = useMemo(() => [...new Set(categories.map(getCategoryDomain))].map(domain => ({
+    id: domain, name: domain, icon: 'category', count: categories.filter(category => getCategoryDomain(category) === domain).length
+  })), [categories]);
+  useEffect(() => {
+    if (!categories.includes(category)) setCategory(categories[0] || '');
+    if (!domainModels.some(domain => domain.id === selectedDomain)) setSelectedDomain(domainModels[0]?.id || '');
+  }, [categories, domainModels, category, selectedDomain]);
   const [subjectTitle, setSubjectTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('high'); // 'low', 'medium', 'high'
@@ -152,23 +152,19 @@ export const StudentDashboard = ({ studentId }) => {
   };
 
   // Determine active RO dynamically based on category selection
-  const activeCategoryIdx = ALL_CATEGORIES.indexOf(category);
-  const activeFormRoId = activeCategoryIdx !== -1 ? `RO-${String(activeCategoryIdx + 1).padStart(2, '0')}` : 'RO-01';
-  const activeFormRO = (db.users?.ros || []).find(r => r.id === activeFormRoId) || {
-    id: activeFormRoId,
-    name: 'Prof. Suresh Nayak (RO)',
-    category: category.split(' - ')[0] || 'Academic',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
-  };
+  const activeFormRO = findRoForCategory(db.users?.ros || [], category) || { name: 'No RO assigned', category: '' };
+
+  const categoryGuidance = resolveCategoryGuidance(category, db.categoryVideos || []);
+  const submissionGuidance = resolveCategoryGuidance(submissionVideoModal?.category, db.categoryVideos || []);
+  const submissionVideoUrl = submissionGuidance.available ? getYoutubeEmbedUrl(submissionGuidance.videoUrl) : '';
 
   // Use only the resolved student's identity; names and selected tickets are not ownership.
   const rawMyIssues = getStudentIssues(db.issues || [], student);
 
-  const blacklistedIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
   const issueDedupeMap = new Map();
   for (const iss of rawMyIssues) {
     const cleanId = (iss.id || iss.issue_id || '').toUpperCase();
-    if (!cleanId || blacklistedIds.has(cleanId)) continue;
+    if (!cleanId) continue;
     if (!issueDedupeMap.has(cleanId)) {
       issueDedupeMap.set(cleanId, { ...iss, id: iss.id || iss.issue_id });
     }
@@ -233,10 +229,10 @@ export const StudentDashboard = ({ studentId }) => {
   const availableCategories = useMemo(() => {
     if (categorySearchQuery.trim()) {
       const q = categorySearchQuery.toLowerCase().trim();
-      return ALL_CATEGORIES.filter(c => c.toLowerCase().includes(q));
+      return categories.filter(c => c.toLowerCase().includes(q));
     }
-    return ALL_CATEGORIES.filter(c => c.startsWith(`${selectedDomain} - `));
-  }, [selectedDomain, categorySearchQuery]);
+    return categories.filter(c => getCategoryDomain(c) === selectedDomain);
+  }, [categories, selectedDomain, categorySearchQuery]);
 
   // Sync title with category selection
   useEffect(() => {
@@ -435,6 +431,10 @@ export const StudentDashboard = ({ studentId }) => {
   const handleSubmitIssue = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
     if (isSubmitting) return;
+    if (!category || !findRoForCategory(db.users?.ros || [], category)) {
+      setErrorMessage('No issue categories are available yet. Admin must import the RO roster first.');
+      return;
+    }
     setQuotaNow(Date.now());
     const currentQuota = getGrievanceQuota({ issues: [...(db.issues || []), ...serverQuotaIssues], studentId: student.id });
     if (currentQuota.isLocked) {
@@ -451,8 +451,13 @@ export const StudentDashboard = ({ studentId }) => {
       setDescription('');
       setSubjectTitle('');
       setSelectedIssueId(newIssueId);
-      // Show self-help protocol video popup immediately after submission
-      setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
+      if (categoryGuidance.available) {
+        setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
+      } else {
+        setSubmissionVideoModal(null);
+        setActiveTab('track');
+        setSuccessMessage(`Ticket #${newIssueId} submitted to your RO. No self-help video is available for this issue.`);
+      }
     } catch (err) {
       if (err.quota?.isLocked) {
         setServerQuotaIssues(err.quota.slots || []);
@@ -641,7 +646,7 @@ export const StudentDashboard = ({ studentId }) => {
                     </label>
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-nitte-50 text-nitte-800 border border-nitte-200">
                       <span className="w-1.5 h-1.5 rounded-full bg-nitte-800"></span>
-                      49 Specialized Domains across 7 Models
+                      {categories.length ? `${categories.length} imported issue topics across ${domainModels.length} domains` : 'No issue categories yet. Admin must import the RO roster first.'}
                     </span>
                   </div>
 
@@ -651,7 +656,7 @@ export const StudentDashboard = ({ studentId }) => {
                     <input
                       type="text"
                       disabled={isFormLocked}
-                      placeholder={isFormLocked ? 'Submissions locked for the 7-day quota period' : 'Search across all 49 issue topics (e.g., IA Marks, Hall Ticket, Wi-Fi, Caution Deposit)...'}
+                      placeholder={isFormLocked ? 'Submissions locked for the 7-day quota period' : 'Search imported issue topics...'}
                       value={categorySearchQuery}
                       onChange={(e) => setCategorySearchQuery(e.target.value)}
                       className="w-full text-xs pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition text-slate-800 shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
@@ -660,7 +665,7 @@ export const StudentDashboard = ({ studentId }) => {
 
                   {/* Tier 1: 7 Core Domain Model Pills Carousel */}
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-xs">
-                    {DOMAIN_MODELS.map(domain => (
+                    {domainModels.map(domain => (
                       <button
                         key={domain.id}
                         type="button"
@@ -828,16 +833,17 @@ export const StudentDashboard = ({ studentId }) => {
                   <button
                     type="button"
                     onClick={() => setSubmissionVideoModal({ issueId: 'PREVIEW', category, roName: activeFormRO?.name || 'Relationship Officer' })}
+                    disabled={!categoryGuidance.available}
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
                   >
                     <span className="material-symbols-outlined text-[18px]">play_circle</span>
-                    Watch Self-Help Guidance Video
+                    {categoryGuidance.available ? 'Watch Self-Help Guidance Video' : 'No Video Available for This Issue'}
                   </button>
 
                   <div className="flex items-center gap-3 w-full sm:w-auto">
                     <button
                       type="button"
-                      disabled={isSubmitting || (!isFormLocked && !description.trim())}
+                      disabled={isSubmitting || (!isFormLocked && (!description.trim() || !category || !findRoForCategory(db.users?.ros || [], category)))}
                       onClick={handleSubmitIssue}
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-md shadow-nitte-800/20 transition-all active:scale-95"
                     >
@@ -939,14 +945,15 @@ export const StudentDashboard = ({ studentId }) => {
                     {category.split(' - ')[1] || category} Walkthrough
                   </h5>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    Watch the official department guidelines before escalating to the Relationship Officer.
+                    {categoryGuidance.available ? 'Watch the official department guidelines before contacting the Relationship Officer.' : 'No video is available for this issue. Your submission will go directly to the Relationship Officer for review.'}
                   </p>
                   <button
                     type="button"
                     onClick={() => setSubmissionVideoModal({ issueId: 'WALKTHROUGH', category, roName: activeFormRO?.name || 'RO' })}
+                    disabled={!categoryGuidance.available}
                     className="inline-flex items-center gap-2 text-xs font-bold text-nitte-800 hover:text-nitte-900 hover:underline"
                   >
-                    <span>Watch Guidance Walkthrough</span>
+                    <span>{categoryGuidance.available ? 'Watch Guidance Walkthrough' : 'No Video Available'}</span>
                     <span className="material-symbols-outlined text-[16px]">play_circle</span>
                   </button>
                 </div>
@@ -1730,30 +1737,30 @@ export const StudentDashboard = ({ studentId }) => {
               <div className="px-5 py-2 bg-nitte-50 border-b border-slate-100 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[16px] text-nitte-700">confirmation_number</span>
                 <span className="text-xs text-slate-600">
-                  Ticket <strong className="text-nitte-800">#{submissionVideoModal.issueId}</strong> submitted successfully — please watch the self-help video below before deciding next steps.
+                  Ticket <strong className="text-nitte-800">#{submissionVideoModal.issueId}</strong> submitted successfully{submissionGuidance.available ? ' — please watch the self-help video below before deciding next steps.' : ' — your issue is with the assigned RO.'}
                 </span>
               </div>
             )}
 
             <div className="p-4 space-y-4">
               {/* Video player */}
-              <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
+              {submissionVideoUrl ? <div className="aspect-video w-full rounded-xl overflow-hidden bg-black">
                 <iframe
                   className="w-full h-full"
-                  src="https://www.youtube.com/embed/kqtD5dpn9C8?autoplay=1"
+                  src={submissionVideoUrl}
                   title="Self-Help Protocol Video"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />
-              </div>
+              </div> : <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">No video is available for this issue. Please continue with your assigned RO.</p>}
 
               {/* Guidance label */}
               <p className="text-[11px] text-slate-500 text-center leading-relaxed">
-                Watch the guidance above. If your issue is resolved, click <strong>Issue Resolved</strong>. Otherwise, click <strong>Escalate to RO</strong> to route it to {submissionVideoModal.roName || 'your Relationship Officer'}.
+                {submissionGuidance.available && <>Watch the guidance above. If your issue is resolved, click <strong>Issue Resolved</strong>. Otherwise, click <strong>Escalate to RO</strong> to route it to {submissionVideoModal.roName || 'your Relationship Officer'}.</>}
               </p>
 
               {/* Action buttons — only show for real tickets */}
-              {submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' ? (
+              {submissionGuidance.available && submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' ? (
                 <div className="grid grid-cols-2 gap-3">
                   {/* Resolved button — white → green */}
                   <button

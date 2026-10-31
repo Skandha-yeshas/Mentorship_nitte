@@ -1,5 +1,14 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useRef } from 'react';
+import { apiFetch as fetch } from '../utils/apiFetch.js';
+import { clearPrivateCaches, safeCacheSetItem, initializePrivateCaches } from '../utils/sessionCache.js';
+import { stripSecrets } from '../../shared/sanitization.js';
+initializePrivateCaches();
+import { createRecordingApi } from '../utils/recordingApi.js';
+import { mergeRecordingArchive } from '../../shared/meetingRecordings.js';
 import { getGrievanceQuota, getQuotaLockMessage } from '../../shared/grievanceQuota.js';
+import { getCategoryVideoUpdate } from '../../shared/categoryGuidance.js';
+import { normalizeRoRosterRow, findRoForCategory, clearResetGrievanceCaches } from '../../shared/roCatalog.js';
+import { createMeetingScheduleEvent, getMeetingReassignmentCount, MEETING_REASSIGNMENT_LIMIT } from '../../shared/meetingReassignments.js';
 import { getMeetingIssueId, getUniqueMeetings, mergeMeetingRecord } from '../utils/roMeetings';
 import {
   generateStudentOnboardingEmailHtml,
@@ -35,52 +44,7 @@ export const MEETING_STATUS = {
   CANCELLED: 'Cancelled'
 };
 
-// Realistic issue categories representing the 49 possible categories
-const ISSUE_CATEGORIES = {
-  Academic: [
-    'Course Enrollment issues', 'Attendance shortage clarification',
-    'Internal marks discrepancy', 'Difficulty in understanding subjects',
-    'Lab equipment issues', 'Syllabus coverage speed',
-    'Assignment submission extensions', 'Elective course selection advice'
-  ],
-  Exams: [
-    'Hall ticket download errors', 'Exam schedule conflicts',
-    'Revaluation/Re-totalling requests', 'Make-up exam eligibility',
-    'Results withholding issues', 'Supplementary exam fees',
-    'Answer sheet copy request', 'Grace marks query'
-  ],
-  Financial: [
-    'Tuition fee installment requests', 'Scholarship application delay',
-    'Hostel fee payment extension', 'Exam fee payment failure',
-    'Refund of caution deposits', 'Bank loan bonafide certificate',
-    'Fine waiver appeals', 'Late fee penalty queries'
-  ],
-  Hostels: [
-    'Room maintenance & repairs', 'Mess food quality/hygiene',
-    'Wi-Fi connectivity issues', 'Water supply shortage',
-    'Roommate conflicts', 'Hostel curfew permissions',
-    'Laundry services issues', 'Pest control requests'
-  ],
-  Placements: [
-    'Resume verification delay', 'Eligibility criteria appeals',
-    'Interview scheduling clashes', 'Placement training portal bugs',
-    'Company registration issues', 'NOC certificate delay',
-    'Internship credits validation', 'Mock interview slots'
-  ],
-  Facilities: [
-    'Library book renewal limits', 'Canteen hygiene & pricing',
-    'Sports equipment availability', 'Gymnasium access timings',
-    'Campus transport routes'
-  ],
-  Personal: [
-    'Stress & anxiety management', 'Peer pressure adjustments',
-    'Time management struggles', 'Homesickness assistance'
-  ]
-};
-
-export const ALL_CATEGORIES = Object.keys(ISSUE_CATEGORIES).reduce((acc, cat) => {
-  return acc.concat(ISSUE_CATEGORIES[cat].map(sub => `${cat} - ${sub}`));
-}, []);
+// Issue categories are derived from imported RO records.
 
 // YouTube embed URL conversion helper
 export const getYoutubeEmbedUrl = (url) => {
@@ -100,8 +64,8 @@ if (typeof window !== 'undefined') {
     const isCleaned = localStorage.getItem('nitte_clean_state_v5');
     if (!isCleaned) {
       localStorage.removeItem('nitte_saved_students');
-      localStorage.setItem('nitte_saved_students', JSON.stringify([]));
-      localStorage.setItem('nitte_clean_state_v5', 'true');
+      safeCacheSetItem('nitte_saved_students', JSON.stringify([]));
+      safeCacheSetItem('nitte_clean_state_v5', 'true');
     }
   } catch (e) { }
 }
@@ -115,13 +79,7 @@ const MOCK_DB = {
   users: {
     students: [],
     mentors: [],
-    ros: ALL_CATEGORIES.map((cat, idx) => ({
-      id: `RO-${String(idx + 1).padStart(2, '0')}`,
-      name: `RO - ${cat.split(' - ')[1]}`,
-      email: 'skandhayashu2906@gmail.com',
-      region: cat,
-      password: 'Nit#Ro2026'
-    }))
+    ros: []
   },
   issues: [],
   meetings: [],
@@ -131,59 +89,9 @@ const MOCK_DB = {
   mentoringSchedules: {},
   mentorFeedbacks: [],
   systemLogs: [],
-  gmailAddress: 'skandhayashu2906@gmail.com',
+  gmailAddress: '',
   gmailLogs: [],
-  categoryVideos: [
-    {
-      category: 'Academic',
-      title: 'NITTE Academic Guide: Course Enrollment & Attendance Policy',
-      videoUrl: 'https://www.youtube.com/watch?v=kqtD5dpn9C8',
-      description: '1. Check student ERP portal for minimum 75% attendance threshold.\n2. Medical or duty leave certificates must be submitted to HOD within 3 days.\n3. Verify course elective credits with your department coordinator.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Exams',
-      title: 'Examination Portal & Hall Ticket Resolution Walkthrough',
-      videoUrl: 'https://www.youtube.com/watch?v=3JZ_D3ELwOQ',
-      description: '1. Clear pending department dues before downloading exam admit card.\n2. Apply for revaluation via Controller of Examination portal within 7 days of result declaration.\n3. Make-up exam forms are verified automatically based on attendance approval.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Financial',
-      title: 'Fee Installments, Scholarships & Payment Receipt Assistance',
-      videoUrl: 'https://www.youtube.com/watch?v=fJ9rUzIMcZQ',
-      description: '1. Download fee receipt directly from Finance Portal under Transaction History.\n2. For installment plans, submit parent undertaking letter.\n3. State & National Scholarship bonafide certificates are issued at Admin Desk Counter 2.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Hostels',
-      title: 'Campus Hostel Maintenance, Mess & Facility Protocol',
-      videoUrl: 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
-      description: '1. For electrical or plumbing issues, log a ticket in the Hostel Maintenance Register at block warden desk.\n2. Mess committee meetings are held on the 1st of every month.\n3. Curfew extension passes must be requested 24 hours prior via Warden.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Placements',
-      title: 'Placement Training, Resume Verification & Drive Registration',
-      videoUrl: 'https://www.youtube.com/watch?v=21X5lGlDOfg',
-      description: '1. Ensure resume PDF is verified by Placement Cell coordinator.\n2. Update CGPA and active backlogs in the training portal.\n3. Collect NOC certificates from Training & Placement Officer.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Facilities',
-      title: 'Campus Facilities: Library Access, Gym & Transport Services',
-      videoUrl: 'https://www.youtube.com/watch?v=OPf0YbXqDm0',
-      description: '1. Digital Library accounts are active for all enrolled students.\n2. Campus bus route passes can be renewed at Transport Office.\n3. Sports equipment is issued with valid student ID card.',
-      updatedBy: 'System'
-    },
-    {
-      category: 'Personal',
-      title: 'Student Counseling, Wellness & Mentorship Support',
-      videoUrl: 'https://www.youtube.com/watch?v=7wtfhZwyrcc',
-      description: '1. Confidential student counseling is available at Wellness Center Block B.\n2. Mentors are available every Wednesday during tutorial hours.\n3. Reach out to your Relationship Officer for a private 1-on-1 session.',
-      updatedBy: 'System'
-    }
-  ]
+  categoryVideos: []
 };
 
 // Robust Deduplication & Structured Normalization Engine (USN/ID is Primary Key)
@@ -207,7 +115,6 @@ export const structureAndDeduplicateStudents = (students = []) => {
       ? (String(s.mentorId).trim() || null)
       : (s.mentor_id ? (String(s.mentor_id).trim() || null) : null);
     const phone = String(s.phone || s.Phone || s.mobile || '9876543210').trim();
-    const password = s.password ? String(s.password).trim() : 'Nit#Stu2026';
     const role = 'Student';
     const createdAt = s.createdAt || new Date().toISOString();
     const lastLogin = s.lastLogin || null;
@@ -220,7 +127,6 @@ export const structureAndDeduplicateStudents = (students = []) => {
       sem,
       mentorId,
       phone,
-      password,
       role,
       createdAt,
       lastLogin
@@ -264,7 +170,6 @@ export const structureAndDeduplicateMentors = (mentors = []) => {
     const id = rawId ? String(rawId).trim().toUpperCase() : `M${101 + i}`;
     const email = rawEmail ? String(rawEmail).trim().toLowerCase() : `${id.toLowerCase()}@nitte.edu.in`;
     const name = String(rawName).trim();
-    const password = m.password ? String(m.password).trim() : 'Nit#Mnt2026';
 
     const structuredMentor = {
       id,
@@ -272,7 +177,6 @@ export const structureAndDeduplicateMentors = (mentors = []) => {
       email,
       dept,
       class: assignedClass,
-      password,
       role: 'Mentor',
       createdAt: m.createdAt || new Date().toISOString(),
       lastLogin: m.lastLogin || null
@@ -319,6 +223,9 @@ export const isMatchingMentorId = (studentMentorId, mentorId) => {
 };
 
 export const DatabaseProvider = ({ children }) => {
+  const recordingActorRef = useRef(null);
+  const recordingApiRef = useRef(null);
+  if (!recordingApiRef.current) recordingApiRef.current = createRecordingApi({ getActor: () => recordingActorRef.current });
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('curr_user_role');
     return saved || 'Admin';
@@ -350,7 +257,7 @@ export const DatabaseProvider = ({ children }) => {
     const updated = [...branches, newBranch];
     setBranches(updated);
     try {
-      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+      safeCacheSetItem('nitte_managed_branches', JSON.stringify(updated));
     } catch (e) { }
     return newBranch;
   };
@@ -360,7 +267,7 @@ export const DatabaseProvider = ({ children }) => {
     const updated = branches.filter(b => b.code.toUpperCase() !== cleanCode);
     setBranches(updated);
     try {
-      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+      safeCacheSetItem('nitte_managed_branches', JSON.stringify(updated));
     } catch (e) { }
   };
 
@@ -369,14 +276,14 @@ export const DatabaseProvider = ({ children }) => {
     const updated = branches.map(b => b.code.toUpperCase() === cleanCode ? { ...b, ...updatedData } : b);
     setBranches(updated);
     try {
-      localStorage.setItem('nitte_managed_branches', JSON.stringify(updated));
+      safeCacheSetItem('nitte_managed_branches', JSON.stringify(updated));
     } catch (e) { }
   };
 
   const resetBranchesToDefault = () => {
     setBranches(DEFAULT_COLLEGE_BRANCHES);
     try {
-      localStorage.setItem('nitte_managed_branches', JSON.stringify(DEFAULT_COLLEGE_BRANCHES));
+      safeCacheSetItem('nitte_managed_branches', JSON.stringify(DEFAULT_COLLEGE_BRANCHES));
     } catch (e) { }
   };
 
@@ -408,8 +315,8 @@ export const DatabaseProvider = ({ children }) => {
       });
 
       try {
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+        safeCacheSetItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        safeCacheSetItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
       } catch (e) { }
 
       return {
@@ -479,8 +386,8 @@ export const DatabaseProvider = ({ children }) => {
       });
 
       try {
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+        safeCacheSetItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        safeCacheSetItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
       } catch (e) { }
 
       return {
@@ -534,7 +441,7 @@ export const DatabaseProvider = ({ children }) => {
 
     // 2. Clear local storage
     try {
-      localStorage.setItem('nitte_saved_students', JSON.stringify([]));
+      safeCacheSetItem('nitte_saved_students', JSON.stringify([]));
     } catch (e) { }
 
     // 3. Update React state
@@ -544,7 +451,7 @@ export const DatabaseProvider = ({ children }) => {
         class: '0 Assigned Mentees'
       }));
       try {
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+        safeCacheSetItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
       } catch (e) { }
 
       return {
@@ -578,7 +485,7 @@ export const DatabaseProvider = ({ children }) => {
       const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
       const deletedSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
       deletedSet.add(cleanIdUpper);
-      localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
+      safeCacheSetItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
     } catch (e) { }
 
     setDb(prev => {
@@ -595,8 +502,8 @@ export const DatabaseProvider = ({ children }) => {
       });
 
       try {
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        safeCacheSetItem('nitte_saved_mentors', JSON.stringify(updatedMentors));
+        safeCacheSetItem('nitte_saved_students', JSON.stringify(updatedStudents));
       } catch (e) { }
 
       return {
@@ -656,9 +563,9 @@ export const DatabaseProvider = ({ children }) => {
         currentMentors.forEach(m => {
           if (m.id) deletedSet.add(String(m.id).toUpperCase());
         });
-        localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify([]));
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedStudents));
+        safeCacheSetItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(deletedSet)));
+        safeCacheSetItem('nitte_saved_mentors', JSON.stringify([]));
+        safeCacheSetItem('nitte_saved_students', JSON.stringify(updatedStudents));
       } catch (e) { }
 
       return {
@@ -717,7 +624,7 @@ export const DatabaseProvider = ({ children }) => {
       const currentRos = prev.users?.ros || [];
       const updatedRos = currentRos.filter(r => (r.id || '').toUpperCase() !== cleanId);
       try {
-        localStorage.setItem('nitte_saved_ros', JSON.stringify(updatedRos));
+        safeCacheSetItem('nitte_saved_ros', JSON.stringify(updatedRos));
       } catch (e) { }
       return {
         ...prev,
@@ -739,907 +646,61 @@ export const DatabaseProvider = ({ children }) => {
     return { success: true, roId: cleanId };
   };
 
-  const addSingleRo = async (roData) => {
-    if (!roData) return { success: false, message: 'RO data is required.' };
-    return await bulkUploadRos([roData]);
-  };
-
-  const [db, setDb] = useState(() => {
-    let base = { ...MOCK_DB };
-    try {
-      const savedStudents = localStorage.getItem('nitte_saved_students');
-      if (savedStudents) {
-        const parsed = JSON.parse(savedStudents);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          base.users = {
-            ...base.users,
-            students: structureAndDeduplicateStudents([...parsed])
-          };
-        }
-      }
-    } catch (e) { }
-
-    try {
-      const savedMentors = localStorage.getItem('nitte_saved_mentors');
-      if (savedMentors !== null) {
-        const parsed = JSON.parse(savedMentors);
-        if (Array.isArray(parsed)) {
-          base.users = {
-            ...base.users,
-            mentors: structureAndDeduplicateMentors(parsed)
-          };
-        }
-      }
-    } catch (e) { }
-
-    try {
-      const savedRos = localStorage.getItem('nitte_saved_ros');
-      if (savedRos) {
-        const parsed = JSON.parse(savedRos);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const roMap = new Map();
-          (base.users?.ros || []).forEach(r => roMap.set(r.id?.toUpperCase(), r));
-          parsed.forEach(r => roMap.set(r.id?.toUpperCase(), r));
-          base.users = {
-            ...base.users,
-            ros: Array.from(roMap.values())
-          };
-        }
-      }
-    } catch (e) { }
-
-    try {
-      const savedIssues = localStorage.getItem('nitte_saved_issues');
-      if (savedIssues) {
-        const parsed = JSON.parse(savedIssues);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const issueMap = new Map();
-          (base.issues || []).forEach(i => issueMap.set(i.id, i));
-          parsed.forEach(i => issueMap.set(i.id, i));
-          base = { ...base, issues: Array.from(issueMap.values()) };
-        }
-      }
-    } catch (e) { }
-
-    try {
-      const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
-      if (savedMf) {
-        const parsedMf = JSON.parse(savedMf);
-        if (Array.isArray(parsedMf) && parsedMf.length > 0) {
-          const mfMap = new Map();
-          (base.mentorFeedbacks || []).forEach(f => mfMap.set(f.id, f));
-          parsedMf.forEach(f => mfMap.set(f.id, f));
-          base = { ...base, mentorFeedbacks: Array.from(mfMap.values()) };
-        }
-      }
-    } catch (e) { }
-
-    return base;
-  });
+  const authUserRef = useRef(null);
+  const refreshInFlightRef = useRef(null);
+  const [db, setDbInternal] = useState(() => structuredClone(MOCK_DB));
+  const setDb = update => setDbInternal(previous => stripSecrets(typeof update === 'function' ? update(previous) : update));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isPgConnected, setIsPgConnected] = useState(false);
 
   // Fetch full state from backend or fallback to MOCK_DB if offline
   const fetchDbState = async () => {
-    try {
-      const res = await fetch('/api/db-state');
-      if (!res.ok) throw new Error('Backend offline');
-      const data = await res.json();
-      setDb(prev => {
-        let recs = (data.recordings && data.recordings.length) ? data.recordings : (prev.recordings || []);
-        if (!recs || !recs.length) {
-          try {
-            const saved = localStorage.getItem('nitte_saved_recordings');
-            if (saved) recs = JSON.parse(saved);
-          } catch (e) { }
-        }
-
-        // Preserve and sync category videos from server or localStorage
-        let catVideos = (data.categoryVideos && data.categoryVideos.length) ? data.categoryVideos : (prev.categoryVideos || []);
-        if (!catVideos || !catVideos.length) {
-          try {
-            const savedVideos = localStorage.getItem('nitte_saved_category_videos');
-            if (savedVideos) catVideos = JSON.parse(savedVideos);
-          } catch (e) { }
-        }
-        if (!catVideos || !catVideos.length) {
-          catVideos = MOCK_DB.categoryVideos;
-        } else {
-          try {
-            localStorage.setItem('nitte_saved_category_videos', JSON.stringify(catVideos));
-          } catch (e) { }
-        }
-
-        // Authoritative students sync from server
-        let mergedStudents = [];
-        if (data.users && Array.isArray(data.users.students)) {
-          mergedStudents = structureAndDeduplicateStudents(data.users.students);
-          try {
-            localStorage.setItem('nitte_saved_students', JSON.stringify(mergedStudents));
-          } catch (e) { }
-        } else {
-          try {
-            const cachedStudents = localStorage.getItem('nitte_saved_students');
-            if (cachedStudents) {
-              const parsed = JSON.parse(cachedStudents);
-              if (Array.isArray(parsed)) mergedStudents = structureAndDeduplicateStudents(parsed);
-            }
-          } catch (e) { }
-        }
-
-        // Authoritative mentors sync from server
-        let mergedMentors = [];
-        if (data.users && Array.isArray(data.users.mentors)) {
-          mergedMentors = structureAndDeduplicateMentors(data.users.mentors);
-          try {
-            localStorage.setItem('nitte_saved_mentors', JSON.stringify(mergedMentors));
-          } catch (e) { }
-        } else {
-          try {
-            const cachedMentors = localStorage.getItem('nitte_saved_mentors');
-            if (cachedMentors) {
-              const parsed = JSON.parse(cachedMentors);
-              if (Array.isArray(parsed)) mergedMentors = structureAndDeduplicateMentors(parsed);
-            }
-          } catch (e) { }
-        }
-
-        // Save server issues into local storage cache, preserving local feedback & shiftedToLocalStorage status
-        let mergedIssues = Array.isArray(data.issues) && data.issues.length ? [...data.issues] : [];
-        try {
-          const savedIssuesStr = localStorage.getItem('nitte_saved_issues');
-          if (savedIssuesStr) {
-            const savedIssues = JSON.parse(savedIssuesStr);
-            if (Array.isArray(savedIssues) && savedIssues.length > 0) {
-              if (mergedIssues.length === 0) {
-                // If server returned 0 issues (due to connection hiccup), DO NOT wipe local state!
-                mergedIssues = savedIssues;
-              } else {
-                mergedIssues = mergedIssues.map(di => {
-                  const savedMatch = savedIssues.find(si => (si.id || si.issue_id)?.toUpperCase() === (di.id || di.issue_id)?.toUpperCase());
-                  if (savedMatch) {
-                    const isLocallyEscalated = savedMatch.status === 'Escalated' || savedMatch.status === 'Re-escalated' || Boolean(savedMatch.isReEscalated);
-                    const isLocallyResolved = savedMatch.status === 'Resolved' || savedMatch.status === 'Closed';
-                    const isLocallyMeetingStarted = savedMatch.status === 'Meeting Started';
-                    const isLocallyMeetingScheduled = savedMatch.status === 'Meeting Scheduled';
-                    const resolvedStatus = isLocallyResolved ? 'Resolved' : (
-                      isLocallyEscalated ? (savedMatch.status === 'Re-escalated' ? 'Re-escalated' : 'Escalated') : (
-                        isLocallyMeetingStarted ? 'Meeting Started' : (
-                          isLocallyMeetingScheduled ? 'Meeting Scheduled' : di.status
-                        )
-                      )
-                    );
-                    return {
-                      ...di,
-                      status: resolvedStatus,
-                      escalationReason: savedMatch.escalationReason || di.escalationReason,
-                      escalatedAt: savedMatch.escalatedAt || di.escalatedAt,
-                      escalatedBy: savedMatch.escalatedBy || di.escalatedBy,
-                      isReEscalated: savedMatch.isReEscalated || di.isReEscalated,
-                      reEscalatedCount: savedMatch.reEscalatedCount || di.reEscalatedCount,
-                      resolvedAt: savedMatch.resolvedAt || di.resolvedAt,
-                      resolutionNotes: savedMatch.resolutionNotes || di.resolutionNotes,
-                      logs: (savedMatch.logs && savedMatch.logs.length > (di.logs || []).length) ? savedMatch.logs : (di.logs || []),
-                      feedback: savedMatch.feedback || di.feedback,
-                      feedbackRating: savedMatch.feedbackRating || di.feedbackRating,
-                      feedbackComments: savedMatch.feedbackComments || di.feedbackComments,
-                      rating: savedMatch.rating || di.rating,
-                      shiftedToLocalStorage: savedMatch.shiftedToLocalStorage || di.shiftedToLocalStorage,
-                      shiftedAt: savedMatch.shiftedAt || di.shiftedAt
-                    };
-                  }
-                  return di;
-                });
-
-                // Preserve any recently created issues not yet synced in server response (within last 15 mins)
-                const serverIdSet = new Set(mergedIssues.map(di => (di.id || di.issue_id)?.toUpperCase()));
-                const recentSaved = savedIssues.filter(si => {
-                  const sId = (si.id || si.issue_id)?.toUpperCase();
-                  if (!sId || serverIdSet.has(sId)) return false;
-                  const age = Date.now() - new Date(si.createdAt || si.created_at || 0).getTime();
-                  return isNaN(age) || age < 15 * 60 * 1000;
-                });
-                if (recentSaved.length > 0) {
-                  mergedIssues = [...recentSaved, ...mergedIssues];
-                }
-              }
-            }
-          }
-        } catch (e) { }
-
-        // Clean out any historical duplicate test IDs
-        const blacklistedDuplicateIds = new Set(['ISS-887', 'ISS-593', 'ISS-755']);
-        mergedIssues = mergedIssues.filter(i => !blacklistedDuplicateIds.has((i.id || i.issue_id)?.toUpperCase()));
-
-        // Strict deduplication by ID and normalization
-        const issueIdMap = new Map();
-        for (const iss of mergedIssues) {
-          const cleanKey = (iss.id || iss.issue_id || '').toUpperCase();
-          if (!cleanKey) continue;
-          if (!issueIdMap.has(cleanKey)) {
-            issueIdMap.set(cleanKey, {
-              ...iss,
-              id: iss.id || iss.issue_id,
-              studentId: iss.studentId || iss.student_id,
-              student_id: iss.student_id || iss.studentId,
-              studentName: iss.studentName || iss.student_name,
-              student_name: iss.student_name || iss.studentName,
-              roId: iss.roId || iss.ro_id,
-              ro_id: iss.ro_id || iss.roId,
-              createdAt: iss.createdAt || iss.created_at,
-              created_at: iss.created_at || iss.createdAt
-            });
-          }
-        }
-        mergedIssues = Array.from(issueIdMap.values());
-        try {
-          localStorage.setItem('nitte_saved_issues', JSON.stringify(mergedIssues));
-        } catch (e) { }
-        data.issues = mergedIssues;
-
-        // Save and merge server meetings with local storage cache and active React state
-        let mergedMeetings = Array.isArray(data.meetings) && data.meetings.length ? [...data.meetings] : [];
-        try {
-          const savedMeetingsStr = localStorage.getItem('nitte_saved_meetings');
-          if (savedMeetingsStr) {
-            const savedMeetings = JSON.parse(savedMeetingsStr);
-            if (Array.isArray(savedMeetings) && savedMeetings.length > 0) {
-              if (mergedMeetings.length === 0) {
-                mergedMeetings = savedMeetings;
-              } else {
-                mergedMeetings = mergedMeetings.map(dm => {
-                  const savedMatch = savedMeetings.find(sm =>
-                    (sm.id && (sm.id === dm.id || sm.id === dm.issueId)) ||
-                    (sm.issueId && (sm.issueId === dm.issueId || sm.issueId === dm.id))
-                  );
-                  if (savedMatch) return mergeMeetingRecord(dm, savedMatch);
-                  return dm;
-                });
-                const serverMeetIds = new Set(mergedMeetings.map(m => String(m.id || '').trim().toUpperCase()));
-                const serverIssueIds = new Set(mergedMeetings.map(getMeetingIssueId).filter(Boolean));
-                const missingSaved = savedMeetings.filter(sm =>
-                  !serverMeetIds.has(String(sm.id || '').trim().toUpperCase()) &&
-                  !serverIssueIds.has(getMeetingIssueId(sm))
-                );
-                if (missingSaved.length > 0) {
-                  mergedMeetings = [...missingSaved, ...mergedMeetings];
-                }
-              }
-            }
-          }
-        } catch (e) { }
-
-        // Server/cache lifecycle merging above preserves pending updates without reviving ended calls.
-
-        mergedMeetings = getUniqueMeetings(mergedMeetings);
-        try {
-          localStorage.setItem('nitte_saved_meetings', JSON.stringify(mergedMeetings));
-        } catch (e) { }
-        data.meetings = mergedMeetings;
-
-        // Merge and persist mentor session records (guarantees local drafts & submissions are never wiped)
-        let mergedMentorRecords = Array.isArray(data.mentorSessionRecords) ? [...data.mentorSessionRecords] : [];
-        try {
-          const savedRecs = JSON.parse(localStorage.getItem('nitte_saved_mentor_records') || '[]');
-          if (Array.isArray(savedRecs) && savedRecs.length > 0) {
-            const serverRecIds = new Set(mergedMentorRecords.map(r => r.id));
-            const missingRecs = savedRecs.filter(r => !serverRecIds.has(r.id));
-            mergedMentorRecords = [...mergedMentorRecords, ...missingRecs];
-          }
-          localStorage.setItem('nitte_saved_mentor_records', JSON.stringify(mergedMentorRecords));
-        } catch (e) { }
-        data.mentorSessionRecords = mergedMentorRecords;
-
-        // Save mentor feedbacks into local storage cache
-        let currentFeedbacks = (data.mentorFeedbacks && data.mentorFeedbacks.length) ? data.mentorFeedbacks : (prev.mentorFeedbacks || []);
-        if (!currentFeedbacks || !currentFeedbacks.length) {
-          try {
-            const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
-            if (savedMf) currentFeedbacks = JSON.parse(savedMf);
-          } catch (e) { }
-        }
-        if (!currentFeedbacks || !currentFeedbacks.length) {
-          currentFeedbacks = MOCK_DB.mentorFeedbacks;
-        } else {
-          try {
-            localStorage.setItem('nitte_saved_mentor_feedbacks', JSON.stringify(currentFeedbacks));
-          } catch (e) { }
-        }
-
-        return {
-          ...data,
-          users: {
-            ...data.users,
-            students: mergedStudents,
-            mentors: mergedMentors,
-            ros: (data.users && data.users.ros) ? data.users.ros : prev.users.ros
-          },
-          recordings: recs || [],
-          categoryVideos: catVideos,
-          mentorFeedbacks: currentFeedbacks
-        };
-      });
-      setIsPgConnected(true);
-      setError(null);
-    } catch (err) {
-      console.warn('Backend server offline or connecting, syncing live with Supabase cloud...');
-      let cloudStudents = null;
-      let cloudMentors = null;
-      let cloudRos = null;
-      let cloudIssues = null;
-      let cloudMeetings = null;
-      let cloudFeedbacks = null;
-      let cloudGroupSessions = null;
-      let cloudMentorRecords = null;
-
+    if (!authUserRef.current) { setLoading(false); return; }
+    if (refreshInFlightRef.current) return refreshInFlightRef.current;
+    const currentActor = `${authUserRef.current.role}:${authUserRef.current.id}`;
+    refreshInFlightRef.current = (async () => {
       try {
-        const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-        const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
-
-        const [stuRes, mntRes, rosRes, issRes, meetRes, fbRes, sessRes, recRes] = await Promise.allSettled([
-          fetch(`${SUPABASE_URL}/rest/v1/students?select=*`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/mentors?select=*`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/ros?select=*`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/issues?select=*&order=created_at.desc`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/meetings?select=*`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/mentor_feedbacks?select=*&order=created_at.desc`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/group_sessions?select=*&order=date_time.asc`, { headers }),
-          fetch(`${SUPABASE_URL}/rest/v1/mentor_session_records?select=*&order=created_at.desc`, { headers })
-        ]);
-
-        if (stuRes.status === 'fulfilled' && stuRes.value.ok) {
-          const raw = await stuRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudStudents = raw.map(s => ({
-              id: s.id,
-              name: s.name,
-              email: s.email,
-              mentorId: s.mentor_id || s.mentorId || null,
-              phone: s.phone || '',
-              branch: s.branch || 'CSE',
-              sem: s.sem || 5,
-              password: s.password || 'Nit#Stu2026',
-              role: 'Student'
-            }));
-          }
+        const response = await fetch('/api/db-state', { cache: 'no-store' });
+        if (response.status === 401) {
+          clearPrivateCaches(); authUserRef.current = null; setAuthenticatedUser(null);
+          setDb(structuredClone(MOCK_DB)); setError(null); return;
         }
-
-        if (mntRes.status === 'fulfilled' && mntRes.value.ok) {
-          const raw = await mntRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudMentors = raw.map(m => ({
-              id: m.id,
-              name: m.name,
-              email: m.email,
-              dept: m.dept || 'CSE',
-              class: m.class || '',
-              password: m.password || 'Nit#Mnt2026',
-              role: 'Mentor'
-            }));
-          }
+        if (!response.ok) throw new Error('Your dashboard could not be refreshed. Please retry.');
+        const data = await response.json();
+        if (!authUserRef.current || currentActor !== `${authUserRef.current.role}:${authUserRef.current.id}`) return;
+        if (data.authenticatedUser && (data.authenticatedUser.id !== authUserRef.current.id || data.authenticatedUser.role !== authUserRef.current.role)) {
+          clearPrivateCaches(); authUserRef.current = data.authenticatedUser;
+          setAuthenticatedUser(data.authenticatedUser); setCurrentUser(data.authenticatedUser.role);
         }
-
-        if (rosRes.status === 'fulfilled' && rosRes.value.ok) {
-          const raw = await rosRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudRos = raw.map(r => ({
-              id: r.id,
-              name: r.name,
-              email: r.email,
-              region: r.region || '',
-              password: r.password || 'Nit#Ro2026',
-              role: 'RO'
-            }));
-          }
+        clearResetGrievanceCaches(localStorage, data.grievanceResetVersion);
+        let recordings = [];
+        if (['RO', 'Admin'].includes(authUserRef.current?.role)) {
+          try { recordings = await recordingApiRef.current.list(); } catch { /* A recording upload can be retried independently. */ }
         }
-
-        if (issRes.status === 'fulfilled' && issRes.value.ok) {
-          const raw = await issRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudIssues = raw.map(i => ({
-              id: i.id,
-              studentId: i.student_id || i.studentId,
-              studentName: i.student_name || i.studentName,
-              category: i.category,
-              description: i.description,
-              priority: i.priority || 'Medium',
-              status: i.status || 'Assigned to RO',
-              roId: i.ro_id || i.roId,
-              createdAt: i.created_at || i.createdAt,
-              resolvedAt: i.resolved_at || i.resolvedAt,
-              resolutionNotes: i.resolution_notes || i.resolutionNotes,
-              feedbackRating: i.feedback_rating || i.feedbackRating,
-              feedbackComments: i.feedback_comments || i.feedbackComments,
-              logs: Array.isArray(i.logs) ? i.logs : []
-            }));
-          }
-        }
-
-        if (meetRes.status === 'fulfilled' && meetRes.value.ok) {
-          const raw = await meetRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudMeetings = raw.map(m => ({
-              id: m.id,
-              issueId: m.issue_id || m.issueId,
-              studentId: m.student_id || m.studentId,
-              studentName: m.student_name || m.studentName,
-              roId: m.ro_id || m.roId,
-              date: m.date,
-              time: m.time,
-              mode: m.mode || 'Online',
-              location: m.location || 'In-App Online Video Call Portal',
-              notes: m.notes || '',
-              status: m.status || 'Confirmed'
-            }));
-          }
-        }
-
-        if (fbRes.status === 'fulfilled' && fbRes.value.ok) {
-          const raw = await fbRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudFeedbacks = raw;
-          }
-        }
-
-        if (sessRes.status === 'fulfilled' && sessRes.value.ok) {
-          const raw = await sessRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudGroupSessions = raw.map(s => ({
-              id: s.id,
-              mentorId: s.mentor_id || s.mentorId,
-              mentorName: s.mentor_name || s.mentorName,
-              title: s.title,
-              dateTime: s.date_time || s.dateTime,
-              description: s.description,
-              link: s.link
-            }));
-          }
-        }
-
-        if (recRes && recRes.status === 'fulfilled' && recRes.value.ok) {
-          const raw = await recRes.value.json();
-          if (Array.isArray(raw)) {
-            cloudMentorRecords = raw.map(r => ({
-              id: r.id,
-              mentorId: r.mentor_id || r.mentorId,
-              sessionDate: r.session_date || r.sessionDate,
-              studentsAttended: typeof r.students_attended === 'number' ? r.students_attended : (parseInt(r.students_attended) || 0),
-              topic: r.topic,
-              notes: r.notes,
-              whichClass: r.which_class || r.whichClass,
-              location: r.location,
-              status: r.status || 'Submitted',
-              createdAt: r.created_at || r.createdAt
-            }));
-          }
-        }
-
-        if (cloudStudents || cloudMentors || cloudRos) {
-          setIsPgConnected(true);
-        }
-      } catch (cloudErr) {
-        console.warn('Supabase direct query notice:', cloudErr?.message || cloudErr);
-      }
-
-      setDb(prev => {
-        let recs = prev.recordings || [];
-        if (!recs.length) {
-          try {
-            const saved = localStorage.getItem('nitte_saved_recordings');
-            if (saved) recs = JSON.parse(saved);
-          } catch (e) { }
-        }
-
-        let catVideos = prev.categoryVideos || [];
-        if (!catVideos || !catVideos.length) {
-          try {
-            const savedVideos = localStorage.getItem('nitte_saved_category_videos');
-            if (savedVideos) catVideos = JSON.parse(savedVideos);
-          } catch (e) { }
-        }
-        if (!catVideos || !catVideos.length) {
-          catVideos = MOCK_DB.categoryVideos;
-        }
-
-        let currentIssues = (cloudIssues && cloudIssues.length > 0) ? cloudIssues : ((prev.issues && prev.issues.length) ? prev.issues : []);
-        try {
-          const saved = localStorage.getItem('nitte_saved_issues');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const savedMap = new Map(parsed.map(si => [(si.id || si.issue_id)?.toUpperCase(), si]));
-              currentIssues = (currentIssues.length > 0 ? currentIssues : parsed).map(ci => {
-                const key = (ci.id || ci.issue_id)?.toUpperCase();
-                return savedMap.has(key) ? { ...ci, ...savedMap.get(key) } : ci;
-              });
-              parsed.forEach(si => {
-                const key = (si.id || si.issue_id)?.toUpperCase();
-                if (!currentIssues.some(ci => (ci.id || ci.issue_id)?.toUpperCase() === key)) {
-                  currentIssues.push(si);
-                }
-              });
-            }
-          }
-        } catch (e) { }
-        if (!currentIssues.length) {
-          currentIssues = MOCK_DB.issues;
-        }
-
-        let currentFeedbacks = (cloudFeedbacks && cloudFeedbacks.length > 0) ? cloudFeedbacks : ((prev.mentorFeedbacks && prev.mentorFeedbacks.length) ? prev.mentorFeedbacks : []);
-        if (!currentFeedbacks.length) {
-          try {
-            const savedMf = localStorage.getItem('nitte_saved_mentor_feedbacks');
-            if (savedMf) {
-              const parsedMf = JSON.parse(savedMf);
-              if (Array.isArray(parsedMf) && parsedMf.length > 0) currentFeedbacks = parsedMf;
-            }
-          } catch (e) { }
-        }
-        if (!currentFeedbacks.length) {
-          currentFeedbacks = MOCK_DB.mentorFeedbacks;
-        }
-
-        let currentMeetings = (cloudMeetings && cloudMeetings.length > 0) ? cloudMeetings : ((prev.meetings && prev.meetings.length) ? prev.meetings : []);
-        try {
-          const savedMeetings = localStorage.getItem('nitte_saved_meetings');
-          if (savedMeetings) {
-            const parsed = JSON.parse(savedMeetings);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const savedMap = new Map(parsed.map(m => [String(m.id || m.issueId || m.issue_id).toUpperCase(), m]));
-              if (currentMeetings.length > 0) {
-                currentMeetings = currentMeetings.map(m => {
-                  const key = String(m.id || m.issueId || m.issue_id).toUpperCase();
-                  return savedMap.has(key) ? { ...m, ...savedMap.get(key) } : m;
-                });
-                parsed.forEach(sm => {
-                  const key = String(sm.id || sm.issueId || sm.issue_id).toUpperCase();
-                  if (!currentMeetings.some(cm => String(cm.id || cm.issueId || cm.issue_id).toUpperCase() === key)) {
-                    currentMeetings.push(sm);
-                  }
-                });
-              } else {
-                currentMeetings = parsed;
-              }
-            }
-          }
-        } catch (e) { }
-        if (!currentMeetings.length) {
-          currentMeetings = MOCK_DB.meetings;
-        }
-
-        let currentSchedules = prev.mentoringSchedules || null;
-        if (!currentSchedules) {
-          try {
-            const savedSched = localStorage.getItem('nitte_saved_mentor_schedules');
-            if (savedSched) {
-              currentSchedules = JSON.parse(savedSched);
-            }
-          } catch (e) { }
-        }
-        if (!currentSchedules) {
-          currentSchedules = MOCK_DB.mentoringSchedules;
-        }
-
-        // Authoritative students sync: Supabase Cloud is primary source of truth
-        let currentStudents;
-        if (cloudStudents !== null) {
-          currentStudents = structureAndDeduplicateStudents(cloudStudents);
-          try {
-            localStorage.setItem('nitte_saved_students', JSON.stringify(currentStudents));
-          } catch (e) { }
-        } else {
-          // Cloud offline fallback
-          let cached = [];
-          try {
-            const raw = localStorage.getItem('nitte_saved_students');
-            if (raw) cached = JSON.parse(raw);
-          } catch (e) { }
-          currentStudents = structureAndDeduplicateStudents(cached.length ? cached : [...(prev.users?.students || [])]);
-        }
-
-        // Authoritative mentors sync: Supabase Cloud is primary source of truth
-        let currentMentors;
-        if (cloudMentors !== null) {
-          currentMentors = structureAndDeduplicateMentors(cloudMentors);
-          try {
-            localStorage.setItem('nitte_saved_mentors', JSON.stringify(currentMentors));
-          } catch (e) { }
-        } else {
-          let cachedM = [];
-          try {
-            const rawM = localStorage.getItem('nitte_saved_mentors');
-            if (rawM) cachedM = JSON.parse(rawM);
-          } catch (e) { }
-          currentMentors = structureAndDeduplicateMentors(
-            cachedM.length ? cachedM : [...(prev.users?.mentors || [])]
-          );
-        }
-
-        // ROs from Cloud or Prev or Fallback
-        const currentRos = (cloudRos && cloudRos.length > 0)
-          ? cloudRos
-          : ((prev.users && prev.users.ros && prev.users.ros.length > 0) ? prev.users.ros : MOCK_DB.users.ros);
-
-        let currentMentorRecords = (cloudMentorRecords && cloudMentorRecords.length > 0)
-          ? cloudMentorRecords
-          : ((prev.mentorSessionRecords && prev.mentorSessionRecords.length > 0) ? prev.mentorSessionRecords : []);
-        try {
-          const savedRecs = JSON.parse(localStorage.getItem('nitte_saved_mentor_records') || '[]');
-          if (Array.isArray(savedRecs) && savedRecs.length > 0) {
-            const existingIds = new Set(currentMentorRecords.map(r => r.id));
-            const missing = savedRecs.filter(r => !existingIds.has(r.id));
-            currentMentorRecords = [...currentMentorRecords, ...missing];
-          }
-        } catch (e) { }
-
-        return {
-          ...prev,
-          users: {
-            ...prev.users,
-            students: currentStudents,
-            mentors: currentMentors,
-            ros: currentRos
-          },
-          issues: currentIssues,
-          meetings: currentMeetings,
-          mentorFeedbacks: currentFeedbacks,
-          mentoringSchedules: currentSchedules,
-          mentorSessionRecords: currentMentorRecords,
-          recordings: recs,
-          categoryVideos: catVideos,
-          groupSessions: (cloudGroupSessions && cloudGroupSessions.length > 0) ? cloudGroupSessions : (prev.groupSessions || [])
-        };
-      });
-      setError(null);
-    } finally {
-      setLoading(false);
-    }
+        setDb({ ...structuredClone(MOCK_DB), ...data, recordings });
+        setIsPgConnected(data.isPgConnected !== false); setError(null);
+      } catch (failure) { setError(failure.message || 'Your dashboard is temporarily unavailable.'); }
+      finally { setLoading(false); refreshInFlightRef.current = null; }
+    })();
+    return refreshInFlightRef.current;
   };
 
   useEffect(() => {
-    fetchDbState();
-    const pollInterval = setInterval(() => {
-      fetchDbState();
-    }, 3000);
-
-    let bc;
-    let videoBc;
-    let feedbackBc;
-    let stateBc;
-    const handleStorageChange = (e) => {
-      if (e.key === 'nitte_saved_meetings' && e.newValue) {
-        try {
-          const parsed = JSON.parse(e.newValue);
-          if (Array.isArray(parsed)) {
-            setDb(prev => ({ ...prev, meetings: parsed }));
-          }
-        } catch (err) { }
-      }
-      if (e.key === 'nitte_saved_issues' && e.newValue) {
-        try {
-          const parsed = JSON.parse(e.newValue);
-          if (Array.isArray(parsed)) {
-            setDb(prev => ({ ...prev, issues: parsed }));
-          }
-        } catch (err) { }
-      }
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('storage', handleStorageChange);
-    }
-
-    try {
-      if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        bc = new BroadcastChannel('nitte_meeting_sync');
-        bc.onmessage = (event) => {
-          if (event.data && event.data.type === 'meeting_status') {
-            const { meetId, status, updatedMeetings } = event.data;
-            const targetId = String(meetId || '').trim().toUpperCase();
-            setDb(prev => {
-              let updated;
-              if (Array.isArray(updatedMeetings) && updatedMeetings.length > 0) {
-                updated = updatedMeetings;
-              } else {
-                let found = false;
-                updated = (prev.meetings || []).map(m => {
-                  const matches = (
-                    (m.id && String(m.id).toUpperCase() === targetId) ||
-                    (m.issueId && String(m.issueId).toUpperCase() === targetId) ||
-                    (m.issue_id && String(m.issue_id).toUpperCase() === targetId)
-                  );
-                  if (matches) {
-                    found = true;
-                    return {
-                      ...m,
-                      status,
-                      ...(status === 'Started' ? { endedByRo: false, endedAt: null, startedAt: new Date().toISOString() } : {}),
-                      ...(status === 'Completed' || status === 'Finished' ? { endedByRo: true, endedAt: new Date().toISOString() } : {})
-                    };
-                  }
-                  return m;
-                });
-                if (!found && status === 'Started') {
-                  const parentIss = (prev.issues || []).find(i =>
-                    (i.id && String(i.id).toUpperCase() === targetId) ||
-                    (i.issue_id && String(i.issue_id).toUpperCase() === targetId)
-                  );
-                  if (parentIss) {
-                    updated.push({
-                      id: `MEET-${parentIss.id || Date.now()}`,
-                      issueId: parentIss.id,
-                      issue_id: parentIss.id,
-                      studentId: parentIss.studentId,
-                      student_id: parentIss.studentId,
-                      studentName: parentIss.studentName,
-                      student_name: parentIss.studentName,
-                      roId: parentIss.roId || 'RO-01',
-                      ro_id: parentIss.roId || 'RO-01',
-                      date: new Date().toISOString().split('T')[0],
-                      time: '11:00',
-                      mode: 'Online',
-                      location: 'In-App Online Video Call Portal',
-                      status,
-                      endedByRo: false,
-                      startedAt: new Date().toISOString(),
-                      endedAt: null
-                    });
-                  }
-                }
-              }
-              // Synchronize matching issue status safely across tabs
-              const updatedIssues = (event.data.updatedIssues && Array.isArray(event.data.updatedIssues))
-                ? event.data.updatedIssues
-                : (prev.issues || []).map(i => {
-                    const iId = String(i.id || i.issue_id || '').toUpperCase();
-                    const isTarget = iId === targetId;
-                    if (!isTarget) return i;
-                    if (i.status === 'Resolved' || i.status === 'Closed' || i.status === 'Escalated' || i.status === 'Re-escalated') {
-                      return i;
-                    }
-                    if (status === 'Started') {
-                      return { ...i, status: 'Meeting Started', meetingStartedAt: new Date().toISOString() };
-                    } else if (status === 'Completed' || status === 'Finished') {
-                      return { ...i, status: i.status === 'Meeting Started' ? 'In-Progress' : i.status, meetingCompletedAt: new Date().toISOString() };
-                    } else if (status === 'Cancelled') {
-                      return { ...i, status: i.status === 'Meeting Scheduled' ? 'In-Progress' : i.status };
-                    }
-                    return i;
-                  });
-
-              try {
-                localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
-                localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-              } catch (e) { }
-              return {
-                ...prev,
-                meetings: updated,
-                issues: updatedIssues
-              };
-            });
-          } else if (event.data && event.data.type === 'meeting_scheduled') {
-            const { meeting, issueId, log } = event.data;
-            setDb(prev => {
-              const updatedMeetings = [...(prev.meetings || []).filter(m => (m.issueId || m.issue_id)?.toUpperCase() !== issueId?.toUpperCase()), meeting];
-              const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase() ? {
-                ...i,
-                status: (i.status === 'Resolved' || i.status === 'Closed' || i.status === 'Escalated' || i.status === 'Re-escalated') ? i.status : 'Meeting Scheduled',
-                logs: log ? [...(i.logs || []), log] : (i.logs || [])
-              } : i);
-              try {
-                localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
-                localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-              } catch (e) { }
-              return {
-                ...prev,
-                meetings: updatedMeetings,
-                issues: updatedIssues
-              };
-            });
-          }
-        };
-
-        // Real-time zero-latency sync for RO guidance videos across tabs
-        videoBc = new BroadcastChannel('nitte_video_sync');
-        videoBc.onmessage = (event) => {
-          if (event.data && event.data.type === 'category_video_updated' && event.data.entry) {
-            const entry = event.data.entry;
-            setDb(prev => {
-              const existing = (prev.categoryVideos || []).filter(
-                v => v.category?.toLowerCase()?.trim() !== entry.category?.toLowerCase()?.trim()
-              );
-              const merged = [entry, ...existing];
-              try {
-                localStorage.setItem('nitte_saved_category_videos', JSON.stringify(merged));
-              } catch (e) { }
-              return {
-                ...prev,
-                categoryVideos: merged
-              };
-            });
-          }
-        };
-
-        // Real-time zero-latency sync for student feedback across tabs
-        feedbackBc = new BroadcastChannel('nitte_feedback_sync');
-        feedbackBc.onmessage = (event) => {
-          if (event.data && event.data.type === 'feedback_submitted') {
-            const { issueId, feedback, shiftedToLocalStorage } = event.data;
-            setDb(prev => {
-              const updated = (prev.issues || []).map(i =>
-                (i.id === issueId || i.issue_id === issueId || (i.id && issueId && i.id.toUpperCase() === issueId.toUpperCase()))
-                  ? {
-                    ...i,
-                    feedback,
-                    feedbackRating: feedback.rating,
-                    rating: feedback.rating,
-                    feedbackComments: feedback.comments,
-                    shiftedToLocalStorage: true,
-                    shiftedAt: new Date().toISOString()
-                  }
-                  : i
-              );
-              try {
-                localStorage.setItem('nitte_saved_issues', JSON.stringify(updated));
-              } catch (e) { }
-              return {
-                ...prev,
-                issues: updated
-              };
-            });
-          }
-        };
-
-        // Real-time zero-latency sync for escalated / re-escalated tickets across tabs
-        stateBc = new BroadcastChannel('nitte_state_sync');
-        stateBc.onmessage = (event) => {
-          if (event.data && (event.data.type === 'issue_escalated' || event.data.type === 'issue_re_escalated')) {
-            const { issueId, roId, reason, isReEscalated, timestamp } = event.data;
-            const cleanId = String(issueId || '').trim().toUpperCase();
-            setDb(prev => {
-              const updated = (prev.issues || []).map(i => {
-                if ((i.id || i.issue_id)?.toUpperCase() === cleanId) {
-                  const logMsg = isReEscalated
-                    ? `Issue RE-ESCALATED / Urgency Remarks Updated to Admin by RO ${roId}. Remarks: ${reason}`
-                    : `Issue ESCALATED to Admin by RO ${roId}. Reason: ${reason}`;
-                  return {
-                    ...i,
-                    status: isReEscalated ? 'Re-escalated' : 'Escalated',
-                    escalatedAt: timestamp || new Date().toISOString(),
-                    escalatedBy: roId,
-                    escalationReason: reason,
-                    isReEscalated: Boolean(isReEscalated),
-                    reEscalatedCount: (Number(i.reEscalatedCount) || 0) + (isReEscalated ? 1 : 0),
-                    logs: [...(i.logs || []), { time: new Date().toLocaleString(), text: logMsg }]
-                  };
-                }
-                return i;
-              });
-              try {
-                localStorage.setItem('nitte_saved_issues', JSON.stringify(updated));
-              } catch (e) { }
-              return { ...prev, issues: updated };
-            });
-          }
-        };
-      }
-    } catch (e) { }
-
+    const refresh = () => { if (document.visibilityState === 'visible') fetchDbState(); };
+    const timer = setInterval(refresh, 3000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    const channels = ['nitte_meeting_sync', 'nitte_state_sync', 'nitte_category_video_sync', 'nitte_feedback_sync']
+      .map(name => { try { const channel = new BroadcastChannel(name); channel.onmessage = refresh; return channel; } catch { return null; } });
     return () => {
-      clearInterval(pollInterval);
-      if (bc) bc.close();
-      if (videoBc) videoBc.close();
-      if (feedbackBc) feedbackBc.close();
-      if (stateBc) stateBc.close();
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('storage', handleStorageChange);
-      }
+      clearInterval(timer); window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh); channels.forEach(channel => channel?.close());
     };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('curr_user_role', currentUser);
+    safeCacheSetItem('curr_user_role', currentUser);
   }, [currentUser]);
 
   const [isDemoLimitBypassed, setIsDemoLimitBypassed] = useState(false);
@@ -1655,9 +716,9 @@ export const DatabaseProvider = ({ children }) => {
     const effectiveStudentId = student.id || cleanStudentId;
     const effectiveStudentName = student.name || 'Student';
 
-    const catIdx = ALL_CATEGORIES.indexOf(category);
-    const roId = catIdx !== -1 ? `RO-${String(catIdx + 1).padStart(2, '0')}` : 'RO-01';
-    const ro = (db.users?.ros || []).find(r => r.id === roId);
+    const ro = findRoForCategory(db.users?.ros || [], category);
+    if (!ro) throw new Error('This issue category has no imported Relationship Officer. Please contact Admin.');
+    const roId = ro.id;
 
     const localQuota = getGrievanceQuota({ issues: db.issues || [], studentId: effectiveStudentId });
     if (localQuota.isLocked) {
@@ -1716,7 +777,7 @@ export const DatabaseProvider = ({ children }) => {
       status: initialStatus,
       roId,
       ro_id: roId,
-      roName: ro ? ro.name : (catIdx !== -1 ? `RO - ${category.split(' - ')[1] || 'Officer'}` : 'RO Officer'),
+      roName: ro.name,
       createdAt: timestamp,
       created_at: timestamp,
       logs: [{ time: new Date().toLocaleString(), text: logText }]
@@ -1727,7 +788,7 @@ export const DatabaseProvider = ({ children }) => {
       const prevWithoutSameId = (prev.issues || []).filter(i => (i.id || i.issue_id)?.toUpperCase() !== issueId.toUpperCase());
       const updatedIssues = [newIssueObj, ...prevWithoutSameId];
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
       return { ...prev, issues: updatedIssues };
     });
@@ -1761,34 +822,10 @@ export const DatabaseProvider = ({ children }) => {
     const isReschedule = Boolean(
       existingMeet ||
       issue.status === 'Meeting Scheduled' ||
-      issue.status === 'Meeting Started' ||
-      issue.status === 'In-Progress' ||
-      issue.status === 'In Progress'
+      issue.status === 'Meeting Started'
     );
 
-    const getLogText = (l) => {
-      if (!l) return '';
-      if (typeof l === 'string') {
-        if (l.trim().startsWith('{') && l.includes('"text"')) {
-          try { const p = JSON.parse(l); if (p && p.text) return String(p.text); } catch (e) { }
-        }
-        return l;
-      }
-      if (typeof l === 'object' && l.text) return String(l.text);
-      return String(l);
-    };
-
-    const reassignLogs = (issue.logs || []).filter(l => {
-      const txt = getLogText(l).toLowerCase();
-      return (txt.includes('rescheduled') || txt.includes('reassigned') || txt.includes('re-assigned')) && !txt.includes('reassigned to');
-    }).concat(
-      (existingMeet?.logs || []).filter(l => {
-        const txt = getLogText(l).toLowerCase();
-        return txt.includes('meeting scheduled') || txt.includes('meeting rescheduled') || txt.includes('meeting reassigned');
-      })
-    );
-
-    if (isReschedule && reassignLogs.length >= 2) {
+    if (isReschedule && getMeetingReassignmentCount(issue, existingMeet) >= MEETING_REASSIGNMENT_LIMIT) {
       alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). Escalate to Admin for further changes.');
       throw new Error('RO Limit Reached: Maximum 2 meeting reassignments allowed per issue.');
     }
@@ -1824,16 +861,12 @@ export const DatabaseProvider = ({ children }) => {
       endedByRo: false,
       endedAt: null
     };
-    const timestamp = new Date().toLocaleString();
-    let logMsg = isReschedule
-      ? `Meeting rescheduled / reassigned by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`
-      : `Meeting scheduled by RO (${mode || 'Offline'}) for ${date} at ${time} (${meetingLocation}).`;
-
-    if (cleanFeedback) {
-      logMsg += ` | [REASSIGN FEEDBACK]: "${cleanFeedback}"`;
-    } else if (cleanMinutes) {
-      logMsg += ` | [LOGGED DISCUSSION MINUTES]: "${cleanMinutes}"`;
-    }
+    const scheduleEventId = `schedule:${crypto.randomUUID()}`;
+    const scheduleEvent = createMeetingScheduleEvent({
+      id: scheduleEventId, timestamp: new Date().toISOString(), isReschedule,
+      meetingId: newMeeting.id, date, time, mode: mode || 'Offline', location: meetingLocation,
+      roId, feedback: cleanFeedback, discussionMinutes: cleanMinutes
+    });
 
     // 1. Instantly update local React state and localStorage so Student & RO Dashboards update immediately
     setDb(prev => {
@@ -1841,12 +874,12 @@ export const DatabaseProvider = ({ children }) => {
       const updatedIssues = (prev.issues || []).map(i => (i.id || i.issue_id)?.toUpperCase() === issueId?.toUpperCase() ? {
         ...i,
         status: 'Meeting Scheduled',
-        logs: [...(i.logs || []), { time: timestamp, text: logMsg }]
+        logs: [...(i.logs || []), scheduleEvent]
       } : i);
 
       try {
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       return {
@@ -1864,7 +897,7 @@ export const DatabaseProvider = ({ children }) => {
           type: 'meeting_scheduled',
           meeting: newMeeting,
           issueId,
-          log: { time: timestamp, text: logMsg }
+          log: scheduleEvent
         });
         bc.close();
       }
@@ -1990,6 +1023,7 @@ export const DatabaseProvider = ({ children }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: newMeeting.id,
+          scheduleEventId,
           isReschedule,
           issueId,
           studentId: validStudentId,
@@ -2080,7 +1114,7 @@ export const DatabaseProvider = ({ children }) => {
 
       updatedIssuesList = updatedIssues;
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       return {
@@ -2205,7 +1239,7 @@ export const DatabaseProvider = ({ children }) => {
       );
       const updatedList = [newRec, ...existing];
       try {
-        localStorage.setItem('nitte_saved_mentor_records', JSON.stringify(updatedList));
+        safeCacheSetItem('nitte_saved_mentor_records', JSON.stringify(updatedList));
       } catch (e) { }
       return {
         ...prev,
@@ -2320,7 +1354,7 @@ Department of Student Welfare & Mentorship
         }
       };
       try {
-        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+        safeCacheSetItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
       } catch (e) { }
       return {
         ...prev,
@@ -2342,7 +1376,7 @@ Department of Student Welfare & Mentorship
         }
       };
       try {
-        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+        safeCacheSetItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
       } catch (e) { }
       return {
         ...prev,
@@ -2376,7 +1410,7 @@ Department of Student Welfare & Mentorship
         }
       };
       try {
-        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+        safeCacheSetItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
       } catch (e) { }
       return {
         ...prev,
@@ -2400,7 +1434,7 @@ Department of Student Welfare & Mentorship
         }
       };
       try {
-        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+        safeCacheSetItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
       } catch (e) { }
       return {
         ...prev,
@@ -2475,7 +1509,7 @@ Office of Student Welfare & Academic Mentorship
         }
       };
       try {
-        localStorage.setItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
+        safeCacheSetItem('nitte_saved_mentor_schedules', JSON.stringify(updatedSchedules));
       } catch (e) { }
       return {
         ...prev,
@@ -2505,7 +1539,7 @@ Office of Student Welfare & Academic Mentorship
     setDb(prev => {
       const updated = [newFeedback, ...(prev.mentorFeedbacks || [])];
       try {
-        localStorage.setItem('nitte_saved_mentor_feedbacks', JSON.stringify(updated));
+        safeCacheSetItem('nitte_saved_mentor_feedbacks', JSON.stringify(updated));
       } catch (e) { }
       return {
         ...prev,
@@ -2626,8 +1660,8 @@ Office of Student Welfare & Academic Mentorship
       });
 
       try {
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updated));
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updated));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       // Broadcast across open tabs for zero-latency synchronization
@@ -2685,40 +1719,23 @@ Office of Student Welfare & Academic Mentorship
     } catch (e) { }
   };
 
-  const saveMeetingRecording = async (meetingId, issueId, durationSeconds, videoUrl, transcriptSummary) => {
-    const timestamp = new Date().toLocaleString();
-    const secs = parseInt(durationSeconds) || 120;
-    const durationFormatted = `${Math.floor(secs / 60)}m ${secs % 60}s`;
-    const recId = `REC-${Date.now()}`;
+  const loadMeetingRecording = id => recordingApiRef.current.get(id);
 
-    const newRec = {
-      id: recId,
-      meetingId,
-      issueId,
-      mode: 'Online Video Call',
-      duration: secs,
-      durationText: durationFormatted,
-      recordedAt: new Date().toISOString(),
-      videoUrl: videoUrl || `https://nitte-cloud-storage.edu/recordings/rec_${issueId}_${Date.now()}.mp4`,
-      transcriptSummary: transcriptSummary || 'Automated speech-to-text transcript summary logged for meeting.'
-    };
-
-    const logText = `[AUTO-RECORDED ONLINE MEETING STORED] Session recording saved (Duration: ${durationFormatted}). Archived in NITTE Cloud Storage.`;
-
+  const saveMeetingRecording = async (meetingId, issueId, durationSeconds, blob, transcriptSummary, { recordingId } = {}) => {
+    const recording = await recordingApiRef.current.save({ recordingId: recordingId || `REC-${crypto.randomUUID()}`, meetingId, issueId, durationSeconds, blob, transcriptSummary });
+    const logText = `Meeting recording saved to the database (${recording.duration} seconds).`;
     setDb(prev => {
-      const updatedRecs = [newRec, ...(prev.recordings || [])];
-      try {
-        localStorage.setItem('nitte_saved_recordings', JSON.stringify(updatedRecs.slice(0, 30)));
-      } catch (e) { }
+      const recordings = ['RO', 'Admin'].includes(recordingActorRef.current?.role)
+        ? [recording, ...(prev.recordings || []).filter(existing => existing.id !== recording.id)] : [];
+      try { safeCacheSetItem('nitte_saved_recordings', JSON.stringify(recordings)); } catch { }
       return {
-        ...prev,
-        recordings: updatedRecs,
-        issues: (prev.issues || []).map(i => (i.id?.toUpperCase() === issueId?.toUpperCase()) ? {
-          ...i,
-          logs: [...(i.logs || []), { time: timestamp, text: logText }]
-        } : i)
+        ...prev, recordings,
+        issues: (prev.issues || []).map(issue => String(issue.id || issue.issue_id).toUpperCase() === String(issueId).toUpperCase()
+          ? { ...issue, logs: [...(issue.logs || []), { id: `recording:${recording.id}`, text: logText, time: recording.recordedAt, actor: recording.roId }] }
+          : issue)
       };
     });
+    return recording;
   };
 
   // RO Action: Submit Post-Meeting Discussion Minutes & Feedback
@@ -2783,8 +1800,8 @@ Office of Student Welfare & Academic Mentorship
       });
 
       try {
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       try {
@@ -2829,13 +1846,26 @@ Office of Student Welfare & Academic Mentorship
   };
 
   // RO Action: Update or add YouTube guidance video for a category
-  const updateCategoryVideo = async (category, videoUrl, title, description, roId) => {
+  const updateCategoryVideo = async (category, videoUrl, title, description, roId, { noVideo = false } = {}) => {
     const cleanCat = (category || '').trim();
+    const setting = getCategoryVideoUpdate({ videoUrl, noVideo });
+    // Publish only after the server accepts the category's video availability setting.
+    const response = await fetch(`/api/category-videos/${encodeURIComponent(cleanCat)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: cleanCat, videoUrl: setting.videoUrl, title, description, roId, noVideo: setting.noVideo })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Could not save the category guidance setting. Please try again.');
+    }
     const updatedEntry = {
       category: cleanCat,
       title: title || `${cleanCat} Guidance Video`,
-      videoUrl,
-      video_url: videoUrl,
+      videoUrl: setting.videoUrl,
+      video_url: setting.videoUrl,
+      noVideo: setting.noVideo,
+      videoAvailable: !setting.noVideo,
       description: description || '',
       updatedBy: roId || 'RO',
       updatedAt: new Date().toISOString()
@@ -2848,7 +1878,7 @@ Office of Student Welfare & Academic Mentorship
       );
       const merged = [updatedEntry, ...existing];
       try {
-        localStorage.setItem('nitte_saved_category_videos', JSON.stringify(merged));
+        safeCacheSetItem('nitte_saved_category_videos', JSON.stringify(merged));
       } catch (e) { }
       return {
         ...prev,
@@ -2870,19 +1900,7 @@ Office of Student Welfare & Academic Mentorship
       }
     } catch (e) { }
 
-    // 3. Sync to PostgreSQL backend
-    try {
-      const res = await fetch(`/api/category-videos/${encodeURIComponent(cleanCat)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: cleanCat, videoUrl, title, description, roId })
-      });
-      if (res.ok) {
-        await fetchDbState();
-      }
-    } catch (err) {
-      console.warn('Backend sync for updateCategoryVideo failed, keeping local state.', err);
-    }
+    await fetchDbState();
   };
 
   const resolveIssue = async (issueId, roId, resolutionNotes) => {
@@ -2922,8 +1940,8 @@ Office of Student Welfare & Academic Mentorship
       );
 
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
       } catch (e) { }
 
       try {
@@ -3097,8 +2115,8 @@ Office of Student Welfare & Academic Mentorship
       );
 
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
       } catch (e) { }
 
       return {
@@ -3240,8 +2258,8 @@ Office of Student Welfare & Academic Mentorship
       });
 
       try {
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       return {
@@ -3330,8 +2348,8 @@ Office of Student Welfare & Academic Mentorship
       );
 
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
-        localStorage.setItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_meetings', JSON.stringify(updatedMeetings));
       } catch (e) { }
 
       try {
@@ -3412,7 +2430,7 @@ Office of Student Welfare & Academic Mentorship
       } : i);
 
       try {
-        localStorage.setItem('nitte_saved_issues', JSON.stringify(updatedIssues));
+        safeCacheSetItem('nitte_saved_issues', JSON.stringify(updatedIssues));
       } catch (e) { }
 
       return {
@@ -3539,429 +2557,44 @@ Office of Student Welfare & Academic Mentorship
     }
   };
 
-  const [authenticatedUser, setAuthenticatedUser] = useState(() => {
-    const saved = localStorage.getItem('auth_user_session');
-    return saved ? JSON.parse(saved) : null;
-  });
-
-  const registerStudent = async ({ name, email, usn, password, branch, sem }) => {
-    const rawId = (usn && usn.trim()) ? usn.trim().toUpperCase() : `S${Math.floor(100 + Math.random() * 900)}`;
-    const cleanEmail = (email || '').trim().toLowerCase();
-    const studentPassword = password ? String(password).trim() : 'Nit#Stu2026';
-
-    const allKnownStudents = [
-      ...(db.users?.students || [])
-    ];
-
-    // Check if student already exists
-    const existing = allKnownStudents.find(s =>
-      (s.id && s.id.toUpperCase() === rawId.toUpperCase()) ||
-      (s.email && s.email.toLowerCase() === cleanEmail)
-    );
-    if (existing) {
-      throw new Error(`A student account with ID "${rawId}" or Email "${cleanEmail}" is already registered.`);
-    }
-
-    const newStudent = {
-      id: rawId,
-      name: (name || '').trim(),
-      email: cleanEmail,
-      branch: (branch || 'CSE').trim().toUpperCase(),
-      sem: parseInt(sem) || 4,
-      mentorId: null,
-      password: studentPassword,
-      role: 'Student',
-      createdAt: new Date().toISOString()
-    };
-
-    // Forward to backend / Vite dev plugin if available
-    try {
-      const res = await fetch('/api/auth/register-student', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: cleanEmail, usn: rawId, password: studentPassword, branch, sem })
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (errData.error && !errData.error.includes('fetch')) {
-          console.warn('[registerStudent] Server notice:', errData.error);
-        }
-      }
-    } catch (e) {
-      console.warn('[registerStudent] Backend offline, saving locally in browser session:', e.message);
-    }
-
-    // Live sync to Supabase Cloud directly via REST API
-    try {
-      const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-      await fetch(`${SUPABASE_URL}/rest/v1/students`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
-        },
-        body: JSON.stringify({
-          id: rawId,
-          name: (name || '').trim(),
-          email: cleanEmail,
-          mentor_id: null,
-          phone: '9876543210',
-          branch: (branch || 'CSE').trim().toUpperCase(),
-          sem: parseInt(sem) || 4,
-          password: studentPassword
-        })
-      });
-    } catch (cloudErr) { }
-
-    // ALWAYS ensure the student is saved to state and localStorage WITH password so they can log in immediately
-    setDb(prev => {
-      const updated = structureAndDeduplicateStudents([
-        ...(prev.users?.students || []),
-        newStudent
-      ]);
+  const [authenticatedUser, setAuthenticatedUser] = useState(null);
+  recordingActorRef.current = authenticatedUser && ['RO', 'Admin'].includes(authenticatedUser.role) ? authenticatedUser : null;
+  useEffect(() => {
+    let disposed = false;
+    (async () => {
       try {
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updated));
-      } catch (e) { }
-      return {
-        ...prev,
-        users: {
-          ...prev.users,
-          students: updated
+        const response = await fetch('/api/auth/session', { cache: 'no-store' });
+        if (!response.ok) { if (response.status !== 401) throw new Error('Sign-in verification is temporarily unavailable.'); return; }
+        const { user } = await response.json();
+        if (!disposed && user) {
+          clearPrivateCaches(); authUserRef.current = user; setAuthenticatedUser(user); setCurrentUser(user.role);
+          await fetchDbState();
         }
-      };
-    });
-
-    return { success: true, student: newStudent };
-  };
+      } catch (failure) { if (!disposed) setError(failure.message); }
+      finally { if (!disposed) setLoading(false); }
+    })();
+    return () => { disposed = true; };
+  }, []);
 
   const loginUser = async (identifier, password, role) => {
-    const idClean = (identifier || '').trim();
-    const pwdClean = (password || '').trim();
-
-    if (!idClean || !pwdClean) {
-      throw new Error('Please enter both User ID / Email and Password.');
-    }
-
-    // Role-specific authenticator functions with Live Supabase Cloud fallback
-    const tryAdmin = async () => {
-      if (
-        idClean.toLowerCase() === 'admin@nitte.edu.in' ||
-        idClean.toUpperCase() === 'ADMIN' ||
-        idClean.toLowerCase() === 'admin'
-      ) {
-        if (pwdClean === 'Admin@2026' || pwdClean === 'Nitte@2026') {
-          const adminUser = {
-            id: 'ADMIN',
-            name: 'Administrator',
-            email: 'admin@nitte.edu.in',
-            role: 'Admin'
-          };
-          setAuthenticatedUser(adminUser);
-          setCurrentUser('Admin');
-          localStorage.setItem('auth_user_session', JSON.stringify(adminUser));
-          return { success: true, user: adminUser };
-        } else {
-          throw new Error('Incorrect Admin Password. Required: Admin@2026');
-        }
-      }
-      return null;
-    };
-
-    const tryStudent = async () => {
-      let allStudents = [...(db.users?.students || [])];
-      if (typeof window !== 'undefined') {
-        try {
-          const cached = localStorage.getItem('nitte_saved_students');
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              allStudents = structureAndDeduplicateStudents([...parsed, ...allStudents]);
-            }
-          }
-        } catch (e) { }
-      }
-
-      let student = allStudents.find(s => s.id && s.id.toLowerCase() === idClean.toLowerCase());
-      if (!student) {
-        student = allStudents.find(s =>
-          s.email && s.email.toLowerCase() === idClean.toLowerCase() &&
-          (s.password === pwdClean || pwdClean === 'Nit#Stu2026' || pwdClean === 'Nitte@2026')
-        );
-        if (!student) {
-          student = allStudents.find(s => s.email && s.email.toLowerCase() === idClean.toLowerCase());
-        }
-      }
-
-      // If not found in local memory or localStorage, query Supabase Cloud live!
-      if (!student) {
-        try {
-          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/students?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
-            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
-          });
-          if (res.ok) {
-            const cloudMatches = await res.json();
-            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
-              const matched = cloudMatches.find(s => s.id && s.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
-              student = {
-                id: matched.id,
-                name: matched.name,
-                email: matched.email,
-                mentorId: matched.mentor_id || matched.mentorId || 'M101',
-                phone: matched.phone || '',
-                branch: matched.branch || 'CSE',
-                sem: matched.sem || 5,
-                password: matched.password || 'Nit#Stu2026',
-                role: 'Student'
-              };
-            }
-          }
-        } catch (cloudErr) {
-          console.warn('Direct Supabase student auth lookup notice:', cloudErr?.message || cloudErr);
-        }
-      }
-
-      if (student) {
-        const isPasswordValid = (
-          pwdClean === student.password ||
-          pwdClean === 'Nit#Stu2026' ||
-          pwdClean === 'Nitte@2026' ||
-          pwdClean === 'Admin@2026'
-        );
-
-        if (!isPasswordValid) {
-          throw new Error(`Incorrect Password for Student ID "${student.id}".`);
-        }
-
-        const updatedStudent = {
-          ...student,
-          role: 'Student',
-          lastLogin: new Date().toISOString()
-        };
-
-        setDb(prev => {
-          const prevStudents = prev.users?.students || [];
-          const existingIdx = prevStudents.findIndex(
-            s => s.id && s.id.toUpperCase() === student.id?.toUpperCase()
-          );
-          let updatedList;
-          if (existingIdx >= 0) {
-            updatedList = prevStudents.map((s, idx) => idx === existingIdx ? updatedStudent : s);
-          } else {
-            updatedList = [updatedStudent, ...prevStudents];
-          }
-          try {
-            localStorage.setItem('nitte_saved_students', JSON.stringify(updatedList));
-          } catch (e) { }
-          return {
-            ...prev,
-            users: {
-              ...prev.users,
-              students: updatedList
-            }
-          };
-        });
-
-        setAuthenticatedUser(updatedStudent);
-        setCurrentUser('Student');
-        localStorage.setItem('auth_user_session', JSON.stringify(updatedStudent));
-        return { success: true, user: updatedStudent };
-      }
-      return null;
-    };
-
-    const tryMentor = async () => {
-      let allMentors = [...(db.users?.mentors || [])];
-      if (typeof window !== 'undefined') {
-        try {
-          const cached = localStorage.getItem('nitte_saved_mentors');
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              allMentors = structureAndDeduplicateMentors([...parsed, ...allMentors]);
-            }
-          }
-        } catch (e) { }
-      }
-
-      let mentor = allMentors.find(m => m.id && m.id.toLowerCase() === idClean.toLowerCase());
-      if (!mentor) {
-        mentor = allMentors.find(m =>
-          m.email && m.email.toLowerCase() === idClean.toLowerCase() &&
-          (m.password === pwdClean || pwdClean === 'Nit#Mnt2026' || pwdClean === 'Nitte@2026')
-        );
-        if (!mentor) {
-          mentor = allMentors.find(m => m.email && m.email.toLowerCase() === idClean.toLowerCase());
-        }
-      }
-
-      // If not found in local memory or localStorage, query Supabase Cloud live!
-      if (!mentor) {
-        try {
-          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/mentors?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
-            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
-          });
-          if (res.ok) {
-            const cloudMatches = await res.json();
-            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
-              const matched = cloudMatches.find(m => m.id && m.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
-              mentor = {
-                id: matched.id,
-                name: matched.name,
-                email: matched.email,
-                dept: matched.dept || 'CSE',
-                class: matched.class || '',
-                password: matched.password || 'Nit#Mnt2026',
-                role: 'Mentor'
-              };
-            }
-          }
-        } catch (cloudErr) {
-          console.warn('Direct Supabase mentor auth lookup notice:', cloudErr?.message || cloudErr);
-        }
-      }
-
-      if (mentor) {
-        const isPasswordValid = (
-          pwdClean === mentor.password ||
-          pwdClean === 'Nit#Mnt2026' ||
-          pwdClean === 'Nitte@2026' ||
-          pwdClean === 'Admin@2026'
-        );
-
-        if (!isPasswordValid) {
-          throw new Error(`Incorrect Password for Faculty Mentor ID "${mentor.id}".`);
-        }
-
-        const updatedMentor = {
-          ...mentor,
-          role: 'Mentor',
-          lastLogin: new Date().toISOString()
-        };
-
-        setDb(prev => {
-          const updatedList = (prev.users?.mentors || []).map(m =>
-            m.id?.toUpperCase() === mentor.id?.toUpperCase() ? updatedMentor : m
-          );
-          if (!updatedList.some(m => m.id?.toUpperCase() === mentor.id?.toUpperCase())) {
-            updatedList.push(updatedMentor);
-          }
-          try {
-            localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
-          } catch (e) { }
-          return {
-            ...prev,
-            users: {
-              ...prev.users,
-              mentors: updatedList
-            }
-          };
-        });
-
-        setAuthenticatedUser(updatedMentor);
-        setCurrentUser('Mentor');
-        localStorage.setItem('auth_user_session', JSON.stringify(updatedMentor));
-        return { success: true, user: updatedMentor };
-      }
-      return null;
-    };
-
-    const tryRo = async () => {
-      const roList = db.users?.ros || [];
-      let ro = roList.find(r =>
-        (r.id && r.id.toLowerCase() === idClean.toLowerCase()) ||
-        (r.email && r.email.toLowerCase() === idClean.toLowerCase())
-      );
-
-      // If not found in local state, query Supabase Cloud live!
-      if (!ro) {
-        try {
-          const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-          const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/ros?or=(id.ilike.${encodeURIComponent(idClean)},email.ilike.${encodeURIComponent(idClean)})&select=*`, {
-            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
-          });
-          if (res.ok) {
-            const cloudMatches = await res.json();
-            if (Array.isArray(cloudMatches) && cloudMatches.length > 0) {
-              const matched = cloudMatches.find(r => r.id && r.id.toLowerCase() === idClean.toLowerCase()) || cloudMatches[0];
-              ro = {
-                id: matched.id,
-                name: matched.name,
-                email: matched.email,
-                region: matched.region || '',
-                password: matched.password || 'Nit#Ro2026',
-                role: 'RO'
-              };
-            }
-          }
-        } catch (cloudErr) {
-          console.warn('Direct Supabase RO auth lookup notice:', cloudErr?.message || cloudErr);
-        }
-      }
-
-      if (ro) {
-        const isPasswordValid = (
-          pwdClean === ro.password ||
-          pwdClean === 'Nit#Ro2026' ||
-          pwdClean === 'Nitte@2026' ||
-          pwdClean === 'Admin@2026'
-        );
-
-        if (!isPasswordValid) {
-          throw new Error(`Incorrect Password for Relationship Officer ID "${ro.id}".`);
-        }
-
-        const roUser = {
-          id: ro.id,
-          name: ro.name,
-          email: ro.email,
-          role: 'RO',
-          region: ro.region,
-          lastLogin: new Date().toISOString()
-        };
-
-        setAuthenticatedUser(roUser);
-        setCurrentUser('RO');
-        localStorage.setItem('auth_user_session', JSON.stringify(roUser));
-        return { success: true, user: roUser };
-      }
-      return null;
-    };
-
-    // Prioritize checking the role selected on the login page tabs!
-    // This guarantees that if a Gmail is shared between Mentor and RO,
-    // selecting the 'Faculty Mentor' tab logs into Mentor, and selecting 'Relationship Officer' logs into RO!
-    let checkers = [];
-    if (role === 'RO') {
-      checkers = [tryRo, tryMentor, tryAdmin, tryStudent];
-    } else if (role === 'Mentor') {
-      checkers = [tryMentor, tryRo, tryAdmin, tryStudent];
-    } else if (role === 'Admin') {
-      checkers = [tryAdmin, tryMentor, tryRo, tryStudent];
-    } else if (role === 'Student') {
-      checkers = [tryStudent, tryMentor, tryRo, tryAdmin];
-    } else {
-      checkers = [tryAdmin, tryStudent, tryMentor, tryRo];
-    }
-
-    for (const checker of checkers) {
-      const result = await checker();
-      if (result) return result;
-    }
-
-    throw new Error(`Account "${idClean}" not found in database. Please verify your Student USN, Mentor ID, or Email address.`);
+    const response = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: String(identifier || '').trim(), password, role })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Sign-in failed.');
+    clearPrivateCaches(); authUserRef.current = result.user;
+    setDb(structuredClone(MOCK_DB)); setAuthenticatedUser(result.user); setCurrentUser(result.user.role);
+    setLoading(true); setError(null);
+    await fetchDbState();
+    return result;
   };
 
-  const logoutUser = () => {
-    setAuthenticatedUser(null);
-    localStorage.removeItem('auth_user_session');
+  const logoutUser = async () => {
+    const response = await fetch('/api/auth/logout', { method: 'POST' });
+    if (!response.ok && response.status !== 401) throw new Error('Could not end the server session. Please retry.');
+    clearPrivateCaches(); authUserRef.current = null; recordingActorRef.current = null;
+    setAuthenticatedUser(null); setDb(structuredClone(MOCK_DB)); setError(null); setLoading(false);
   };
 
   const extractRosterField = (row, candidates, fallback = '') => {
@@ -3979,428 +2612,73 @@ Office of Student Welfare & Academic Mentorship
     return fallback;
   };
 
-  const bulkUploadStudents = async (students) => {
-    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-
-    const results = [];
-    const addedStudents = [];
-
-    for (let i = 0; i < (students || []).length; i++) {
-      const s = students[i];
-      if (!s || typeof s !== 'object') continue;
-
-      const rawId = extractRosterField(s, ['student id', 'studentid', 'student usn', 'studentusn', 'usn', 'id', 'roll no', 'rollno', 'student_id'], '');
-      const rawName = extractRosterField(s, ['student name', 'studentname', 'name', 'full name', 'fullname', 'student_name'], '');
-
-      // Skip rows with no ID and no Name (empty Excel rows or blank lines)
-      if (!rawId && !rawName) continue;
-
-      const studentId = String(rawId || `4NM23CS${String(addedStudents.length + 1).padStart(3, '0')}`).trim().toUpperCase();
-      const name = String(rawName || `Student ${studentId}`).trim();
-      const defaultEmail = `${studentId.toLowerCase()}@nitte.edu.in`;
-      const rawEmail = extractRosterField(s, ['student gmail', 'studentgmail', 'student email', 'studentemail', 'gmail', 'email', 'email address', 'emailaddress', 'mail', 'student_gmail', 'student_email'], defaultEmail);
-      const branch = extractRosterField(s, ['branch', 'department', 'dept', 'course'], 'CSE');
-      const sem = parseInt(extractRosterField(s, ['semester', 'sem'], '5')) || 5;
-      const email = String(rawEmail || defaultEmail).trim().toLowerCase();
-      const generatedPassword = s.password && String(s.password).trim() ? String(s.password).trim() : `Nit#${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const newStudent = {
-        id: studentId,
-        name,
-        email,
-        branch,
-        sem,
-        mentorId: s.mentorId || s.mentor_id || null,
-        phone: s.phone || '9876543210',
-        password: generatedPassword
-      };
-
-      addedStudents.push(newStudent);
-      results.push({
-        status: 'SUCCESS',
-        index: results.length + 1,
-        id: studentId,
-        name,
-        email,
-        branch,
-        sem,
-        password: generatedPassword,
-        emailStatus: 'QUEUED'
-      });
-    }
-
-    if (addedStudents.length === 0) {
-      return {
-        success: false,
-        message: 'No valid student records found in the uploaded file.',
-        count: 0,
-        results: []
-      };
-    }
-
-    // Direct Supabase Cloud batch upsert - PRIMARY AND AUTHORITATIVE
-    try {
-      let knownMentorIds = new Set((db.users?.mentors || []).map(m => String(m.id).toUpperCase()));
-      try {
-        const mRes = await fetch(`${SUPABASE_URL}/rest/v1/mentors?select=id`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        if (mRes.ok) {
-          const mList = await mRes.json();
-          if (Array.isArray(mList)) {
-            mList.forEach(m => knownMentorIds.add(String(m.id).toUpperCase()));
-          }
-        }
-      } catch (e) { }
-
-      const sbPayload = addedStudents.map(st => ({
-        id: st.id,
-        name: st.name,
-        email: st.email,
-        mentor_id: (st.mentorId && knownMentorIds.has(String(st.mentorId).toUpperCase())) ? st.mentorId : null,
-        phone: st.phone || '9876543210',
-        branch: st.branch,
-        sem: st.sem,
-        password: st.password
-      }));
-
-      const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/students`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify(sbPayload)
-      });
-
-      if (sbRes.ok) {
-        console.log(`[DatabaseContext] Successfully uploaded ${sbPayload.length} students to Supabase Cloud!`);
-      } else {
-        const errText = await sbRes.text();
-        console.warn('[DatabaseContext] Supabase student upload notice:', errText);
-      }
-    } catch (e) {
-      console.warn('[DatabaseContext] Direct Supabase upload error:', e.message);
-    }
-
-    // Save to local React state and browser cache
-    setDb(prev => {
-      const updatedList = structureAndDeduplicateStudents([
-        ...(prev.users?.students || []),
-        ...addedStudents
-      ]);
-      try {
-        localStorage.setItem('nitte_saved_students', JSON.stringify(updatedList));
-      } catch (e) { }
-      return {
-        ...prev,
-        users: {
-          ...prev.users,
-          students: updatedList
-        }
-      };
+  const bulkUploadStudents = async (rows) => {
+    const students = rows.map(row => ({
+      ...row,
+      id: extractRosterField(row, ['student id', 'student usn', 'usn', 'id', 'roll no'], ''),
+      name: extractRosterField(row, ['student name', 'name', 'full name'], ''),
+      email: extractRosterField(row, ['official email', 'student email', 'email', 'gmail', 'mail'], ''),
+      mentorId: extractRosterField(row, ['mentor id', 'mentorId', 'mentor_id'], ''),
+      branch: extractRosterField(row, ['branch', 'department', 'dept'], ''),
+      sem: extractRosterField(row, ['semester', 'sem'], ''),
+      password: extractRosterField(row, ['initial password', 'password'], '')
+    }));
+    const response = await fetch('/api/admin/bulk-upload-students', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ students })
     });
-
-    // Send onboarding emails in background
-    (async () => {
-      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
-      for (const st of addedStudents) {
-        try {
-          const emailHtml = generateStudentOnboardingEmailHtml({
-            name: st.name,
-            studentId: st.id,
-            email: st.email,
-            branch: st.branch,
-            sem: st.sem,
-            generatedPassword: st.password,
-            portalBaseUrl
-          });
-          const emailText = generateStudentOnboardingEmailText({
-            name: st.name,
-            studentId: st.id,
-            email: st.email,
-            branch: st.branch,
-            sem: st.sem,
-            generatedPassword: st.password,
-            portalBaseUrl
-          });
-          await fetch('/api/gmail/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: st.email,
-              replyTo: 'skandhayashu2906@gmail.com',
-              fromName: 'NITTE Admin Desk',
-              subject: `[NITTE PORTAL CREDENTIALS] Welcome ${st.name} - Student Account (${st.id})`,
-              html: emailHtml,
-              text: emailText,
-              recipientName: st.name,
-              eventType: 'BULK_STUDENT_ONBOARDING'
-            })
-          });
-        } catch (e) { }
-      }
-    })();
-
-    // Refresh state from Supabase Cloud
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Student roster import failed.');
     await fetchDbState();
-
-    return {
-      success: true,
-      message: `Successfully processed ${results.length} student records.`,
-      count: results.length,
-      successCount: results.length,
-      totalProcessed: students.length,
-      results
-    };
+    return { ...result, count: result.successCount ?? result.count ?? 0 };
   };
 
-  const bulkUploadMentors = async (mentors) => {
-    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-
-    const results = [];
-    const addedMentors = [];
-
-    (mentors || []).forEach((m, i) => {
-      const rawId = extractRosterField(m, ['mentor id', 'mentorid', 'faculty id', 'facultyid', 'id'], `M-${101 + i}`);
-      const rawName = extractRosterField(m, ['mentor name', 'mentorname', 'faculty name', 'facultyname', 'name', 'full name'], `Faculty Mentor ${i + 1}`);
-      const rawEmail = extractRosterField(m, ['mentor email', 'mentoremail', 'faculty email', 'facultyemail', 'email', 'gmail', 'mail'], 'skandhayashu2906@gmail.com');
-      const dept = extractRosterField(m, ['department', 'dept', 'branch'], 'CSE');
-      const assignedClass = extractRosterField(m, ['assigned class / batch', 'assigned class', 'assigned batch', 'class', 'batch', 'mentees'], `${dept} 5th Sem - Batch A`);
-      const rawPassword = extractRosterField(m, ['initial password', 'password', 'pwd', 'pass', 'key'], '');
-      const mentorId = String(rawId).trim().toUpperCase();
-      const name = String(rawName).trim();
-      const email = String(rawEmail).trim().toLowerCase();
-      const password = rawPassword || (m.password && String(m.password).trim() ? String(m.password).trim() : `Nit#Mnt${Math.floor(1000 + Math.random() * 9000)}`);
-
-      const newMentor = {
-        id: mentorId,
-        name,
-        email,
-        dept,
-        class: assignedClass,
-        password
-      };
-
-      addedMentors.push(newMentor);
-      results.push({
-        status: 'SUCCESS',
-        index: i + 1,
-        id: mentorId,
-        name,
-        email,
-        dept,
-        class: assignedClass,
-        password
-      });
+  const bulkUploadMentors = async (rows) => {
+    const mentors = rows.map(row => ({
+      ...row,
+      id: extractRosterField(row, ['mentor id', 'faculty id', 'id'], ''),
+      name: extractRosterField(row, ['mentor name', 'faculty name', 'name', 'full name'], ''),
+      email: extractRosterField(row, ['official email', 'mentor email', 'faculty email', 'email', 'gmail'], ''),
+      dept: extractRosterField(row, ['department', 'dept', 'branch'], ''),
+      class: extractRosterField(row, ['assigned class / batch', 'assigned class', 'class', 'batch'], ''),
+      password: extractRosterField(row, ['initial password', 'password'], '')
+    }));
+    const response = await fetch('/api/admin/bulk-upload-mentors', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mentors })
     });
-
-    // Direct Supabase Cloud batch upsert - PRIMARY AND AUTHORITATIVE
-    try {
-      const sbPayload = addedMentors.map(m => ({
-        id: m.id,
-        name: m.name,
-        email: m.email,
-        dept: m.dept,
-        class: m.class,
-        password: m.password
-      }));
-
-      const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/mentors`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify(sbPayload)
-      });
-
-      if (sbRes.ok) {
-        console.log(`[DatabaseContext] Successfully uploaded ${sbPayload.length} mentors to Supabase Cloud!`);
-      } else {
-        const errText = await sbRes.text();
-        console.warn('[DatabaseContext] Supabase mentor upload notice:', errText);
-      }
-    } catch (e) {
-      console.warn('[DatabaseContext] Direct Supabase mentor upload error:', e.message);
-    }
-
-    setDb(prev => {
-      const updatedList = structureAndDeduplicateMentors([
-        ...(prev.users?.mentors || []),
-        ...addedMentors
-      ]);
-      try {
-        localStorage.setItem('nitte_saved_mentors', JSON.stringify(updatedList));
-        const existingDeleted = JSON.parse(localStorage.getItem('nitte_deleted_mentor_ids') || '[]');
-        const newSet = new Set(existingDeleted.map(id => String(id).toUpperCase()));
-        addedMentors.forEach(m => { if (m.id) newSet.delete(String(m.id).toUpperCase()); });
-        localStorage.setItem('nitte_deleted_mentor_ids', JSON.stringify(Array.from(newSet)));
-      } catch (e) { }
-      return {
-        ...prev,
-        users: {
-          ...prev.users,
-          mentors: updatedList
-        }
-      };
-    });
-
-    // Send mentor onboarding emails in background with identical institutional theme and direct pre-fill link
-    (async () => {
-      const portalBaseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
-      for (const m of addedMentors) {
-        try {
-          const emailHtml = generateMentorOnboardingEmailHtml({
-            name: m.name,
-            mentorId: m.id,
-            email: m.email,
-            dept: m.dept,
-            assignedClass: m.class,
-            generatedPassword: m.password,
-            portalBaseUrl
-          });
-          const emailText = generateMentorOnboardingEmailText({
-            name: m.name,
-            mentorId: m.id,
-            email: m.email,
-            dept: m.dept,
-            assignedClass: m.class,
-            generatedPassword: m.password,
-            portalBaseUrl
-          });
-          await fetch('/api/gmail/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: m.email,
-              replyTo: 'skandhayashu2906@gmail.com',
-              fromName: 'NITTE Admin Desk',
-              subject: `[NITTE FACULTY CREDENTIALS] Welcome Prof. ${m.name} - Faculty Mentor Portal (${m.id})`,
-              html: emailHtml,
-              text: emailText,
-              eventType: 'BULK_MENTOR_ONBOARDING',
-              recipientName: m.name
-            })
-          });
-        } catch (e) { }
-      }
-    })();
-
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Mentor roster import failed.');
     await fetchDbState();
-
-    return {
-      success: true,
-      message: `Successfully processed ${results.length} mentor records.`,
-      count: results.length,
-      successCount: results.length,
-      totalProcessed: mentors.length,
-      results
-    };
+    return { ...result, count: result.successCount ?? result.count ?? 0 };
   };
 
-  const addSingleMentor = async (mentorData) => {
-    if (!mentorData) return { success: false, message: 'Mentor data is required.' };
-    return await bulkUploadMentors([mentorData]);
+  const bulkUploadRos = async (rows) => {
+    const ros = rows.map(normalizeRoRosterRow);
+    const response = await fetch('/api/admin/bulk-upload-ros', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ros })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'RO roster import failed.');
+    const saved = (result.results || []).filter(row => row.status === 'SUCCESS').map(row => ({ ...row, category: row.region }));
+    setDb(previous => {
+      const roster = new Map((previous.users?.ros || []).map(ro => [ro.id.toUpperCase(), ro]));
+      saved.forEach(ro => roster.set(ro.id.toUpperCase(), ro));
+      const ros = [...roster.values()];
+      safeCacheSetItem('nitte_saved_ros', JSON.stringify(ros));
+      return { ...previous, users: { ...previous.users, ros } };
+    });
+    await fetchDbState();
+    return { ...result, count: result.successCount };
   };
 
-  const bulkUploadRos = async (ros) => {
-    const SUPABASE_URL = 'https://tadfbhczpmnyouoailds.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_JcJbgPJnh3ecRyMqqpetEg_r-q3IZLO';
-
-    const results = [];
-    const addedRos = [];
-
-    (ros || []).forEach((r, i) => {
-      const rawId = r.id || r.roId || r['RO ID'] || `RO${100 + i}`;
-      const rawName = r.name || r.roName || r.Name || r['RO Name'] || 'Relationship Officer';
-      const rawEmail = r.email || r.Email || r.gmail || r['Gmail'] || r['RO Gmail'] || `${String(rawId).toLowerCase()}@nitte.edu.in`;
-      const category = r.category || r.Category || 'Academic & Attendance Support';
-      const roId = String(rawId).trim().toUpperCase();
-      const name = String(rawName).trim();
-      const email = String(rawEmail).trim().toLowerCase();
-      const password = r.password && String(r.password).trim() ? String(r.password).trim() : `Ro#${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const newRo = {
-        id: roId,
-        name,
-        email,
-        category,
-        phone: r.phone || '9876543210',
-        password
-      };
-
-      addedRos.push(newRo);
-      results.push({
-        status: 'SUCCESS',
-        index: i + 1,
-        id: roId,
-        name,
-        email,
-        category,
-        password,
-        emailStatus: 'DELIVERED_GMAIL'
-      });
-    });
-
-    // Direct Supabase Cloud batch upsert for ROs - PRIMARY AND AUTHORITATIVE
-    try {
-      const sbPayload = addedRos.map(r => ({
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        region: r.category,
-        password: r.password
-      }));
-
-      await fetch(`${SUPABASE_URL}/rest/v1/ros`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation,resolution=merge-duplicates'
-        },
-        body: JSON.stringify(sbPayload)
-      });
-    } catch (e) {
-      console.warn('[DatabaseContext] Direct Supabase RO upload error:', e.message);
-    }
-
-    setDb(prev => {
-      const existing = prev.users?.ros || [];
-      const updatedList = [...existing];
-      addedRos.forEach(ro => {
-        const idx = updatedList.findIndex(e => e.id?.toUpperCase() === ro.id.toUpperCase());
-        if (idx >= 0) updatedList[idx] = ro;
-        else updatedList.push(ro);
-      });
-      try {
-        localStorage.setItem('nitte_saved_ros', JSON.stringify(updatedList));
-      } catch (e) { }
-      return {
-        ...prev,
-        users: {
-          ...prev.users,
-          ros: updatedList
-        }
-      };
-    });
-
-    await fetchDbState();
-
-    return {
-      success: true,
-      message: `Successfully processed ${results.length} Relationship Officer records.`,
-      count: results.length,
-      results
-    };
+  const addSingleMentor = async row => {
+    const result = await bulkUploadMentors([row]);
+    if (!result.successCount) throw new Error(result.results?.[0]?.reason || 'Mentor account could not be saved.');
+    return result;
+  };
+  const addSingleRo = async row => {
+    const result = await bulkUploadRos([row]);
+    if (!result.successCount) throw new Error(result.results?.[0]?.reason || 'RO account could not be saved.');
+    return result;
   };
 
   return (
@@ -4416,7 +2694,6 @@ Office of Student Welfare & Academic Mentorship
       toggleDemoLimitBypass,
       loginUser,
       logoutUser,
-      registerStudent,
       submitIssue,
       scheduleRoMeeting,
       scheduleAdminMeeting,
@@ -4438,6 +2715,7 @@ Office of Student Welfare & Academic Mentorship
       bulkUploadMentors,
       bulkUploadRos,
       saveMeetingRecording,
+      loadMeetingRecording,
       updateCategoryVideo,
       submitRoMeetingFeedback,
       getYoutubeEmbedUrl,

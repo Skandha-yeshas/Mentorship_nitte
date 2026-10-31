@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function SelfHelpManagerModal({
   isOpen,
@@ -14,11 +14,15 @@ export default function SelfHelpManagerModal({
   setVideoUrl,
   videoDesc,
   setVideoDesc,
+  noVideo = false,
+  setNoVideo,
   onSave,
   saveSuccess = false,
   getYoutubeEmbedUrl
 }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  useEffect(() => { setSaveError(''); }, [isOpen, category]);
 
   if (!isOpen) return null;
 
@@ -30,14 +34,17 @@ export default function SelfHelpManagerModal({
     return match && match[1] ? `https://www.youtube-nocookie.com/embed/${match[1]}?rel=0` : videoUrl;
   })();
 
-  const isEmbeddable = Boolean(embedUrl && (embedUrl.includes('/embed/') || embedUrl.includes('youtube') || embedUrl.includes('youtu.be')));
+  const isEmbeddable = !noVideo && Boolean(embedUrl && (embedUrl.includes('/embed/') || embedUrl.includes('youtube') || embedUrl.includes('youtu.be')));
 
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
+    setSaveError('');
     setIsSaving(true);
     try {
       await onSave(e);
+    } catch (error) {
+      setSaveError(error.message || 'Could not save the self-help setting. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -124,9 +131,20 @@ export default function SelfHelpManagerModal({
             {saveSuccess && (
               <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
                 <span className="material-symbols-outlined text-emerald-600 text-base">check_circle</span>
-                <span>Self-Help Video SOP successfully published and synced with student portal!</span>
+                <span>{noVideo ? 'No-video setting saved. Students will skip the video for this issue.' : 'Self-help video published and synced with the student portal.'}</span>
               </div>
             )}
+
+            {saveError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{saveError}</p>}
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <p className="text-xs font-bold text-slate-800">Video availability for {category}</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" aria-pressed={!noVideo} onClick={() => setNoVideo(false)} className={`rounded-xl border px-4 py-2 text-xs font-bold ${!noVideo ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300 bg-white text-slate-700'}`}>Video Available</button>
+                <button type="button" aria-pressed={noVideo} onClick={() => setNoVideo(true)} className={`rounded-xl border px-4 py-2 text-xs font-bold ${noVideo ? 'border-amber-500 bg-amber-100 text-amber-950' : 'border-slate-300 bg-white text-slate-700'}`}>No Video Available</button>
+              </div>
+              {noVideo && <p className="text-xs text-slate-600">After you save, students submitting this issue will go directly to their ticket without a video popup. You can add a video later.</p>}
+            </div>
 
             {/* Form & Live Preview Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -135,7 +153,7 @@ export default function SelfHelpManagerModal({
                 {/* Video Title & Headline */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Video Title &amp; Headline <span className="text-rose-500">*</span>
+                    Video Title &amp; Headline {!noVideo && <span className="text-rose-500">*</span>}
                   </label>
                   <input
                     type="text"
@@ -143,7 +161,8 @@ export default function SelfHelpManagerModal({
                     value={videoTitle}
                     onChange={(e) => setVideoTitle(e.target.value)}
                     placeholder="e.g. Resolution Walkthrough for Student Wi-Fi Disruption"
-                    required
+                    required={!noVideo}
+                    disabled={noVideo}
                   />
                 </div>
 
@@ -151,9 +170,9 @@ export default function SelfHelpManagerModal({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      YouTube URL or Share Link <span className="text-rose-500">*</span>
+                      YouTube URL or Share Link {!noVideo && <span className="text-rose-500">*</span>}
                     </label>
-                    {videoUrl && (
+                    {!noVideo && videoUrl && (
                       <a
                         href={videoUrl}
                         target="_blank"
@@ -174,7 +193,8 @@ export default function SelfHelpManagerModal({
                       value={videoUrl}
                       onChange={(e) => setVideoUrl(e.target.value)}
                       placeholder="Paste standard YouTube watch URL or share link..."
-                      required
+                      required={!noVideo}
+                      disabled={noVideo}
                     />
                   </div>
                 </div>
@@ -198,10 +218,10 @@ export default function SelfHelpManagerModal({
               <div className="lg:col-span-5 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Live Video Preview
+                    {noVideo ? 'Video Unavailable' : 'Live Video Preview'}
                   </label>
                   <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 16:9 Aspect Ready
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {noVideo ? 'Playback Skipped' : '16:9 Aspect Ready'}
                   </span>
                 </div>
 
@@ -220,16 +240,16 @@ export default function SelfHelpManagerModal({
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 p-4 text-center">
                         <span className="material-symbols-outlined text-4xl mb-1 text-slate-600">videocam_off</span>
-                        <p className="text-xs">Enter a valid YouTube URL to preview</p>
+                        <p className="text-xs">{noVideo ? 'No video available for this issue' : 'Enter a valid YouTube URL to preview'}</p>
                       </div>
                     )}
                   </div>
                   <div className="p-3 bg-slate-900 text-white border-t border-slate-800">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-slate-200 truncate">
-                        {videoTitle || `${category || 'Self-Help'} Guidance SOP`}
+                        {noVideo ? 'No Video Available' : (videoTitle || `${category || 'Self-Help'} Guidance SOP`)}
                       </span>
-                      <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">HD 1080p</span>
+                      {!noVideo && <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">HD 1080p</span>}
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1 leading-snug">
                       Broadcast channel: Student Portal &gt; Self-Help Hub &gt; {category || 'Support'}
@@ -243,7 +263,7 @@ export default function SelfHelpManagerModal({
                     <span className="material-symbols-outlined text-sm text-blue-700">visibility</span> Visible to All Mentored Students
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    When published, this video walkthrough appears directly on student grievance status screens and the campus self-service directory for <strong className="text-slate-700 font-semibold">{category}</strong>.
+                    {noVideo ? 'Students will skip video playback when submitting ' : 'The configured video will be shown for '}<strong className="text-slate-700 font-semibold">{category}</strong>.
                   </p>
                 </div>
               </div>
@@ -266,11 +286,11 @@ export default function SelfHelpManagerModal({
               </button>
               <button
                 type="submit"
-                disabled={isSaving || !videoUrl?.trim()}
+                disabled={isSaving || (!noVideo && !videoUrl?.trim())}
                 className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-600 hover:from-blue-800 hover:to-indigo-700 text-white font-bold text-xs shadow-md shadow-blue-700/20 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-[16px]">save</span>
-                <span>{isSaving ? 'Publishing...' : 'Save & Publish Video'}</span>
+                <span>{isSaving ? 'Saving...' : (noVideo ? 'Save No-Video Setting' : 'Save & Publish Video')}</span>
               </button>
             </div>
           </div>

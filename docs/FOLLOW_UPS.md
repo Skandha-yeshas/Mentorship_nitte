@@ -1,3 +1,5 @@
 # Project follow-ups
 
-- [ ] Remind the user to add the Admin recording viewer when editing the Admin dashboard today (30 October 2026). Recording playback currently remains available in the RO dashboard and has been removed from the student dashboard. The future viewer should permit RO and Admin roles only.
+- [ ] **Before going live: remind the user to create separate Admin accounts for approximately 10 professors, including the Principal, HODs and Dean.** Keep the existing Admin role, dashboard and permissions; do not introduce extra modules or a Super Admin role. Run `npm run admin:add` against the intended production database for each professor using their real name, unique ID and institutional email. Deliver each initial password privately, have its owner change it, and verify individual login to the shared dashboard. Account creation tooling is ready; professor accounts have not yet been provisioned. This reminder is triggered when the user asks to deploy, publish or go live, not by a calendar date.
+- [x] Reminded the user about the Admin recording viewer while editing Admin analytics on 30 October 2026.
+- [ ] Add the Admin recording viewer when requested. Recording playback currently remains available in the RO dashboard and has been removed from the student dashboard. The future viewer should permit RO and Admin roles only.

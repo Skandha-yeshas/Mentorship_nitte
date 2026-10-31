@@ -1,20 +1,23 @@
 import React, { useContext, useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { DatabaseContext, ALL_CATEGORIES } from '../context/DatabaseContext';
+import { DatabaseContext } from '../context/DatabaseContext';
+import AdminGrievanceAnalytics from '../components/AdminGrievanceAnalytics';
+import { AccountSecurity } from '../components/AccountSecurity';
 import {
-  Shield, Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert,
+  Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert,
   Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight,
   Filter, MoreVertical, TrendingUp, ArrowUp, ArrowDown, ExternalLink,
   GraduationCap, Briefcase, UserCheck, Activity, Eye, Layers, Clock,
   Upload, FileSpreadsheet, Mail, Key, Check, AlertCircle, X, UserPlus, Grid,
   Printer, FileDown, MessageSquare, Plus, Trash2, Edit3, SlidersHorizontal,
   ChevronLeft, ChevronRight, Sparkles, BookOpen, School, FolderPlus, Calendar,
-  ArrowLeftRight, PhoneCall, CheckCheck, Landmark, ShieldCheck, LogOut
+  ArrowLeftRight, PhoneCall, CheckCheck, Landmark, LogOut
 } from 'lucide-react';
 
 export const AdminDashboard = ({ onLogout }) => {
   const {
     db,
+    authenticatedUser,
     adminResolveIssue,
     scheduleAdminMeeting,
     reassignIssue,
@@ -40,7 +43,7 @@ export const AdminDashboard = ({ onLogout }) => {
   } = useContext(DatabaseContext);
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'students', 'mentors', 'ros', 'mentor-logs', 'mentor-feedbacks', 'all-tickets', 'audit'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'students', 'mentors', 'ros', 'mentor-logs', 'mentor-feedbacks', 'all-tickets'
 
   // Course / Branch Management & Filtering State
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('ALL');
@@ -156,8 +159,7 @@ export const AdminDashboard = ({ onLogout }) => {
   const [singleRoId, setSingleRoId] = useState('');
   const [singleRoName, setSingleRoName] = useState('');
   const [singleRoEmail, setSingleRoEmail] = useState('');
-  const [singleRoCategory, setSingleRoCategory] = useState(ALL_CATEGORIES[0] || 'Hostel Infrastructure & Wi-Fi');
-  const [singleRoPhone, setSingleRoPhone] = useState('');
+  const [singleRoCategory, setSingleRoCategory] = useState('');
   const [singleRoPassword, setSingleRoPassword] = useState('');
   const [isSubmittingSingleRo, setIsSubmittingSingleRo] = useState(false);
   const [singleRoError, setSingleRoError] = useState('');
@@ -284,7 +286,7 @@ export const AdminDashboard = ({ onLogout }) => {
   const filteredRos = useMemo(() => {
     let list = db.users?.ros || [];
     if (roCategoryFilter !== 'ALL') {
-      list = list.filter(r => (r.category || '').toLowerCase() === roCategoryFilter.toLowerCase());
+      list = list.filter(r => (r.region ?? r.category ?? '').toLowerCase() === roCategoryFilter.toLowerCase());
     }
     if (roSearchTerm.trim()) {
       const q = roSearchTerm.toLowerCase().trim();
@@ -292,8 +294,7 @@ export const AdminDashboard = ({ onLogout }) => {
         (r.name || '').toLowerCase().includes(q) ||
         (r.id || '').toLowerCase().includes(q) ||
         (r.email || '').toLowerCase().includes(q) ||
-        (r.category || '').toLowerCase().includes(q) ||
-        (r.phone || '').toLowerCase().includes(q)
+        (r.region ?? r.category ?? '').toLowerCase().includes(q)
       );
     }
     return list;
@@ -331,112 +332,6 @@ export const AdminDashboard = ({ onLogout }) => {
     return list;
   }, [db.issues, ticketStatusFilter, searchTerm]);
 
-  // Dynamic Category Grievance Breakdown
-  const categoryBreakdown = useMemo(() => {
-    const list = [
-      { key: 'Hostel Infrastructure & Wi-Fi', count: (db.issues || []).filter(i => (i.category || '').toLowerCase().includes('hostel') || (i.category || '').toLowerCase().includes('wi-fi')).length || 14, color: 'bg-blue-600', dot: 'bg-blue-600' },
-      { key: 'Academic & CIA Marks Re-evaluation', count: (db.issues || []).filter(i => (i.category || '').toLowerCase().includes('academic') || (i.category || '').toLowerCase().includes('cia') || (i.category || '').toLowerCase().includes('marks')).length || 10, color: 'bg-indigo-600', dot: 'bg-indigo-600' },
-      { key: 'Laboratory Equipment & Calibration', count: (db.issues || []).filter(i => (i.category || '').toLowerCase().includes('lab') || (i.category || '').toLowerCase().includes('equipment')).length || 6, color: 'bg-amber-500', dot: 'bg-amber-500' },
-      { key: 'Examination Portal & Attendance Condonation', count: (db.issues || []).filter(i => (i.category || '').toLowerCase().includes('exam') || (i.category || '').toLowerCase().includes('attendance')).length || 5, color: 'bg-rose-500', dot: 'bg-rose-500' },
-      { key: 'Campus Transport & Fee Accounts', count: (db.issues || []).filter(i => (i.category || '').toLowerCase().includes('transport') || (i.category || '').toLowerCase().includes('fee') || (i.category || '').toLowerCase().includes('bus')).length || 3, color: 'bg-emerald-500', dot: 'bg-emerald-500' },
-    ];
-    const total = list.reduce((sum, item) => sum + item.count, 0) || 1;
-    return list.map(item => ({
-      ...item,
-      percentage: ((item.count / total) * 100).toFixed(1)
-    }));
-  }, [db.issues]);
-
-  // Dynamic Branch Matrix Data
-  const branchMatrixData = useMemo(() => {
-    const branchCodes = ['BCA', 'CSE', 'ISE', 'AIML', 'ECE', 'MECH'];
-    const branchNames = {
-      BCA: 'BCA (Dept. of Computer Applications)',
-      CSE: 'CSE (Computer Science & Engineering)',
-      ISE: 'ISE (Information Science & Engineering)',
-      AIML: 'AIML (Artificial Intelligence & Machine Learning)',
-      ECE: 'ECE (Electronics & Communication)',
-      MECH: 'MECH (Mechanical Engineering)'
-    };
-    const colors = {
-      BCA: 'bg-blue-500',
-      CSE: 'bg-indigo-500',
-      ISE: 'bg-cyan-500',
-      AIML: 'bg-purple-500',
-      ECE: 'bg-teal-500',
-      MECH: 'bg-slate-500'
-    };
-
-    return branchCodes.map(code => {
-      const enrolled = (db.users?.students || []).filter(s => (s.branch || '').toUpperCase() === code).length || (code === 'BCA' ? 540 : code === 'CSE' ? 1280 : code === 'ISE' ? 720 : code === 'AIML' ? 480 : code === 'ECE' ? 920 : 510);
-      const mentorCount = (db.users?.mentors || []).filter(m => (m.dept || '').toUpperCase() === code).length || (code === 'BCA' ? 21 : code === 'CSE' ? 48 : code === 'ISE' ? 28 : code === 'AIML' ? 19 : code === 'ECE' ? 36 : 20);
-      const activeTickets = (db.issues || []).filter(i => {
-        const student = (db.users?.students || []).find(s => s.id === i.studentId);
-        return student && (student.branch || '').toUpperCase() === code && i.status !== 'Resolved' && i.status !== 'Closed';
-      }).length || (code === 'BCA' ? 8 : code === 'CSE' ? 11 : code === 'ISE' ? 5 : code === 'AIML' ? 4 : code === 'ECE' ? 6 : 4);
-
-      return {
-        code,
-        fullName: branchNames[code] || code,
-        color: colors[code] || 'bg-blue-500',
-        enrolled,
-        mentorCount,
-        activeTickets,
-        avgResolution: code === 'BCA' ? '22.4 hrs' : code === 'CSE' ? '28.1 hrs' : code === 'ISE' ? '18.6 hrs' : code === 'AIML' ? '24.0 hrs' : code === 'ECE' ? '34.5 hrs' : '26.2 hrs',
-        healthScore: code === 'BCA' ? '98.2%' : code === 'CSE' ? '96.5%' : code === 'ISE' ? '99.1%' : code === 'AIML' ? '97.8%' : code === 'ECE' ? '92.4%' : '95.0%'
-      };
-    });
-  }, [db.users?.students, db.users?.mentors, db.issues]);
-
-  // Immutable Cryptographic Audit Ledger
-  const auditLogs = useMemo(() => {
-    const logs = [];
-    (db.issues || []).forEach((issue) => {
-      if (issue.escalatedAt || isEscalatedOrReEscalated(issue)) {
-        logs.push({
-          id: `log-esc-${issue.id}`,
-          timestamp: issue.escalatedAt || issue.createdAt || new Date().toISOString(),
-          type: 'L3_ESCALATION',
-          typeBadge: 'bg-rose-100 text-rose-700',
-          message: `RO ${issue.roName || issue.roId || 'Prof. Suresh Nayak'} escalated Ticket #${issue.id} to Registrar level. Reason: ${issue.escalationReason || 'Network NOC latency unaddressed'}.`,
-          hash: `8f9b${String(issue.id).replace(/[^0-9]/g, '').padStart(4, '0')}...c3a4e1`
-        });
-      }
-      if (issue.hasRecording || issue.recordingUrl || issue.recordingData) {
-        logs.push({
-          id: `log-rec-${issue.id}`,
-          timestamp: issue.meetingConcludedAt || issue.resolvedAt || issue.createdAt || new Date().toISOString(),
-          type: 'WEBRTC_RECORDING_SAVED',
-          typeBadge: 'bg-blue-100 text-blue-700',
-          message: `Dual-feed composite encrypted WebRTC consultation stored for Ticket #${issue.id}.`,
-          hash: `11a7${String(issue.id).replace(/[^0-9]/g, '').padStart(4, '0')}...fe9842`
-        });
-      }
-      if (issue.status === 'Resolved') {
-        logs.push({
-          id: `log-res-${issue.id}`,
-          timestamp: issue.resolvedAt || issue.updatedAt || new Date().toISOString(),
-          type: 'ISSUE_RESOLVED',
-          typeBadge: 'bg-emerald-100 text-emerald-700',
-          message: `Ticket #${issue.id} marked as resolved. Resolution notes: "${issue.resolutionNotes || 'Laboratory equipment recalibrated and certified.'}".`,
-          hash: `44b2${String(issue.id).replace(/[^0-9]/g, '').padStart(4, '0')}...e271a9`
-        });
-      }
-    });
-
-    (db.mentorSessionRecords || []).forEach((rec, idx) => {
-      logs.push({
-        id: `log-session-${rec.id || idx}`,
-        timestamp: rec.timestamp || rec.date || new Date().toISOString(),
-        type: 'MENTOR_SESSION_LOGGED',
-        typeBadge: 'bg-indigo-100 text-indigo-700',
-        message: `Faculty Mentor ${rec.mentorName || 'Mentor'} logged fortnightly session report for batch ${rec.assignedBatch || 'Mentees'}. Attended: ${rec.menteesAttendedCount || 0} students.`,
-        hash: `67c1${String(idx).padStart(4, '0')}...ab9901`
-      });
-    });
-
-    return logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  }, [db.issues, db.mentorSessionRecords]);
 
   // Mentor Feedback calculations (Direct Student-to-Mentor feedback list, no rating averages)
   const mentorFeedbacks = db.mentorFeedbacks || [];
@@ -821,7 +716,7 @@ export const AdminDashboard = ({ onLogout }) => {
       const email = String(row.email || '').replace(/"/g, '""');
       const dept = String(row.dept || 'CSE').replace(/"/g, '""');
       const cls = String(row.class || '').replace(/"/g, '""');
-      const pwd = String(row.password || 'Nit#Mnt2026').replace(/"/g, '""');
+      const pwd = String(row.password || 'Not available').replace(/"/g, '""');
       const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
       csvContent += `${i + 1},"${id}","${name}","${email}","${dept}","${cls}","${pwd}","${status}"\n`;
     });
@@ -861,12 +756,7 @@ export const AdminDashboard = ({ onLogout }) => {
   };
 
   const handleDownloadRoTemplate = () => {
-    const sampleData = [
-      { 'RO ID': 'RO-01', 'RO Name': 'Prof. Suresh Nayak', 'Official Email': 'suresh.nayak@nitte.edu.in', 'Assigned Domain Category': 'Hostel Infrastructure & Wi-Fi', 'Contact Phone': '9845012345', 'Initial Password': 'Nit#Ro2026' },
-      { 'RO ID': 'RO-02', 'RO Name': 'Dr. Rekha Bhandary', 'Official Email': 'rekha.bhandary@nitte.edu.in', 'Assigned Domain Category': 'Academic & CIA Marks Re-evaluation', 'Contact Phone': '9845023456', 'Initial Password': 'Nit#Ro2026' },
-      { 'RO ID': 'RO-03', 'RO Name': 'Prof. Ramesh Bhat', 'Official Email': 'ramesh.bhat@nitte.edu.in', 'Assigned Domain Category': 'Campus Transport & Fee Accounts', 'Contact Phone': '9845034567', 'Initial Password': 'Nit#Ro2026' },
-      { 'RO ID': 'RO-04', 'RO Name': 'Dr. Niranjan Chiplunkar', 'Official Email': 'niranjan.c@nitte.edu.in', 'Assigned Domain Category': 'Laboratory Equipment & Calibration', 'Contact Phone': '9845045678', 'Initial Password': 'Nit#Ro2026' }
-    ];
+    const sampleData = [{ 'RO ID': '', 'RO Name': '', 'Official Email': '', 'Assigned Domain Category': '', 'Initial Password': '' }];
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'RO Roster');
@@ -910,7 +800,7 @@ export const AdminDashboard = ({ onLogout }) => {
       const name = String(row.name || '').replace(/"/g, '""');
       const email = String(row.email || '').replace(/"/g, '""');
       const cat = String(row.category || row.region || 'General').replace(/"/g, '""');
-      const pwd = String(row.password || 'Nit#Ro2026').replace(/"/g, '""');
+      const pwd = String(row.password || 'Not available').replace(/"/g, '""');
       const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
       csvContent += `${i + 1},"${id}","${name}","${email}","${cat}","${pwd}","${status}"\n`;
     });
@@ -945,16 +835,14 @@ export const AdminDashboard = ({ onLogout }) => {
         id: roIdToUse,
         name: singleRoName.trim(),
         email: singleRoEmail.trim().toLowerCase(),
-        category: singleRoCategory || 'Academic & Attendance Support',
-        phone: singleRoPhone.trim() || '9876543210',
-        password: singleRoPassword.trim() || `Nit#Ro${Math.floor(1000 + Math.random() * 9000)}`
+        category: singleRoCategory,
+        password: singleRoPassword.trim() || undefined
       };
       await addSingleRo(roPayload);
       showToast(`Relationship Officer ${roPayload.name} (${roPayload.id}) onboarded.`);
       setSingleRoName('');
       setSingleRoEmail('');
       setSingleRoId('');
-      setSingleRoPhone('');
       setSingleRoPassword('');
       setIsAddRoModalOpen(false);
     } catch (err) {
@@ -1124,15 +1012,16 @@ export const AdminDashboard = ({ onLogout }) => {
             {/* Admin Profile Pill */}
             <div className="flex items-center space-x-2.5 pl-2 border-l border-slate-200">
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-xs font-bold text-white shadow ring-2 ring-blue-100">
-                KS
+                {(authenticatedUser?.name || 'Admin').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase()}
               </div>
               <div className="hidden lg:block text-left">
                 <div className="text-xs font-bold text-slate-900 leading-tight flex items-center gap-1">
-                  Dr. K. R. Shetty
+                  {authenticatedUser?.name || 'Administrator'}
                   <CheckCircle2 size={13} className="text-emerald-600" />
                 </div>
-                <div className="text-[11px] text-slate-500 font-medium">Registrar / Dean Student Affairs</div>
+                <div className="text-[11px] text-slate-500 font-medium">Admin Account · {authenticatedUser?.id}</div>
               </div>
+              <div className="ml-1 flex shrink-0 flex-col items-stretch gap-1 sm:ml-2">
               <button
                 onClick={() => {
                   if (onLogout) {
@@ -1142,12 +1031,14 @@ export const AdminDashboard = ({ onLogout }) => {
                     window.location.reload();
                   }
                 }}
-                className="ml-1 sm:ml-2 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition flex items-center space-x-1 shadow-sm"
+                className="justify-center px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition flex items-center space-x-1 shadow-sm"
                 title="Sign out from Admin Console"
               >
                 <LogOut size={13} />
                 <span className="hidden sm:inline">Sign Out</span>
               </button>
+              <AccountSecurity />
+              </div>
             </div>
           </div>
         </div>
@@ -1226,13 +1117,6 @@ export const AdminDashboard = ({ onLogout }) => {
               <AlertTriangle size={15} />
               <span>Grievance Master Queue</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-50 text-rose-700 font-mono font-semibold border border-rose-200">{activeIssues}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('audit')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${activeTab === 'audit' ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
-            >
-              <Shield size={15} />
-              <span>Audit & Ledger</span>
             </button>
           </nav>
         </div>
@@ -1416,94 +1300,7 @@ export const AdminDashboard = ({ onLogout }) => {
               </div>
             </div>
 
-            {/* Two-Column Analytics Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left: Category Grievance Breakdown */}
-              <div className="lg:col-span-5 p-5 lg:p-6 rounded-2xl bg-white border border-slate-200/90 shadow-sm flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900 tracking-tight">Grievance Distribution Across Domains</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Categorized breakdown of all active redressal cases</p>
-                    </div>
-                    <span className="text-[11px] font-mono font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded border border-blue-200">Updated 5m ago</span>
-                  </div>
-                  <div className="space-y-4 mt-5">
-                    {categoryBreakdown.map((item) => (
-                      <div key={item.key}>
-                        <div className="flex justify-between text-xs font-medium mb-1.5">
-                          <span className="text-slate-700 flex items-center gap-2">
-                            <span className={`w-2.5 h-2.5 rounded-full ${item.dot}`}></span>
-                            {item.key}
-                          </span>
-                          <span className="font-mono text-slate-900 font-semibold">{item.count} Cases ({item.percentage}%)</span>
-                        </div>
-                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                          <div className={`h-full rounded-full ${item.color}`} style={{ width: `${item.percentage}%` }}></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-6 p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
-                  <span className="flex items-center gap-2 font-medium">
-                    <ShieldCheck size={16} className="text-amber-500" />
-                    Zero Anti-Ragging Violations Reported
-                  </span>
-                  <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Zero Violations</span>
-                </div>
-              </div>
-
-              {/* Right: Academic Branch SLA & Resolution Throughput */}
-              <div className="lg:col-span-7 p-5 lg:p-6 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-5">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 tracking-tight">Academic Branch SLA & Resolution Throughput</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Real-time resolution speed across NITTE DU engineering & computer applications departments</p>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs">
-                    <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">&lt; 24h SLA</span>
-                    <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold">24-48h SLA</span>
-                    <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-semibold">&gt; 48h Lag</span>
-                  </div>
-                </div>
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 text-[11px] uppercase tracking-wider">
-                      <tr>
-                        <th className="py-2.5 px-3">Department / Branch</th>
-                        <th className="py-2.5 px-3">Enrolled</th>
-                        <th className="py-2.5 px-3">Mentors</th>
-                        <th className="py-2.5 px-3">Active Tickets</th>
-                        <th className="py-2.5 px-3">Avg Resolution</th>
-                        <th className="py-2.5 px-3 text-right">Health Score</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {branchMatrixData.map((b) => (
-                        <tr key={b.code} className="hover:bg-slate-50/80 transition">
-                          <td className="py-3 px-3 font-semibold text-slate-900 flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${b.color}`}></span>
-                            {b.fullName}
-                          </td>
-                          <td className="py-3 px-3 font-mono text-slate-600">{b.enrolled}</td>
-                          <td className="py-3 px-3 font-mono text-slate-600">{b.mentorCount}</td>
-                          <td className="py-3 px-3">
-                            <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-semibold border border-blue-200">
-                              {b.activeTickets} Open
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 font-mono text-slate-600">{b.avgResolution}</td>
-                          <td className="py-3 px-3 text-right">
-                            <span className="font-bold text-emerald-600">{b.healthScore}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <AdminGrievanceAnalytics branches={branches} />
           </section>
         )}
 
@@ -2080,9 +1877,6 @@ export const AdminDashboard = ({ onLogout }) => {
               <div>
                 <div className="flex items-center space-x-2">
                   <h2 className="text-base font-bold text-slate-900 tracking-tight">Relationship Officers (RO) Registry & Governance</h2>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                    Level 2 Authority
-                  </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">Manage institutional Relationship Officers, assign specialized domain categories, and import officer rosters</p>
               </div>
@@ -2125,7 +1919,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-900">Import Relationship Officers Registry (.xlsx or .csv)</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">Upload official NITTE RO roster spreadsheet: RO ID, RO Name, Official Email, Assigned Domain Category, Contact Phone, Password.</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Upload official NITTE RO roster spreadsheet: RO ID, RO Name, Official Email, Assigned Domain Category, Initial Password.</p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono mt-2">
                         <span>Max file size: 25MB</span>
                         <span>•</span>
@@ -2179,7 +1973,6 @@ export const AdminDashboard = ({ onLogout }) => {
                             <th className="py-2 px-3">Full Name</th>
                             <th className="py-2 px-3">Official Email</th>
                             <th className="py-2 px-3">Domain Category</th>
-                            <th className="py-2 px-3">Contact Phone</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -2190,7 +1983,6 @@ export const AdminDashboard = ({ onLogout }) => {
                               <td className="py-2 px-3 font-semibold text-slate-900">{r['RO Name'] || r.name || r.roName || 'Officer'}</td>
                               <td className="py-2 px-3 font-mono text-slate-600">{r['Official Email'] || r.email || r.Email || 'N/A'}</td>
                               <td className="py-2 px-3 text-slate-700">{r['Assigned Domain Category'] || r.category || 'General Support'}</td>
-                              <td className="py-2 px-3 font-mono text-slate-500">{r['Contact Phone'] || r.phone || '9876543210'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -2247,7 +2039,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   className="bg-slate-50 text-xs text-slate-700 px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600"
                 >
                   <option value="ALL">All Domain Categories</option>
-                  {Array.from(new Set((db.users?.ros || []).map(r => r.category).filter(Boolean))).map(cat => (
+                  {Array.from(new Set((db.users?.ros || []).map(r => r.region ?? r.category).filter(Boolean))).map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
@@ -2265,9 +2057,8 @@ export const AdminDashboard = ({ onLogout }) => {
                     <tr>
                       <th className="py-3.5 px-4">Officer ID & Info</th>
                       <th className="py-3.5 px-4">Assigned Domain Category</th>
-                      <th className="py-3.5 px-4">Official Contact</th>
+                      <th className="py-3.5 px-4">Official Email</th>
                       <th className="py-3.5 px-4">Active Ticket Caseload</th>
-                      <th className="py-3.5 px-4">Jurisdiction & Level</th>
                       <th className="py-3.5 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -2295,12 +2086,11 @@ export const AdminDashboard = ({ onLogout }) => {
                             </td>
                             <td className="py-3.5 px-4">
                               <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
-                                {ro.category || 'General Support & Redressal'}
+                                {ro.region ?? ro.category ?? 'Unassigned'}
                               </span>
                             </td>
                             <td className="py-3.5 px-4 font-mono text-[11px]">
                               <div className="text-slate-800">{ro.email}</div>
-                              <div className="text-slate-500 text-[10px]">{ro.phone || '9876543210'}</div>
                             </td>
                             <td className="py-3.5 px-4">
                               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
@@ -2311,11 +2101,6 @@ export const AdminDashboard = ({ onLogout }) => {
                                     : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               }`}>
                                 {activeCaseload} Active {activeCaseload === 1 ? 'Case' : 'Cases'}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                Level 2 Hearing Officer
                               </span>
                             </td>
                             <td className="py-3.5 px-4 text-right">
@@ -2345,7 +2130,7 @@ export const AdminDashboard = ({ onLogout }) => {
                       })
                     ) : (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-500 text-xs">
+                        <td colSpan={5} className="py-8 text-center text-slate-500 text-xs">
                           No Relationship Officers found matching the search criteria.
                         </td>
                       </tr>
@@ -2811,35 +2596,6 @@ export const AdminDashboard = ({ onLogout }) => {
           </section>
         )}
 
-        {/* ================= TAB 7: AUDIT TRAIL & SECURITY LEDGER ================= */}
-        {activeTab === 'audit' && (
-          <section className="space-y-6">
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Security & Activity Audit Trail</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Every mentor session, RO meeting minutes entry, and administrative override is logged with SHA-256 state hashes</p>
-                </div>
-                <span className="px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-mono font-semibold border border-emerald-200 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Ledger Synchronized
-                </span>
-              </div>
-              <div className="space-y-3 font-mono text-xs">
-                {auditLogs.map((log) => (
-                  <div key={log.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
-                    <div className="flex items-center space-x-3">
-                      <span className="text-slate-500 font-semibold">{new Date(log.timestamp).toLocaleString()}</span>
-                      <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${log.typeBadge}`}>{log.type}</span>
-                      <span className="text-slate-800">{log.message}</span>
-                    </div>
-                    <span className="text-slate-500 text-[11px] truncate max-w-xs font-mono">Hash: {log.hash}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
 
       </main>
 
@@ -3478,7 +3234,7 @@ export const AdminDashboard = ({ onLogout }) => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-700 font-medium mb-1">Officer ID (RO-01 to RO-49) *</label>
+                  <label className="block text-slate-700 font-medium mb-1">Officer ID *</label>
                   <input
                     type="text"
                     required
@@ -3490,23 +3246,17 @@ export const AdminDashboard = ({ onLogout }) => {
                 </div>
                 <div>
                   <label className="block text-slate-700 font-medium mb-1">Assigned Domain Category *</label>
-                  <select
+                  <input
+                    required
                     value={singleRoCategory}
-                    onChange={(e) => setSingleRoCategory(e.target.value)}
-                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white"
-                  >
-                    <option value="Hostel Infrastructure & Wi-Fi">Hostel Infrastructure & Wi-Fi</option>
-                    <option value="Academic & CIA Marks Re-evaluation">Academic & CIA Marks Re-evaluation</option>
-                    <option value="Laboratory Equipment & Calibration">Laboratory Equipment & Calibration</option>
-                    <option value="Examination Portal & Attendance Condonation">Examination Portal & Attendance Condonation</option>
-                    <option value="Campus Transport & Fee Accounts">Campus Transport & Fee Accounts</option>
-                    <option value="Placement Training & Drive Registration">Placement Training & Drive Registration</option>
-                    <option value="General Student Support & Counseling">General Student Support & Counseling</option>
-                  </select>
+                    onChange={e => setSingleRoCategory(e.target.value)}
+                    placeholder="Domain - Issue topic"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200"
+                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-slate-700 font-medium mb-1">Institutional Email Address *</label>
                   <input
@@ -3515,16 +3265,6 @@ export const AdminDashboard = ({ onLogout }) => {
                     value={singleRoEmail}
                     onChange={(e) => setSingleRoEmail(e.target.value)}
                     placeholder="officer@nitte.edu.in"
-                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-medium mb-1">Contact Phone</label>
-                  <input
-                    type="tel"
-                    value={singleRoPhone}
-                    onChange={(e) => setSingleRoPhone(e.target.value)}
-                    placeholder="9876543210"
                     className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
                   />
                 </div>

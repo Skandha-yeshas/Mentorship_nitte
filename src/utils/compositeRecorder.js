@@ -119,6 +119,22 @@ export class CompositeMeetingRecorder {
     }
   }
 
+  setLocalStream(stream) {
+    this.localStream = stream;
+    if (this.localVideo) {
+      this.localVideo.srcObject = stream || null;
+      if (stream) this.localVideo.play().catch(() => {});
+    }
+    if (this.audioCtx && this.audioDest) {
+      this.localAudioSource?.disconnect();
+      this.localAudioSource = null;
+      if (stream?.getAudioTracks().length) {
+        this.localAudioSource = this.audioCtx.createMediaStreamSource(stream);
+        this.localAudioSource.connect(this.audioDest);
+      }
+    }
+  }
+
   /**
    * Dynamically attaches or updates the Remote Peer's MediaStream
    * when WebRTC handshake completes.
@@ -162,73 +178,35 @@ export class CompositeMeetingRecorder {
    * Starts canvas compositing loop and MediaRecorder
    */
   start() {
-    if (this.isRecording || !this.canvas) return;
-    this.isRecording = true;
-    this.startTime = Date.now();
+    if (this.isRecording) return;
+    if (!this.canvas || !this.ctx || typeof MediaRecorder === 'undefined' || !this.canvas.captureStream) {
+      throw new Error('Meeting recording is not supported in this browser.');
+    }
+    this.stopPromise = null;
+    this.recordingError = null;
     this.recordedChunks = [];
-
-    // Start requestAnimationFrame draw loop throttled to target fps
-    const frameIntervalMs = 1000 / this.fps;
-    let lastFrameTime = performance.now();
-
-    const loop = (currentTime) => {
-      if (!this.isRecording) return;
-      const elapsed = currentTime - lastFrameTime;
-      if (elapsed >= frameIntervalMs) {
-        lastFrameTime = currentTime - (elapsed % frameIntervalMs);
-        this.drawFrame();
-      }
-      this.rafId = requestAnimationFrame(loop);
+    this.startTime = Date.now();
+    // Paint before capture so even a short call has a real first video frame.
+    this.drawFrame();
+    const canvasStream = this.canvas.captureStream(this.fps);
+    this.captureStream = new MediaStream(canvasStream.getVideoTracks());
+    if (this.audioDest?.stream.getAudioTracks().length) {
+      this.captureStream.addTrack(this.audioDest.stream.getAudioTracks()[0]);
+    } else if (this.localStream?.getAudioTracks().length) {
+      this.captureStream.addTrack(this.localStream.getAudioTracks()[0].clone());
+    }
+    const mimeType = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4']
+      .find(type => MediaRecorder.isTypeSupported(type));
+    this.mediaRecorder = new MediaRecorder(this.captureStream, mimeType ? { mimeType, videoBitsPerSecond: 900000 } : undefined);
+    this.mediaRecorder.ondataavailable = event => {
+      if (event.data?.size > 0) this.recordedChunks.push(event.data);
     };
-    this.rafId = requestAnimationFrame(loop);
-
-    // Capture mixed canvas video stream
-    let combinedStream;
-    try {
-      const canvasStream = this.canvas.captureStream(this.fps);
-      combinedStream = new MediaStream();
-
-      // Add Canvas Video Track
-      canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-
-      // Add Mixed Dual-Channel Audio Track
-      if (this.audioDest && this.audioDest.stream.getAudioTracks().length > 0) {
-        combinedStream.addTrack(this.audioDest.stream.getAudioTracks()[0]);
-      } else if (this.localStream && this.localStream.getAudioTracks().length > 0) {
-        combinedStream.addTrack(this.localStream.getAudioTracks()[0]);
-      }
-    } catch (e) {
-      console.warn('[CompositeRecorder] Stream capture fallback:', e);
-      combinedStream = this.localStream;
-    }
-
-    // Initialize MediaRecorder
-    let mimeType = 'video/webm;codecs=vp8,opus';
-    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp9,opus';
-    }
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm';
-    }
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = '';
-    }
-
-    try {
-      this.mediaRecorder = mimeType
-        ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 900000 })
-        : new MediaRecorder(combinedStream);
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          this.recordedChunks.push(event.data);
-        }
-      };
-
-      this.mediaRecorder.start(1000); // Flush chunks every 1 second
-    } catch (e) {
-      console.warn('[CompositeRecorder] MediaRecorder failed to start:', e);
-    }
+    this.mediaRecorder.onerror = event => { this.recordingError = event.error || new Error('MediaRecorder could not record this meeting.'); };
+    this.mediaRecorder.start(1000);
+    this.isRecording = true;
+    // A timer keeps drawing while the video meeting window is not the active tab.
+    this.animInterval = setInterval(() => this.drawFrame(), 1000 / this.fps);
+    canvasStream.getVideoTracks()[0]?.requestFrame?.();
   }
 
   /**
@@ -496,84 +474,48 @@ export class CompositeMeetingRecorder {
     if (stroke) ctx.stroke();
   }
 
-  /**
-   * Stops recording, closes media streams and compositing loop,
-   * and returns a Promise resolving to { blob, videoUrl, durationSeconds }.
-   * Guaranteed to resolve within 400ms max even if browser MediaRecorder delays onstop.
-   */
-  async stop() {
+  /** Finish the final MediaRecorder chunk before releasing any capture resources. */
+  stop() {
+    if (this.stopPromise) return this.stopPromise;
     this.isRecording = false;
-    if (this.rafId) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
-    if (this.animInterval) {
-      clearInterval(this.animInterval);
-      this.animInterval = null;
-    }
-
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    if (this.animInterval) clearInterval(this.animInterval);
+    this.rafId = null;
+    this.animInterval = null;
     const durationSeconds = Math.max(1, Math.round((Date.now() - this.startTime) / 1000));
-
-    return new Promise((resolve) => {
-      let resolved = false;
-      const finalize = () => {
-        if (resolved) return;
-        resolved = true;
-
-        let blob = null;
-        let videoUrl = '';
-        if (this.recordedChunks && this.recordedChunks.length > 0) {
-          try {
-            blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-            videoUrl = URL.createObjectURL(blob);
-          } catch (e) {
-            console.warn('[CompositeRecorder] Blob generation error:', e);
-          }
-        }
-
-        // Cleanup audio context and hidden video elements
+    this.stopPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      let timeout;
+      const finish = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         try {
-          if (this.audioCtx) {
-            this.audioCtx.close().catch(() => {});
-            this.audioCtx = null;
-          }
-        } catch (e) {}
-
-        if (this.localVideo) {
-          this.localVideo.srcObject = null;
+          if (error || this.recordingError) throw error || this.recordingError;
+          const mimeType = this.mediaRecorder?.mimeType || this.recordedChunks[0]?.type || 'video/webm';
+          const blob = new Blob(this.recordedChunks, { type: mimeType });
+          if (blob.size < 12) throw new Error('The meeting recording is empty. No video file was produced.');
+          resolve({ blob, durationSeconds, mimeType });
+        } catch (failure) { reject(failure); }
+        finally {
+          this.recordedChunks = [];
+          this.captureStream?.getTracks().forEach(track => track.stop());
+          this.captureStream = null;
+          this.audioCtx?.close().catch(() => {});
+          this.audioCtx = null;
+          if (this.localVideo) { this.localVideo.pause(); this.localVideo.srcObject = null; }
+          if (this.remoteVideo) { this.remoteVideo.pause(); this.remoteVideo.srcObject = null; }
           this.localVideo = null;
-        }
-        if (this.remoteVideo) {
-          this.remoteVideo.srcObject = null;
           this.remoteVideo = null;
         }
-
-        resolve({ blob, videoUrl, durationSeconds });
       };
-
-      // Guaranteed timeout to ensure stop() never hangs
-      const safetyTimeout = setTimeout(() => {
-        finalize();
-      }, 400);
-
-      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-        this.mediaRecorder.onstop = () => {
-          clearTimeout(safetyTimeout);
-          finalize();
-        };
-        try {
-          if (this.mediaRecorder.requestData) {
-            this.mediaRecorder.requestData();
-          }
-          this.mediaRecorder.stop();
-        } catch (e) {
-          clearTimeout(safetyTimeout);
-          finalize();
-        }
-      } else {
-        clearTimeout(safetyTimeout);
-        finalize();
-      }
+      if (!this.mediaRecorder) { finish(new Error('The meeting recorder was not started.')); return; }
+      if (this.mediaRecorder.state === 'inactive') { finish(); return; }
+      this.mediaRecorder.onstop = () => finish();
+      this.mediaRecorder.onerror = event => finish(event.error || new Error('The browser could not finalize the recording.'));
+      timeout = setTimeout(() => finish(new Error('The browser did not finish the video file. No incomplete recording was saved.')), 15000);
+      try { this.mediaRecorder.stop(); } catch (error) { finish(error); }
     });
+    return this.stopPromise;
   }
 }
