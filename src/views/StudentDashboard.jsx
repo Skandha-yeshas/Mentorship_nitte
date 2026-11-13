@@ -5,7 +5,9 @@ import { WebRtcMeetingSession, getCanonicalMeetingRoomId } from '../utils/webrtc
 import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 import IssueActivityLog from '../components/IssueActivityLog';
+import MeetingCountdown from '../components/MeetingCountdown';
 import { buildIssueSlipHtml, printIssueSlip } from '../utils/issueSlip';
+import { formatTicketNumber } from '../../shared/ticketNumber.js';
 import { resolveCategoryGuidance } from '../../shared/categoryGuidance.js';
 import { getGrievanceQuota, formatQuotaDate } from '../../shared/grievanceQuota.js';
 import { getStudentIssues, getLiveStudentMeetings } from '../utils/studentMeetings';
@@ -103,6 +105,7 @@ export const StudentDashboard = ({ studentId }) => {
   const [studentMediaPermissionState, setStudentMediaPermissionState] = useState('idle');
   const isMediaRequestingRef = useRef(false);
   const [studentMediaPermissionError, setStudentMediaPermissionError] = useState('');
+  const [callConnectionNotice, setCallConnectionNotice] = useState('');
   const [roRemoteStream, setRoRemoteStream] = useState(null);
   const [studentStream, setStudentStream] = useState(null);
   const [peerConnected, setPeerConnected] = useState(false);
@@ -112,6 +115,7 @@ export const StudentDashboard = ({ studentId }) => {
 
   const studentStreamRef = useRef(null);
   const webrtcSessionRef = useRef(null);
+  const activeStudentRoomRef = useRef(null);
 
   // Resolve current student profile (Authenticated student takes precedence over generic props)
   const isAuthUserStudent = authenticatedUser && (authenticatedUser.role === 'Student' || !authenticatedUser.role);
@@ -122,33 +126,26 @@ export const StudentDashboard = ({ studentId }) => {
     (db.users?.students || []).find(s => s.id && String(s.id).trim().toLowerCase() === targetStudentIdLower) ||
     (db.users?.students || []).find(s => s.email && String(s.email).trim().toLowerCase() === targetStudentIdLower) ||
     authenticatedUser ||
-    (rawTargetStudentId ? {
-      id: rawTargetStudentId,
-      name: 'Student',
-      sem: '6',
-      branch: 'CSE',
-      email: `${rawTargetStudentId.toLowerCase()}@nitte.edu.in`
-    } : null) ||
-    (db.users?.students || [])[0] || {
-      id: '4NM21CS089',
-      name: 'Ananya Rao',
-      sem: '6',
-      branch: 'CSE',
-      email: 'ananya.rao@nitte.edu.in'
-    };
+    { id: rawTargetStudentId, name: 'Student', sem: '', branch: '', email: '' };
 
   const matchMentorHelper = typeof isMatchingMentorId === 'function'
     ? isMatchingMentorId
     : (a, b) => String(a || '').replace(/[^A-Z0-9]/gi, '').toLowerCase() === String(b || '').replace(/[^A-Z0-9]/gi, '').toLowerCase();
 
-  const myMentor = (db.users?.mentors || []).find(m => matchMentorHelper(m.id, student?.mentorId)) || {
-    id: 'M-101',
-    name: 'Prof. Suresh Nayak, M.Tech',
-    designation: 'Associate Professor • Dept of CSE',
-    department: 'Computer Science & Engineering',
-    cabin: 'CS-204',
-    email: 'suresh.nayak@nitte.edu.in',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'
+  const myMentor = (db.users?.mentors || []).find(m => matchMentorHelper(m.id, student?.mentorId || student?.mentor_id)) || null;
+  const mentorInitials = (myMentor?.name || '').split(/\s+/).filter(Boolean).map(part => part[0]).slice(0, 2).join('') || '?';
+  const mentorSessions = myMentor ? (db.groupSessions || []).filter(session =>
+    matchMentorHelper(session.mentorId || session.mentor_id, myMentor.id) &&
+    new Date(session.dateTime || session.date_time).getTime() >= Date.now()
+  ).sort((a, b) => new Date(a.dateTime || a.date_time) - new Date(b.dateTime || b.date_time)) : [];
+  const mentorResources = myMentor ? (db.resources || []).filter(resource =>
+    matchMentorHelper(resource.mentorId || resource.mentor_id, myMentor.id)
+  ) : [];
+  const externalLink = value => {
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined;
+    } catch { return undefined; }
   };
 
   // Determine active RO dynamically based on category selection
@@ -172,6 +169,11 @@ export const StudentDashboard = ({ studentId }) => {
   const myIssues = Array.from(issueDedupeMap.values());
   const activeSelectedIssueId = selectedIssueId || (myIssues.length > 0 ? myIssues[0].id : null);
   const selectedIssue = myIssues.find(i => i.id?.toUpperCase() === activeSelectedIssueId?.toUpperCase()) || myIssues[0] || null;
+  const getTicketNumberForId = rawId => {
+    const target = String(rawId || '').trim().toUpperCase();
+    const issue = (db.issues || []).find(row => String(row.id || row.issue_id || '').trim().toUpperCase() === target);
+    return formatTicketNumber(issue || rawId);
+  };
 
   const liveStudentMeetings = getLiveStudentMeetings({
     meetings: db.meetings || [],
@@ -271,16 +273,20 @@ export const StudentDashboard = ({ studentId }) => {
         role: 'student',
         localStream: stream,
         onRemoteStream: (remStream) => setRoRemoteStream(remStream),
-        onPeerStatus: (status) => setPeerConnected(Boolean(status.connected)),
+        onPeerStatus: status => {
+          setPeerConnected(Boolean(status.connected));
+          if (status.error || status.warning) setCallConnectionNotice(status.error || status.warning);
+        },
         onRemoteMediaState: (state) => {
           if (typeof state.video === 'boolean') setIsRoCameraOff(!state.video);
           if (typeof state.audio === 'boolean') setIsRoMicMuted(!state.audio);
         },
-        onMeetingEnded: () => {
+        onMeetingEnded: details => {
           handleCloseStudentVideo();
           setMeetingEndedPopup({
             show: true,
             issueId: targetIssueId,
+            reason: details?.reason === 'time-limit' ? 'The 30-minute meeting limit has been reached.' : '',
             roName: activeFormRO?.name || 'Relationship Officer',
             endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           });
@@ -291,6 +297,7 @@ export const StudentDashboard = ({ studentId }) => {
 
   // WebRTC Media Stream Request (Instant fallback if camera locked by RO tab)
   const requestStudentMedia = async (targetIssueIdParam = null) => {
+    setCallConnectionNotice('');
     // 1. If we already hold an active, non-stopped local stream, reuse it directly without camera contention
     if (studentStreamRef.current && studentStreamRef.current.active && studentStreamRef.current.getTracks().some(t => t.readyState === 'live')) {
       const stream = studentStreamRef.current;
@@ -346,6 +353,10 @@ export const StudentDashboard = ({ studentId }) => {
         stream = createFallbackMediaStream({ label: student?.name || 'Student', role: 'Student' });
       }
 
+      if (!activeStudentRoomRef.current || (targetIssueIdParam && activeStudentRoomRef.current !== getCanonicalMeetingRoomId(targetIssueIdParam))) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
       studentStreamRef.current = stream;
       setStudentStream(stream);
       setStudentMediaPermissionState('granted');
@@ -367,12 +378,14 @@ export const StudentDashboard = ({ studentId }) => {
       return;
     }
     const cleanId = getCanonicalMeetingRoomId(meeting.issueId || meeting.issue_id);
+    activeStudentRoomRef.current = cleanId;
     setActiveMeetingIssueId(cleanId);
     setShowStudentVideoModal(true);
     requestStudentMedia(cleanId);
   };
 
   const handleCloseStudentVideo = () => {
+    activeStudentRoomRef.current = null;
     setShowStudentVideoModal(false);
     setActiveMeetingIssueId(null);
     if (webrtcSessionRef.current) {
@@ -447,16 +460,17 @@ export const StudentDashboard = ({ studentId }) => {
     setIsSubmitting(true);
     try {
       const finalDesc = subjectTitle ? `[${subjectTitle}] ${description}` : description;
-      const newIssueId = await submitIssue(student.id, category, finalDesc, priority.toUpperCase());
+      const newIssue = await submitIssue(student.id, category, finalDesc, priority.toUpperCase());
+      const newIssueId = newIssue.id;
       setDescription('');
       setSubjectTitle('');
       setSelectedIssueId(newIssueId);
       if (categoryGuidance.available) {
-        setSubmissionVideoModal({ issueId: newIssueId, category, roName: activeFormRO.name });
+        setSubmissionVideoModal({ issueId: newIssueId, ticketNumber: newIssue.ticketNumber, category, roName: activeFormRO.name });
       } else {
         setSubmissionVideoModal(null);
         setActiveTab('track');
-        setSuccessMessage(`Ticket #${newIssueId} submitted to your RO. No self-help video is available for this issue.`);
+        setSuccessMessage(`Ticket ${formatTicketNumber(newIssue)} submitted to your RO. No self-help video is available for this issue.`);
       }
     } catch (err) {
       if (err.quota?.isLocked) {
@@ -470,21 +484,23 @@ export const StudentDashboard = ({ studentId }) => {
     }
   };
 
-  const handleFeedbackSubmit = (e) => {
+  const handleFeedbackSubmit = async (e) => {
     e.preventDefault();
     const targetId = selectedIssueId || activeSelectedIssueId;
     if (!targetId) return;
-    submitFeedback(targetId, rating, feedbackComments);
+    try { await submitFeedback(targetId, rating, feedbackComments); }
+    catch (error) { setErrorMessage(error.message); return; }
     setFeedbackComments('');
     setSuccessMessage('Your feedback has been submitted. The original 7-day slot lock remains unchanged.');
     setTimeout(() => setSuccessMessage(''), 4000);
   };
 
-  const handleReopenSubmit = (e) => {
+  const handleReopenSubmit = async (e) => {
     e.preventDefault();
     const targetId = selectedIssueId || activeSelectedIssueId;
     if (!targetId) return;
-    reopenIssue(targetId, student.id, reopenReason);
+    try { await reopenIssue(targetId, student.id, reopenReason); }
+    catch (error) { setErrorMessage(error.message); return; }
     setReopenReason('');
     setShowReopenForm(false);
     setSuccessMessage('Ticket reopened for RO follow-up.');
@@ -530,7 +546,7 @@ export const StudentDashboard = ({ studentId }) => {
                     </span>
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white/10 text-slate-200">
                       <span className="material-symbols-outlined text-[13px] text-emerald-400">lock</span>
-                      Room: #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}
+                      Room: {getTicketNumberForId(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id)}
                     </span>
                     <span className="text-xs text-slate-300">
                       Scheduled: {activeStudentOnlineMeeting.date} at {activeStudentOnlineMeeting.time}
@@ -540,7 +556,7 @@ export const StudentDashboard = ({ studentId }) => {
                     {activeFormRO?.name || 'Dr. Rajeshwari Kamath'}
                   </h2>
                   <p className="text-xs sm:text-sm text-slate-200 max-w-2xl">
-                    Online consultation deliberation session for Ticket #{activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id}.
+                    Online consultation deliberation session for Ticket {getTicketNumberForId(activeStudentOnlineMeeting.issueId || activeStudentOnlineMeeting.id)}.
                   </p>
                 </div>
               </div>
@@ -602,7 +618,6 @@ export const StudentDashboard = ({ studentId }) => {
             >
               <span className="material-symbols-outlined text-[18px]">person_celebrate</span>
               <span>Mentorship Hub</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
             </button>
 
             <button
@@ -611,9 +626,6 @@ export const StudentDashboard = ({ studentId }) => {
             >
               <span className="material-symbols-outlined text-[18px]">hotel_class</span>
               <span>Mentor Feedback</span>
-              <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
-                Term 2024
-              </span>
             </button>
           </nav>
         </div>
@@ -632,8 +644,8 @@ export const StudentDashboard = ({ studentId }) => {
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">Submit your academic or campus inquiry to your mentor.</p>
                   </div>
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Authenticated: {student?.id || '4NM21CS089'}
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px] tabular-nums text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                    Authenticated: {student?.id || 'Not available'}
                   </span>
                 </div>
 
@@ -644,7 +656,7 @@ export const StudentDashboard = ({ studentId }) => {
                       <span>1. Select Issue Category &amp; Specific Problem</span>
                       <span className="text-rose-500">*</span>
                     </label>
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-nitte-50 text-nitte-800 border border-nitte-200">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] tabular-nums font-semibold bg-nitte-50 text-nitte-800 border border-nitte-200">
                       <span className="w-1.5 h-1.5 rounded-full bg-nitte-800"></span>
                       {categories.length ? `${categories.length} imported issue topics across ${domainModels.length} domains` : 'No issue categories yet. Admin must import the RO roster first.'}
                     </span>
@@ -728,7 +740,7 @@ export const StudentDashboard = ({ studentId }) => {
                       <span className="material-symbols-outlined text-[15px] text-nitte-800">alt_route</span>
                       <span>Auto-assigned to: <strong className="font-bold text-nitte-800">{activeFormRO?.name || 'Academic Dean Office'}</strong> ({activeFormRO?.category || category.split(' - ')[0]})</span>
                     </div>
-                    <span className="hidden sm:inline-flex items-center gap-1 font-mono text-[10px] text-slate-500">
+                    <span className="hidden sm:inline-flex items-center gap-1 tabular-nums text-[10px] text-slate-500">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> SLA: 24h
                     </span>
                   </div>
@@ -743,13 +755,15 @@ export const StudentDashboard = ({ studentId }) => {
                     </span>
                     <span className="text-[11px] font-normal text-slate-400">Response SLA: High &lt;24h, Med &lt;48h</span>
                   </label>
-                  <div className="flex items-center gap-3">
-                    <label className="flex-1 cursor-pointer">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="min-w-0 cursor-pointer">
                       <input
                         className="sr-only"
                         type="radio"
                         name="priority"
                         value="low"
+                        aria-label="Low Priority"
+                        aria-describedby="priority-help-low"
                         checked={priority === 'low'}
                         onChange={() => setPriority('low')}
                       />
@@ -757,14 +771,19 @@ export const StudentDashboard = ({ studentId }) => {
                         <span className="w-2 h-2 rounded-full bg-slate-400"></span>
                         Low Priority
                       </div>
+                      <span id="priority-help-low" className="block mt-1.5 text-[11px] leading-relaxed text-slate-600">
+                        Not urgent; can wait for regular review.
+                      </span>
                     </label>
 
-                    <label className="flex-1 cursor-pointer">
+                    <label className="min-w-0 cursor-pointer">
                       <input
                         className="sr-only"
                         type="radio"
                         name="priority"
                         value="medium"
+                        aria-label="Medium Priority"
+                        aria-describedby="priority-help-medium"
                         checked={priority === 'medium'}
                         onChange={() => setPriority('medium')}
                       />
@@ -772,23 +791,32 @@ export const StudentDashboard = ({ studentId }) => {
                         <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                         Medium Priority
                       </div>
+                      <span id="priority-help-medium" className="block mt-1.5 text-[11px] leading-relaxed text-slate-600">
+                        Less urgent; needs attention soon.
+                      </span>
                     </label>
 
-                    <label className="flex-1 cursor-pointer">
+                    <label className="min-w-0 cursor-pointer">
                       <input
                         className="sr-only"
                         type="radio"
                         name="priority"
                         value="high"
+                        aria-label="High Priority"
+                        aria-describedby="priority-help-high"
                         checked={priority === 'high'}
                         onChange={() => setPriority('high')}
                       />
                       <div className={`px-3.5 py-2.5 rounded-xl border-2 text-center text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${priority === 'high' ? 'border-rose-600 bg-rose-50 text-rose-900' : 'border-slate-200 text-slate-600'}`}>
                         <span className="w-2 h-2 rounded-full bg-rose-600 animate-pulse"></span>
-                        High (Urgent Redressal)
+                        High Priority
                       </div>
+                      <span id="priority-help-high" className="block mt-1.5 text-[11px] leading-relaxed text-slate-600">
+                        Very urgent; an online meeting with the RO is needed.
+                      </span>
                     </label>
                   </div>
+                  <p className="text-[11px] text-slate-500">Online meetings are scheduled and started by your RO.</p>
                 </div>
 
                 {/* Subject & Description */}
@@ -813,7 +841,7 @@ export const StudentDashboard = ({ studentId }) => {
                       <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
                         Comprehensive Description <span className="text-rose-500">*</span>
                       </label>
-                      <span className="text-[11px] font-mono text-slate-400">{description.length} / 600 chars</span>
+                      <span className="text-[11px] tabular-nums text-slate-400">{description.length} / 600 chars</span>
                     </div>
                     <textarea
                       className="w-full text-sm px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-nitte-800/20 focus:border-nitte-800 transition custom-scrollbar leading-relaxed disabled:bg-slate-100 disabled:cursor-not-allowed"
@@ -901,8 +929,8 @@ export const StudentDashboard = ({ studentId }) => {
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">Slot {idx + 1}</span>
-                              <span className="font-mono text-xs font-bold text-nitte-800">#{item.id}</span>
+                              <span className="text-[10px] tabular-nums font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">Slot {idx + 1}</span>
+                              <span className="tabular-nums text-xs font-bold text-nitte-800">{formatTicketNumber(item)}</span>
                             </div>
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> {item.status}
@@ -927,7 +955,7 @@ export const StudentDashboard = ({ studentId }) => {
                                 {item.roName || (db.users?.ros || []).find(r => r.id === (item.roId || item.ro_id))?.name || 'Assigned RO'}
                               </span>
                             </div>
-                            <span className="font-mono text-[10px] text-nitte-800 font-semibold">View Details →</span>
+                            <span className="tabular-nums text-[10px] text-nitte-800 font-semibold">View Details →</span>
                           </div>
                         </div>
                       ))
@@ -1047,7 +1075,7 @@ export const StudentDashboard = ({ studentId }) => {
                           className={`p-4 rounded-xl border cursor-pointer transition-all ${isSelected ? 'border-2 border-nitte-800 bg-nitte-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/70'}`}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-mono text-xs font-bold text-nitte-800">#{issue.id}</span>
+                            <span className="tabular-nums text-xs font-bold text-nitte-800">{formatTicketNumber(issue)}</span>
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${statusColor}`}>
                               <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
                               {issue.status}
@@ -1077,8 +1105,8 @@ export const StudentDashboard = ({ studentId }) => {
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-extrabold text-nitte-800 bg-nitte-50 px-2.5 py-1 rounded-md border border-nitte-200">
-                            #{selectedIssue.id}
+                          <span className="tabular-nums text-sm font-extrabold text-nitte-800 bg-nitte-50 px-2.5 py-1 rounded-md border border-nitte-200">
+                            {formatTicketNumber(selectedIssue)}
                           </span>
                           <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold">
                             {selectedIssue.priority || 'Medium Priority'}
@@ -1107,7 +1135,7 @@ export const StudentDashboard = ({ studentId }) => {
                           src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
                         />
                         <div>
-                          <p className="text-xs font-bold text-slate-900">{selectedIssue.roName || activeFormRO?.name || 'Prof. Suresh Nayak'} (Assigned Officer)</p>
+                          <p className="text-xs font-bold text-slate-900">{selectedIssue.roName || activeFormRO?.name || 'Assigned officer'} (Assigned Officer)</p>
                           <p className="text-[11px] text-slate-500">Relationship Officer • {selectedIssue.category?.split(' - ')[0] || 'Academic Cell'}</p>
                         </div>
                       </div>
@@ -1146,11 +1174,11 @@ export const StudentDashboard = ({ studentId }) => {
                           <div className="text-xs">
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-900">Ticket Submitted by Student</span>
-                              <span className="font-mono text-[10px] text-slate-400">
+                              <span className="tabular-nums text-[10px] text-slate-400">
                                 {selectedIssue.submittedAt ? new Date(selectedIssue.submittedAt).toLocaleDateString() : 'Registered'}
                               </span>
                             </div>
-                            <p className="text-slate-500 text-[11px] mt-0.5">Automated registration on Central Redressal Portal under USN {student?.id || '4NM21CS089'}.</p>
+                            <p className="text-slate-500 text-[11px] mt-0.5">Automated registration on Central Redressal Portal under USN {student?.id || 'Not available'}.</p>
                           </div>
                         </div>
 
@@ -1162,7 +1190,7 @@ export const StudentDashboard = ({ studentId }) => {
                           <div className="text-xs">
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-900">Assigned to Officer</span>
-                              <span className="font-mono text-[10px] text-slate-400">RO Allocated</span>
+                              <span className="tabular-nums text-[10px] text-slate-400">RO Allocated</span>
                             </div>
                             <p className="text-slate-500 text-[11px] mt-0.5">{selectedIssue.roName || 'Relationship Officer'} designated for jurisdiction review.</p>
                           </div>
@@ -1180,7 +1208,7 @@ export const StudentDashboard = ({ studentId }) => {
                               <span className={`font-bold ${selectedIssue.status === 'Resolved' ? 'text-slate-900' : 'text-amber-700'}`}>
                                 Consultation &amp; Inquiry Status
                               </span>
-                              <span className="font-mono text-[10px] text-slate-400">{selectedIssue.status}</span>
+                              <span className="tabular-nums text-[10px] text-slate-400">{selectedIssue.status}</span>
                             </div>
                             <p className="text-slate-600 text-[11px] mt-0.5">
                               {selectedIssue.status === 'Resolved' ? 'Investigation and hearing concluded.' : 'Deliberation active with assigned officer.'}
@@ -1318,124 +1346,75 @@ export const StudentDashboard = ({ studentId }) => {
         {activeTab === 'mentorship' && (
           <div className="tab-panel space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Mentor Profile Card (5 cols) */}
               <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Permanent Faculty Mentor</span>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">Assigned 2023-25</span>
-                </div>
-
-                <div className="flex flex-col items-center text-center p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
-                  <img
-                    alt={myMentor?.name || 'Faculty Mentor'}
-                    className="w-24 h-24 rounded-2xl object-cover ring-4 ring-nitte-100 shadow-md"
-                    src={myMentor?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
-                  />
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">{myMentor?.name || 'Prof. Suresh Nayak, M.Tech'}</h3>
-                    <p className="text-xs text-nitte-800 font-semibold">{myMentor?.designation || 'Associate Professor • Dept of CSE'}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">Faculty In-Charge • Cloud &amp; Distributed Labs</p>
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-2 pt-1">
-                    <span className="text-[11px] font-mono bg-white px-2.5 py-1 rounded-md border border-slate-200 text-slate-600">
-                      Office: {myMentor?.cabin || 'CS-204'}
-                    </span>
-                    <span className="text-[11px] font-mono bg-white px-2.5 py-1 rounded-md border border-slate-200 text-slate-600">
-                      Hours: Mon-Thu 3-5 PM
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Mentorship Batch</span>
-                    <span className="font-bold text-slate-800">2021-25 CSE Batch B</span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Total 1-on-1 Sessions</span>
-                    <span className="font-bold text-slate-800">8 Completed</span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Next Scheduled Evaluation</span>
-                    <span className="font-bold text-nitte-800">Nov 04, 2024</span>
-                  </div>
-                </div>
-
-                <div className="pt-2 flex items-center gap-3">
-                  <a
-                    href={`mailto:${myMentor?.email || 'suresh.nayak@nitte.edu.in'}`}
-                    className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-nitte-50 hover:bg-nitte-100 text-nitte-800 border border-nitte-200 text-xs font-bold transition shadow-sm group"
-                  >
-                    <span className="material-symbols-outlined text-[18px] text-nitte-800">mail</span>
-                    <span>Email Mentor</span>
-                    <span className="text-[11px] font-mono font-normal text-slate-500 group-hover:text-nitte-900">
-                      ({myMentor?.email || 'suresh.nayak@nitte.edu.in'})
-                    </span>
-                  </a>
-                </div>
-              </div>
-
-              {/* Mentorship Logs & Milestones (7 cols) */}
-              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">Mentorship Logs &amp; Academic Recommendations</h3>
-                    <p className="text-xs text-slate-500">Continuous Evaluation records entered by your faculty mentor.</p>
-                  </div>
-                  <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
-                    Good Standing (8.6 CGPA)
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Faculty Mentor</span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${myMentor ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+                    {myMentor ? 'Assigned' : 'Not assigned'}
                   </span>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-900">Semester 5 Mid-Term Review &amp; Internship Search</span>
-                      <span className="text-[11px] font-mono text-slate-400">Sep 12, 2024</span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      "Student is advised to focus on distributed system algorithms and apply for summer research internships through the university innovation lab. Lab attendances verified at 94%."
-                    </p>
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="text-[10px] font-bold bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                        Signed: {myMentor?.name || 'Prof. Suresh Nayak'}
-                      </span>
-                      <span className="text-[10px] text-emerald-600 font-medium">Action Item Completed</span>
-                    </div>
+                <div className="flex flex-col items-center text-center p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
+                  <div aria-hidden="true" className="w-24 h-24 rounded-2xl bg-nitte-100 text-nitte-800 flex items-center justify-center text-2xl font-bold ring-4 ring-white shadow-md">
+                    {mentorInitials}
                   </div>
-
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-900">Semester 4 Capstone Phase 0 Evaluation</span>
-                      <span className="text-[11px] font-mono text-slate-400">May 19, 2024</span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      "Synopsis approved for decentralized attendance tracker. Co-guide assigned from Electronics dept for hardware integration."
-                    </p>
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="text-[10px] font-bold bg-white text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                        Signed: {myMentor?.name || 'Prof. Suresh Nayak'}
-                      </span>
-                    </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">{myMentor?.name || 'No faculty mentor assigned'}</h3>
+                    {myMentor?.dept && <p className="text-xs text-nitte-800 font-semibold">{myMentor.dept}</p>}
+                    {myMentor?.class && <p className="text-xs text-slate-500 mt-0.5">Class: {myMentor.class}</p>}
+                    {!myMentor && <p className="text-xs text-slate-500 mt-2">Contact your administrator to confirm your mentor assignment.</p>}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-nitte-50 border border-nitte-100 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-nitte-800 text-[24px]">ondemand_video</span>
-                    <div>
-                      <p className="text-xs font-bold text-nitte-900">Recommended Guidance Video for Capstone</p>
-                      <p className="text-[11px] text-slate-500">IEEE Paper Publication standards and ethical AI usage guidelines.</p>
+                {myMentor && (
+                  <div className="space-y-3 text-xs">
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-slate-100">
+                      <span className="text-slate-500">Mentor ID</span>
+                      <span className="font-bold text-slate-800">{myMentor.id}</span>
                     </div>
+                    {myMentor.email ? (
+                      <a href={`mailto:${myMentor.email}`} className="w-full inline-flex flex-wrap items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-nitte-50 hover:bg-nitte-100 text-nitte-800 border border-nitte-200 text-xs font-bold transition shadow-sm break-all">
+                        <span className="material-symbols-outlined text-[18px]" aria-hidden="true">mail</span>
+                        <span>Email Mentor</span>
+                        <span className="font-normal">({myMentor.email})</span>
+                      </a>
+                    ) : <p className="text-slate-500">Mentor email not provided.</p>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSubmissionVideoModal({ issueId: 'CAPSTONE', category: 'Academic Guidance', roName: myMentor?.name || 'Mentor' })}
-                    className="text-xs font-bold text-nitte-800 hover:underline"
-                  >
-                    Watch →
-                  </button>
+                )}
+              </div>
+
+              <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-card space-y-5">
+                <div className="border-b border-slate-100 pb-4">
+                  <h3 className="text-base font-bold text-slate-900">Mentorship Sessions &amp; Resources</h3>
+                  <p className="text-xs text-slate-500 mt-1">Sessions and resources shared by your assigned faculty mentor.</p>
                 </div>
+                <section aria-label="Scheduled mentorship sessions" className="space-y-3">
+                  <h4 className="text-sm font-bold text-slate-800">Scheduled Sessions</h4>
+                  {mentorSessions.length === 0 ? (
+                    <p className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-500">No upcoming mentorship sessions have been shared.</p>
+                  ) : mentorSessions.map(session => (
+                    <div key={session.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                      <h5 className="text-xs font-bold text-slate-900">{session.title || 'Mentorship session'}</h5>
+                      <p className="text-xs text-slate-500">{new Date(session.dateTime || session.date_time).toLocaleString()}</p>
+                      {session.description && <p className="text-xs text-slate-600 whitespace-pre-wrap">{session.description}</p>}
+                      {externalLink(session.link) && <a href={externalLink(session.link)} target="_blank" rel="noopener noreferrer" className="inline-block text-xs font-bold text-nitte-800 hover:underline">Open Session Link</a>}
+                    </div>
+                  ))}
+                </section>
+                <section aria-label="Shared mentorship resources" className="space-y-3">
+                  <h4 className="text-sm font-bold text-slate-800">Shared Resources</h4>
+                  {mentorResources.length === 0 ? (
+                    <p className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs text-slate-500">No mentorship resources have been shared.</p>
+                  ) : mentorResources.map(resource => (
+                    <div key={resource.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                      <h5 className="text-xs font-bold text-slate-900">{resource.title || 'Mentorship resource'}</h5>
+                      {resource.type && <p className="text-xs text-slate-500">{resource.type}</p>}
+                      {externalLink(resource.content) ? (
+                        <a href={externalLink(resource.content)} target="_blank" rel="noopener noreferrer" className="inline-block text-xs font-bold text-nitte-800 hover:underline">Open Resource</a>
+                      ) : resource.content && <p className="text-xs text-slate-600 whitespace-pre-wrap break-words">{resource.content}</p>}
+                    </div>
+                  ))}
+                </section>
               </div>
             </div>
           </div>
@@ -1463,14 +1442,10 @@ export const StudentDashboard = ({ studentId }) => {
 
               {/* Mentor Banner */}
               <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <img
-                  alt={myMentor?.name || 'Mentor'}
-                  className="w-12 h-12 rounded-xl object-cover ring-2 ring-white"
-                  src={myMentor?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAmDrI739sJPBfOMRmOMhlZdFtsRSqN-YNeSOXDEtaoOAl_EgYUXoyB-CvGV4v0eUlXJmO14uuZ_Kgl3KtABptFbpzB1K8f-2aRABQr_x-pZvBOgBid4fI94bAWSm66vCp2EY1Kr2XV74Nu1SsFKHBzK2OONG6fF3x20CgMpLLHsP0efCWo8n6QV5-H_H0DKCPlUzHx7AWX7AzaUQR6fu8TQMI5ui2RN-Zvb7NujM0'}
-                />
+                <div aria-hidden="true" className="w-12 h-12 shrink-0 rounded-xl bg-nitte-100 text-nitte-800 flex items-center justify-center font-bold">{mentorInitials}</div>
                 <div>
-                  <h4 className="text-sm font-bold text-slate-900">Evaluating: {myMentor?.name || 'Prof. Suresh Nayak'}</h4>
-                  <p className="text-xs text-slate-500">Department of Computer Science &amp; Engineering • Term 2024</p>
+                  <h4 className="text-sm font-bold text-slate-900">{myMentor ? `Evaluating: ${myMentor.name}` : 'No faculty mentor assigned'}</h4>
+                  <p className="text-xs text-slate-500">{myMentor?.dept || (myMentor ? 'Faculty Mentor' : 'Feedback will be available after your mentor is assigned.')}</p>
                 </div>
               </div>
 
@@ -1558,7 +1533,8 @@ export const StudentDashboard = ({ studentId }) => {
                 <button
                   type="button"
                   onClick={handleMentorFeedbackSubmit}
-                  className="px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+                  disabled={!myMentor}
+                  className="px-6 py-2.5 rounded-xl bg-nitte-800 hover:bg-nitte-900 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Submit Confidential Feedback
                 </button>
@@ -1600,7 +1576,7 @@ export const StudentDashboard = ({ studentId }) => {
                 </span>
                 <div className="flex flex-col">
                   <span className="text-xs font-bold text-white tracking-wide">
-                    WebRTC Encrypted Session • Ticket #{activeMeetingIssueId || 'TICKET'}
+                    WebRTC Encrypted Session • Ticket {getTicketNumberForId(activeMeetingIssueId || 'TICKET')}
                   </span>
                   <span className="text-[10px] text-slate-400">
                     {activeFormRO?.name || 'Relationship Officer'} &amp; {student?.name || 'Student'} ({student?.id})
@@ -1608,7 +1584,17 @@ export const StudentDashboard = ({ studentId }) => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                <MeetingCountdown
+                  meeting={(db.meetings || []).find(meeting => String(meeting.issueId || meeting.issue_id || '').toUpperCase() === String(activeMeetingIssueId || '').toUpperCase())}
+                  onExpire={() => {
+                    const issueId = activeMeetingIssueId;
+                    handleCloseStudentVideo();
+                    setMeetingEndedPopup({ issueId, roName: activeFormRO?.name || 'Relationship Officer',
+                      endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      reason: 'The 30-minute meeting limit has been reached.' });
+                  }}
+                />
+                <span className="text-[11px] tabular-nums px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
                   {peerConnected ? 'Bitrate: 2.4 Mbps (HD 1080p)' : 'Connecting P2P...'}
                 </span>
                 <button
@@ -1620,6 +1606,10 @@ export const StudentDashboard = ({ studentId }) => {
               </div>
             </div>
 
+            {callConnectionNotice && <div role="alert" className="px-5 py-3 bg-amber-500/15 text-amber-200 text-xs flex items-center justify-between gap-3">
+              <span>{callConnectionNotice}</span>
+              <button type="button" className="shrink-0 underline font-semibold" onClick={() => requestStudentMedia(activeMeetingIssueId)}>Retry connection</button>
+            </div>}
             {/* Stage: Remote Video Stream + PiP Student Stream */}
             <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden">
               {roRemoteStream ? (
@@ -1659,7 +1649,7 @@ export const StudentDashboard = ({ studentId }) => {
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">Camera Off</div>
                 )}
-                <span className="absolute bottom-1.5 left-2 text-[10px] font-mono bg-black/70 px-1.5 py-0.5 rounded text-white z-10 flex items-center gap-1">
+                <span className="absolute bottom-1.5 left-2 text-[10px] tabular-nums bg-black/70 px-1.5 py-0.5 rounded text-white z-10 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> You
                 </span>
               </div>
@@ -1672,7 +1662,7 @@ export const StudentDashboard = ({ studentId }) => {
 
             {/* Video Control Dock Bar */}
             <div className="px-6 py-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-              <div className="text-xs text-slate-400 font-mono">
+              <div className="text-xs text-slate-400 tabular-nums">
                 Status: <span className="text-white font-bold">{peerConnected ? 'Connected' : 'Syncing'}</span>
               </div>
 
@@ -1733,11 +1723,11 @@ export const StudentDashboard = ({ studentId }) => {
             </div>
 
             {/* Ticket badge */}
-            {submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' && (
+            {submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && (
               <div className="px-5 py-2 bg-nitte-50 border-b border-slate-100 flex items-center gap-2">
                 <span className="material-symbols-outlined text-[16px] text-nitte-700">confirmation_number</span>
                 <span className="text-xs text-slate-600">
-                  Ticket <strong className="text-nitte-800">#{submissionVideoModal.issueId}</strong> submitted successfully{submissionGuidance.available ? ' — please watch the self-help video below before deciding next steps.' : ' — your issue is with the assigned RO.'}
+                  Ticket <strong className="text-nitte-800">{submissionVideoModal.ticketNumber ? formatTicketNumber(submissionVideoModal.ticketNumber) : getTicketNumberForId(submissionVideoModal.issueId)}</strong> submitted successfully{submissionGuidance.available ? ' — please watch the self-help video below before deciding next steps.' : ' — your issue is with the assigned RO.'}
                 </span>
               </div>
             )}
@@ -1760,7 +1750,7 @@ export const StudentDashboard = ({ studentId }) => {
               </p>
 
               {/* Action buttons — only show for real tickets */}
-              {submissionGuidance.available && submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' && submissionVideoModal.issueId !== 'CAPSTONE' ? (
+              {submissionGuidance.available && submissionVideoModal.issueId && submissionVideoModal.issueId !== 'PREVIEW' && submissionVideoModal.issueId !== 'WALKTHROUGH' ? (
                 <div className="grid grid-cols-2 gap-3">
                   {/* Resolved button — white → green */}
                   <button
@@ -1768,13 +1758,11 @@ export const StudentDashboard = ({ studentId }) => {
                       try {
                         await resolveIssue(submissionVideoModal.issueId, student.id, 'Self-resolved by student after watching self-help protocol video.');
                         setSubmissionVideoModal(null);
-                        setSuccessMessage(`Ticket #${submissionVideoModal.issueId} marked as resolved. Well done!`);
+                        setSuccessMessage(`Ticket ${submissionVideoModal.ticketNumber ? formatTicketNumber(submissionVideoModal.ticketNumber) : getTicketNumberForId(submissionVideoModal.issueId)} marked as resolved. Well done!`);
                         setTimeout(() => setSuccessMessage(''), 5000);
                         setActiveTab('track');
                       } catch (err) {
-                        // If resolveIssue throws (e.g. requires RO), just close and track
-                        setSubmissionVideoModal(null);
-                        setActiveTab('track');
+                        alert(err.message || 'The resolution could not be saved. Please retry.');
                       }
                     }}
                     className="group flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-emerald-400 bg-white text-emerald-700 text-xs font-bold transition-all duration-200 hover:bg-emerald-500 hover:border-emerald-500 hover:text-white hover:shadow-lg hover:shadow-emerald-100 active:scale-95"
@@ -1787,7 +1775,7 @@ export const StudentDashboard = ({ studentId }) => {
                   <button
                     onClick={() => {
                       setSubmissionVideoModal(null);
-                      setSuccessMessage(`Ticket #${submissionVideoModal.issueId} routed to ${submissionVideoModal.roName || 'RO'} for review.`);
+                      setSuccessMessage(`Ticket ${submissionVideoModal.ticketNumber ? formatTicketNumber(submissionVideoModal.ticketNumber) : getTicketNumberForId(submissionVideoModal.issueId)} routed to ${submissionVideoModal.roName || 'RO'} for review.`);
                       setTimeout(() => setSuccessMessage(''), 5000);
                       setActiveTab('track');
                     }}
@@ -1821,8 +1809,9 @@ export const StudentDashboard = ({ studentId }) => {
             <span className="material-symbols-outlined text-[48px] text-emerald-500">task_alt</span>
             <h3 className="text-base font-bold text-slate-900">Meeting Session Concluded</h3>
             <p className="text-xs text-slate-600">
-              Your consultation session with <strong>{meetingEndedPopup.roName}</strong> for Ticket #{meetingEndedPopup.issueId} ended at {meetingEndedPopup.endedAt}.
+              Your consultation session with <strong>{meetingEndedPopup.roName}</strong> for Ticket {meetingEndedPopup.ticketNumber || getTicketNumberForId(meetingEndedPopup.issueId)} ended at {meetingEndedPopup.endedAt}.
             </p>
+            {meetingEndedPopup.reason && <p className="text-xs text-slate-600">{meetingEndedPopup.reason}</p>}
             <button
               onClick={() => setMeetingEndedPopup(null)}
               className="w-full py-2.5 rounded-xl bg-nitte-800 text-white text-xs font-bold shadow-md"
@@ -1837,7 +1826,7 @@ export const StudentDashboard = ({ studentId }) => {
       <footer className="mt-auto border-t border-slate-200 bg-white py-6 rounded-2xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-nitte-800">NITTE (Deemed to be University)</span>
+            <span className="font-bold text-nitte-800">Smart Mentorship & Grievance Portal</span>
             <span>•</span>
             <span>Student Grievance Redressal Committee (SGRC)</span>
           </div>
@@ -1845,7 +1834,7 @@ export const StudentDashboard = ({ studentId }) => {
             <a className="hover:text-nitte-800 transition" href="#regulations">University Regulations</a>
             <a className="hover:text-nitte-800 transition" href="#anti-ragging">Anti-Ragging Squad</a>
             <a className="hover:text-nitte-800 transition" href="#ombudsperson">Ombudsperson Contact</a>
-            <span className="font-mono text-slate-400">Build v3.2.0</span>
+            <span className="tabular-nums text-slate-400">Build v3.2.0</span>
           </div>
         </div>
       </footer>

@@ -11,6 +11,11 @@ const issues = [
 const meeting = { id: 'MEET-A', issueId: 'ISS-A', studentId: alice.id, studentName: alice.name, status: 'Started', mode: 'Online' };
 const live = (student, meetings = [meeting], currentIssues = issues) => getLiveStudentMeetings({ student, meetings, issues: currentIssues });
 
+test('expired online calls are hidden even before the background completion is polled', () => {
+  assert.deepEqual(live(alice, [{ ...meeting, startedAt: new Date(Date.now() - 30 * 60000).toISOString() }]), []);
+  assert.equal(live(alice, [{ ...meeting, startedAt: new Date(Date.now() - 29 * 60000).toISOString() }]).length, 1);
+});
+
 test('an RO starting Alice\'s meeting only exposes it to Alice, even when Bob has an issue and the same name', () => {
   assert.deepEqual(live(alice), [meeting]);
   assert.deepEqual(live(bob), []);

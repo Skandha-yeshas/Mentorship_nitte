@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import dotenv from 'dotenv';
-import XLSX from 'xlsx';
+import XLSX from '../shared/nodeSpreadsheet.js';
 import { normalizeRoRosterRow, getRoCategories } from '../shared/roCatalog.js';
 
 dotenv.config({ path: fileURLToPath(new URL('../server/.env', import.meta.url)), quiet: true });

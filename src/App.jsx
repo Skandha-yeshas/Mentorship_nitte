@@ -16,6 +16,7 @@ function AppContent() {
     db = {},
     loading = false,
     error = null,
+    fetchDbState = () => {},
     authenticatedUser = null,
     logoutUser = () => {}
   } = context;
@@ -95,7 +96,7 @@ function AppContent() {
   }
 
   // Database Connection Error Screen
-  if (error) {
+  if (error && !db.authenticatedUser) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', padding: '24px', textAlign: 'center' }}>
         <div className="glass-card" style={{ maxWidth: '520px', borderLeft: '4px solid var(--accent-rose)', margin: '0 auto' }}>
@@ -127,10 +128,18 @@ function AppContent() {
     );
   }
 
+  const refreshWarning = error ? (
+    <div role="alert" style={{ padding: '12px 20px', background: '#fff3cd', color: '#664d03' }}>
+      {error} Showing the last confirmed data.{' '}
+      <button className="btn" onClick={() => fetchDbState()}>Retry refresh</button>
+    </div>
+  ) : null;
+
   // Admin Console - Dedicated Full-Width Dashboard with Unified Institutional Header
   if (currentUser === 'Admin') {
     return (
       <div className="min-h-screen bg-[#f8fafc]">
+        {refreshWarning}
         <AdminDashboard
           onLogout={async () => {
             try { await logoutUser(); setIsLoginPageVisible(true); }
@@ -147,6 +156,7 @@ function AppContent() {
 
   return (
     <div className="app-container">
+      {refreshWarning}
       <RoleSwitcher
         selectedSubProfile={selectedSubProfile}
         setSelectedSubProfile={setSelectedSubProfile}

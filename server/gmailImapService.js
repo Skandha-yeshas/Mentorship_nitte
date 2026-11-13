@@ -1,6 +1,7 @@
 import imapSimple from 'imap-simple';
 import { simpleParser } from 'mailparser';
 import { processInboundGmailReply, GMAIL_ADDRESS } from './gmailService.js';
+import { extractEmailIssueId } from './emailNotifications.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -17,8 +18,8 @@ let pollInterval = null;
 let isPolling = false;
 
 const getConfig = () => {
-  const user = (process.env.GMAIL_USER || GMAIL_ADDRESS || '').trim();
-  const password = (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
+  const user = (process.env.IMAP_USER || process.env.GMAIL_USER || GMAIL_ADDRESS || '').trim();
+  const password = process.env.IMAP_PASSWORD || (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
 
   if (!user || !password) {
     return null;
@@ -28,12 +29,12 @@ const getConfig = () => {
     imap: {
       user,
       password,
-      host: 'imap.gmail.com',
-      port: 993,
+      host: process.env.IMAP_HOST || 'imap.gmail.com',
+      port: Number(process.env.IMAP_PORT || 993),
       tls: true,
       authTimeout: 8000,
       connTimeout: 8000,
-      tlsOptions: { rejectUnauthorized: false }
+      tlsOptions: { rejectUnauthorized: true }
     }
   };
 };
@@ -72,7 +73,7 @@ export const pollGmailInbox = async () => {
     const searchCriteria = ['UNSEEN'];
     const fetchOptions = {
       bodies: ['HEADER', 'TEXT', ''],
-      markSeen: true
+      markSeen: false
     };
 
     const messages = await connection.search(searchCriteria, fetchOptions);
@@ -82,30 +83,32 @@ export const pollGmailInbox = async () => {
 
     for (const item of messages) {
       const allParts = item.parts.find(part => part.which === '');
-      const id = item.attributes.uid;
 
       if (allParts && allParts.body) {
         const parsed = await simpleParser(allParts.body);
         const subject = parsed.subject || '';
-        const senderEmail = parsed.from?.value?.[0]?.address || 'unknown@gmail.com';
+        const senderEmail = parsed.from?.value?.[0]?.address || '';
         const senderName = parsed.from?.value?.[0]?.name || senderEmail.split('@')[0];
         const bodyText = parsed.text || parsed.html || '';
 
         // Extract Issue ID (matches ISS-xxx, TICK-xxx, ISS-101, etc.)
-        const issueMatch = subject.match(/(ISS-\d+|TICK-\d+)/i) || bodyText.match(/(ISS-\d+|TICK-\d+)/i);
+        const issueId = extractEmailIssueId(subject, bodyText);
 
-        if (issueMatch) {
-          const issueId = issueMatch[0].toUpperCase();
+        if (issueId) {
           console.log(`[Gmail IMAP] Real unread email received from ${senderEmail} for Ticket ${issueId}`);
           
-          await processInboundGmailReply({
+          const result = await processInboundGmailReply({
             senderEmail,
             senderName,
             issueId,
-            replyText: bodyText.trim().substring(0, 500)
+            replyText: bodyText.trim().substring(0, 500),
+            messageId: parsed.messageId
           });
 
-          imapStatus.processedCount += 1;
+          if (result.success) {
+            await connection.addFlags(item.attributes.uid, '\\Seen');
+            if (!result.duplicate) imapStatus.processedCount += 1;
+          }
         }
       }
     }

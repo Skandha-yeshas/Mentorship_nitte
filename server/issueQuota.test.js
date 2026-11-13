@@ -10,29 +10,19 @@ const reader = overrides => createIssueQuotaReader({
   ...overrides
 });
 
-test('server quota counts resolved issues from both stores without double counting', async () => {
-  const read = reader({ query: async () => ({ rows: [issue('A'), issue('B')] }), fetchCloudIssues: async () => [issue('A'), issue('B')], getMemoryIssues: () => [issue('A')] });
-  const quota = await read('S-1');
-  assert.equal(quota.usedCount, 2);
-  assert.equal(quota.isLocked, true);
+test('server quota includes resolved issues from the authoritative database', async () => {
+  const quota = await reader({ query: async () => ({ rows: [issue('A'), issue('B')] }) })('S-1');
+  assert.equal(quota.usedCount, 2); assert.equal(quota.isLocked, true);
 });
 
-test('server can verify the quota when either persistent source is available', async () => {
-  const dbDown = reader({ isDbConnected: () => false, fetchCloudIssues: async () => [issue('A'), issue('B')] });
-  assert.equal((await dbDown('S-1')).isLocked, true);
-  const cloudDown = reader({ fetchCloudIssues: async () => { throw new Error('Offline'); }, query: async () => ({ rows: [issue('A'), issue('B')] }) });
-  assert.equal((await cloudDown('S-1')).isLocked, true);
-});
-
-test('server refuses unverified submissions when both persistent stores are unavailable', async () => {
-  const read = reader({ isDbConnected: () => false, fetchCloudIssues: async () => { throw new Error('Offline'); } });
-  await assert.rejects(read('S-1'), /Cannot verify the 7-day grievance quota/);
+test('server refuses an unverified quota when the database is unavailable', async () => {
+  await assert.rejects(reader({ query: async () => { throw new Error('Offline'); } })('S-1'), /Cannot verify the 7-day grievance quota/);
 });
 
 test('simultaneous submissions are serialized so only two can consume slots', async () => {
   const memory = [];
   const acquire = createStudentSubmissionLock();
-  const read = reader({ getMemoryIssues: () => memory });
+  const read = reader({ query: async () => ({ rows: [...memory] }) });
   const results = await Promise.all([1, 2, 3].map(async id => {
     const release = await acquire('S-1');
     try {

@@ -2,7 +2,7 @@
  * Generates modern, responsive institutional onboarding HTML and plain-text emails
  * for Faculty Mentors uploaded via the Admin Roster Bulk Import or Individual Onboarding.
  * Follows the exact same theme and structure as the student onboarding email,
- * including a Direct Sign-In action button that pre-fills Mentor ID & Password
+ * including a Direct Sign-In action button that pre-fills Mentor ID
  * without auto-logging in until the user clicks the login button.
  */
 
@@ -15,14 +15,14 @@ export const generateMentorOnboardingEmailHtml = ({
   generatedPassword = '',
   portalBaseUrl = 'http://localhost:5173'
 }) => {
-  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NITTE Faculty Mentor Account Credentials</title>
+  <title>Smart Mentorship &amp; Grievance Portal — Mentor Account Credentials</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 32px 12px;">
@@ -35,10 +35,10 @@ export const generateMentorOnboardingEmailHtml = ({
           <tr>
             <td style="background: linear-gradient(135deg, #091e42 0%, #1e3a8a 52%, #059669 100%); padding: 36px 32px 28px; text-align: center; color: #ffffff;">
               <div style="display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 30px; padding: 5px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #a7f3d0; margin-bottom: 14px;">
-                🏛️ NITTE (DEEMED TO BE UNIVERSITY)
+                SMART MENTORSHIP &amp; GRIEVANCE PORTAL
               </div>
               <h1 style="margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; line-height: 1.3;">
-                Faculty Mentorship Portal
+                Smart Mentorship &amp; Grievance Portal
               </h1>
               <p style="margin: 8px 0 0 0; font-size: 13px; color: #93c5fd; font-weight: 400;">
                 Official Faculty Appointment & Direct Access Credentials
@@ -53,7 +53,7 @@ export const generateMentorOnboardingEmailHtml = ({
                 Dear Prof. / Dr. <strong style="color: #1e3a8a;">${name}</strong>,
               </p>
               <p style="margin: 0 0 18px; font-size: 14px; color: #475569; line-height: 1.6;">
-                Welcome to the NITTE Faculty Mentorship Network! Your official faculty advisor account has been provisioned and verified by Institutional Administration. You are now designated as an official mentor on the <strong>NITTE Student Mentorship & Grievance Escalation Portal</strong>.
+                Welcome to the Smart Mentorship &amp; Grievance Portal. Your faculty mentor account has been provisioned by the portal administrator.
               </p>
 
               <!-- Faculty Profile Snapshot Tag -->
@@ -121,7 +121,7 @@ export const generateMentorOnboardingEmailHtml = ({
                       </tr>
                     </table>
                     <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
-                      ⚡ Pre-fills your Faculty ID & password on the login page. Simply click "Sign In to Faculty Mentor Portal" to enter.
+                      ⚡ Pre-fills your Faculty ID on the login page. Simply click "Sign In to Faculty Mentor Portal" to enter.
                     </p>
                   </td>
                 </tr>
@@ -163,10 +163,10 @@ export const generateMentorOnboardingEmailHtml = ({
           <tr>
             <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
               <p style="margin: 0 0 4px; font-weight: 600; color: #334155;">
-                NITTE Mentorship & Academic Support Administration
+                Smart Mentorship &amp; Grievance Portal Support
               </p>
               <p style="margin: 0 0 4px; font-size: 11px; color: #64748b;">
-                Nitte (Deemed to be University), Deralakatte, Mangaluru, Karnataka 575018
+                Automated account notification
               </p>
               <p style="margin: 0; font-size: 11px; color: #94a3b8;">
                 This is an automated credential notification. Please keep your credentials confidential.
@@ -191,14 +191,14 @@ export const generateMentorOnboardingEmailText = ({
   generatedPassword = '',
   portalBaseUrl = 'http://localhost:5173'
 }) => {
-  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Mentor&id=${encodeURIComponent(mentorId)}`;
 
-  return `NITTE (Deemed to be University) - Faculty Mentorship Portal
-Official Faculty Account Activation & Credentials
+  return `Smart Mentorship & Grievance Portal - Mentor Account Credentials
+Faculty Account Activation
 
 Dear Prof. / Dr. ${name},
 
-Welcome to the NITTE Faculty Mentorship Network! Your official faculty advisor account has been provisioned and verified by Institutional Administration.
+Welcome to the Smart Mentorship & Grievance Portal. Your faculty mentor account has been provisioned by the portal administrator.
 
 Faculty Details:
 - Department: ${dept}
@@ -214,9 +214,8 @@ Your Login Credentials:
 👉 Click the direct link below to open the faculty portal (pre-fills your credentials):
 ${directLoginUrl}
 
-⚡ Note: The link will pre-fill your Faculty ID and password. Simply click "Sign In to Faculty Mentor Portal" to enter your dashboard.
+⚡ Note: The link will pre-fill your Faculty ID. Simply click "Sign In to Faculty Mentor Portal" to enter your dashboard.
 
 Portal: ${portalBaseUrl}
-NITTE Mentorship & Academic Support Desk
-Nitte (Deemed to be University), Deralakatte, Mangaluru, Karnataka 575018`;
+Smart Mentorship & Grievance Portal Support`;
 };

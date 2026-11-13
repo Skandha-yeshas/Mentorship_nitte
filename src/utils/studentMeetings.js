@@ -1,9 +1,12 @@
+import { isOnlineMeetingExpired } from '../../shared/meetingDuration.js';
+
 const normalize = value => String(value || '').trim().toLowerCase();
 const issueIdOf = issue => normalize(issue.id || issue.issue_id);
 const meetingIssueIdOf = meeting => normalize(meeting.issueId || meeting.issue_id);
 const studentIdOf = record => normalize(record.studentId || record.student_id);
 const isOnline = meeting => !meeting.mode || normalize(meeting.mode) === 'online';
-const isLive = meeting => normalize(meeting.status) === 'started' && !meeting.endedByRo && !meeting.endedAt && !meeting.ended_at;
+const isLive = meeting => normalize(meeting.status) === 'started' && !meeting.endedByRo && !meeting.endedAt && !meeting.ended_at &&
+  !isOnlineMeetingExpired(meeting, meeting.serverNow ? new Date(meeting.serverNow).getTime() : Date.now());
 const isIssueClosed = issue => ['resolved', 'closed', 'escalated', 're-escalated'].includes(normalize(issue.status));
 
 export function getStudentIssues(issues, student) {

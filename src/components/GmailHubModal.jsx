@@ -2,9 +2,9 @@ import React, { useState, useContext } from 'react';
 import { DatabaseContext } from '../context/DatabaseContext';
 
 export const GmailHubModal = ({ isOpen, onClose }) => {
-  const { db, sendCustomEmail, simulateGmailResponse } = useContext(DatabaseContext);
+  const { db, sendCustomEmail } = useContext(DatabaseContext);
   
-  const [activeTab, setActiveTab] = useState('logs'); // 'logs', 'compose', 'simulate'
+  const [activeTab, setActiveTab] = useState('logs'); // 'logs' or 'compose'
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDirection, setFilterDirection] = useState('ALL');
 
@@ -13,18 +13,13 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
   const [composeSubject, setComposeSubject] = useState('');
   const [composeBody, setComposeBody] = useState('');
   const [composeIssueId, setComposeIssueId] = useState('');
-  const [sendSuccess, setSendSuccess] = useState(false);
-
-  // Simulate State
-  const [simSenderEmail, setSimSenderEmail] = useState('');
-  const [simSenderName, setSimSenderName] = useState('');
-  const [simIssueId, setSimIssueId] = useState('');
-  const [simReplyText, setSimReplyText] = useState('I agree with the resolution provided and approve closing the ticket.');
-  const [simSuccess, setSimSuccess] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState('');
+  const [sendError, setSendError] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   if (!isOpen) return null;
 
-  const gmailAddress = db.gmailAddress || 'skandhayashu2906@gmail.com';
+  const gmailAddress = db.gmailAddress || 'Not configured';
   const logs = db.gmailLogs || [];
 
   const filteredLogs = logs.filter(log => {
@@ -40,44 +35,15 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
     return matchesSearch;
   });
 
-  const handleSendEmail = async (e) => {
-    e.preventDefault();
-    if (!composeTo || !composeSubject || !composeBody) return;
-
-    await sendCustomEmail({
-      to: composeTo,
-      subject: composeSubject,
-      content: composeBody,
-      issueId: composeIssueId || null
-    });
-
-    setSendSuccess(true);
-    setTimeout(() => {
-      setSendSuccess(false);
-      setComposeTo('');
-      setComposeSubject('');
-      setComposeBody('');
-      setComposeIssueId('');
-      setActiveTab('logs');
-    }, 1500);
-  };
-
-  const handleSimulateReply = async (e) => {
-    e.preventDefault();
-    const issueToUse = simIssueId || (db.issues?.[0]?.id || 'ISS-001');
-
-    await simulateGmailResponse({
-      senderEmail: simSenderEmail,
-      senderName: simSenderName,
-      issueId: issueToUse,
-      replyText: simReplyText
-    });
-
-    setSimSuccess(true);
-    setTimeout(() => {
-      setSimSuccess(false);
-      setActiveTab('logs');
-    }, 1500);
+  const handleSendEmail = async event => {
+    event.preventDefault();
+    if (isSending || !composeTo || !composeSubject || !composeBody) return;
+    setIsSending(true); setSendError(''); setSendSuccess('');
+    try {
+      const result = await sendCustomEmail({ to: composeTo, subject: composeSubject, content: composeBody, issueId: composeIssueId || null });
+      setSendSuccess(result.delivered ? 'Message accepted by the mail server.' : result.record?.deliveryReason || 'Message logged; delivery not confirmed.');
+    } catch (error) { setSendError(error.message); }
+    finally { setIsSending(false); }
   };
 
   return (
@@ -160,7 +126,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
                   border: db.imapStatus?.active ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(96, 165, 250, 0.3)'
                 }}>
                   <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: db.imapStatus?.active ? '#4ade80' : '#60a5fa' }}></span>
-                  {db.imapStatus?.active ? 'Real IMAP Listener Active (imap.gmail.com:993)' : 'Real End-to-End SMTP/IMAP Engine Ready'}
+                  {db.imapStatus?.active ? 'Real IMAP Listener Active (imap.gmail.com:993)' : 'Inbox listener inactive'}
                 </span>
               </div>
             </div>
@@ -221,22 +187,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
           >
             ✏️ Compose Email
           </button>
-          <button
-            onClick={() => setActiveTab('simulate')}
-            style={{
-              padding: '0.85rem 1.25rem',
-              border: 'none',
-              background: 'transparent',
-              fontWeight: 600,
-              fontSize: '0.9rem',
-              cursor: 'pointer',
-              color: activeTab === 'simulate' ? '#2563eb' : '#64748b',
-              borderBottom: activeTab === 'simulate' ? '2px solid #2563eb' : '2px solid transparent',
-              transition: 'all 0.2s'
-            }}
-          >
-            🔄 Simulate Gmail Reply
-          </button>
+
         </div>
 
         {/* Body Content */}
@@ -369,7 +320,8 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
 
                         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.825rem', color: '#475569' }}>
                           <div><strong>From:</strong> {log.sender}</div>
-                          <div><strong>To:</strong> {log.recipient}</div>
+                          <div><strong>To:</strong> {log.recipient || 'Recipient unavailable'}</div>
+                          <div><strong>Status:</strong> {log.status}</div>
                         </div>
 
                         <div style={{
@@ -396,6 +348,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
           {/* TAB 2: COMPOSE */}
           {activeTab === 'compose' && (
             <form onSubmit={handleSendEmail} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {sendError && <p role="alert" style={{ color: '#b91c1c' }}>{sendError}</p>}
               {sendSuccess && (
                 <div style={{
                   backgroundColor: '#dcfce7',
@@ -512,6 +465,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
                 </button>
                 <button
                   type="submit"
+                  disabled={isSending}
                   style={{
                     padding: '0.65rem 1.5rem',
                     borderRadius: '8px',
@@ -529,164 +483,7 @@ export const GmailHubModal = ({ isOpen, onClose }) => {
             </form>
           )}
 
-          {/* TAB 3: SIMULATE REPLY */}
-          {activeTab === 'simulate' && (
-            <form onSubmit={handleSimulateReply} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{
-                backgroundColor: '#eff6ff',
-                border: '1px solid #bfdbfe',
-                padding: '1rem',
-                borderRadius: '10px',
-                fontSize: '0.875rem',
-                color: '#1e40af'
-              }}>
-                <strong>💡 Gmail Response Integration:</strong> Use this tool to simulate receiving an incoming email reply at <code>{gmailAddress}</code>. The app will automatically parse the Ticket ID, attach the response to the issue logs, and update the application state in real-time!
-              </div>
 
-              {simSuccess && (
-                <div style={{
-                  backgroundColor: '#dcfce7',
-                  color: '#166534',
-                  padding: '0.85rem 1rem',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  fontSize: '0.9rem'
-                }}>
-                  🎉 Gmail response received! Ticket logs and application state updated.
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '0.35rem' }}>
-                    Sender Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={simSenderName}
-                    onChange={(e) => setSimSenderName(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: '8px',
-                      border: '1px solid #cbd5e1',
-                      fontSize: '0.9rem'
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '0.35rem' }}>
-                    Sender Email Address
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={simSenderEmail}
-                    onChange={(e) => setSimSenderEmail(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: '8px',
-                      border: '1px solid #cbd5e1',
-                      fontSize: '0.9rem'
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '0.35rem' }}>
-                  Target Ticket / Issue ID *
-                </label>
-                <select
-                  value={simIssueId}
-                  onChange={(e) => setSimIssueId(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.65rem 0.85rem',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.9rem',
-                    fontWeight: 600
-                  }}
-                >
-                  {(db.issues || []).map(iss => (
-                    <option key={iss.id} value={iss.id}>
-                      {iss.id} - {iss.category} ({iss.studentName}) - Current Status: {iss.status}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '0.35rem' }}>
-                  Simulated Reply Message *
-                </label>
-                <textarea
-                  required
-                  rows={4}
-                  value={simReplyText}
-                  onChange={(e) => setSimReplyText(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.65rem 0.85rem',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.9rem',
-                    resize: 'vertical'
-                  }}
-                />
-              </div>
-
-              {/* Quick Presets */}
-              <div>
-                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>Quick Preset Replies:</span>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.35rem', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    onClick={() => setSimReplyText('Resolution verified and confirmed satisfied.')}
-                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', cursor: 'pointer' }}
-                  >
-                    👍 Confirmed Satisfied
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimReplyText('Documents attached via email reply for verification.')}
-                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', cursor: 'pointer' }}
-                  >
-                    📎 Documents Attached
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSimReplyText('Requesting reschedule of scheduled meeting to next Monday.')}
-                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', cursor: 'pointer' }}
-                  >
-                    📅 Request Reschedule
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button
-                  type="submit"
-                  style={{
-                    padding: '0.65rem 1.5rem',
-                    borderRadius: '8px',
-                    border: 'none',
-                    backgroundColor: '#2563eb',
-                    color: '#ffffff',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    boxShadow: '0 2px 4px rgba(37, 99, 235, 0.3)'
-                  }}
-                >
-                  🚀 Receive Reply & Update App
-                </button>
-              </div>
-            </form>
-          )}
         </div>
       </div>
     </div>

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>College Requirements and 100-Student Pilot - Mentorship System</title>
+  <style>
+    @page { size: A4; margin: 0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #e9edf2; color: #182536; font: 10pt/1.4 Arial, sans-serif; }
+    .page { width: 210mm; height: 297mm; padding: 16mm 19mm 14mm; margin: 8mm auto; background: white;
+      display: grid; grid-template-rows: 9mm minmax(0,1fr) 8mm; gap: 5mm; break-after: page; }
+    .page:last-child { break-after: auto; }
+    header { display: flex; justify-content: space-between; gap: 12mm; align-items: start; border-bottom: 1px solid #c9d3df;
+      padding-bottom: 3mm; font-size: 8pt; color: #516175; letter-spacing: .25px; }
+    footer { display: flex; justify-content: space-between; align-items: end; border-top: 1px solid #c9d3df;
+      padding-top: 3mm; font-size: 8pt; color: #516175; }
+    .content { min-height: 0; }
+    h1 { font-size: 29pt; line-height: 1.13; font-weight: 700; letter-spacing: -.6px; color: #102d4b; margin: 8mm 0 5mm; }
+    h2 { font-size: 19pt; line-height: 1.2; color: #102d4b; margin: 0 0 5mm; }
+    h3 { font-size: 11pt; color: #153e62; margin: 5mm 0 2mm; }
+    p { margin: 0 0 3mm; }
+    ul, ol { margin: 2mm 0 3mm; padding-left: 5mm; }
+    li { margin-bottom: 1.5mm; }
+    .kicker { font-size: 9pt; letter-spacing: 1.2px; color: #19786d; font-weight: 700; text-transform: uppercase; }
+    .subtitle { font-size: 14pt; line-height: 1.3; color: #42566e; margin-bottom: 6mm; }
+    .small { font-size: 8.8pt; line-height: 1.4; }
+    .muted { color: #516175; }
+    .box { padding: 4mm 4.5mm; background: #f0f5fa; border-left: 3px solid #256287; margin: 4mm 0; }
+    .warning { background: #fff6e5; border-color: #ad791d; }
+    .green { background: #edf7f4; border-color: #217c68; }
+    .box p:last-child { margin-bottom: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 3mm 0 4mm; font-size: 9pt; line-height: 1.36; }
+    th { text-align: left; background: #173b5b; color: white; font-weight: 700; padding: 2.4mm 2.7mm; }
+    td { vertical-align: top; padding: 2.4mm 2.7mm; border-bottom: 1px solid #d9e1e9; }
+    tr:nth-child(even) td { background: #f4f7fa; }
+    tr { break-inside: avoid; }
+    .tight td { padding-top: 1.8mm; padding-bottom: 1.8mm; }
+    .release-gates td { padding-top: 1.4mm; padding-bottom: 1.4mm; }
+    .meta td:first-child { color: #516175; width: 34%; }
+    .meta { margin-top: 5mm; font-size: 10pt; }
+    .pill { display: inline-block; border: 1px solid #c8d8e6; background: #f4f8fb; color: #254b6b; padding: 1mm 2.5mm; margin-right: 2mm; font-size: 8.5pt; }
+    .line { display: inline-block; border-bottom: 1px solid #8999aa; min-width: 40mm; height: 4mm; }
+    .check { font-family: Arial, sans-serif; }
+    code { font-family: Consolas, monospace; font-size: .92em; overflow-wrap: anywhere; }
+    a { color: #135d8f; text-decoration: none; overflow-wrap: anywhere; }
+    .refs { font-size: 8.6pt; }
+    .refs li { margin-bottom: 3mm; }
+    .ref-label { font-size: 8pt; color: #516175; }
+    @media print { body { background: white; } .page { margin: 0; } }
+  </style>
+</head>
+<body>
+
+<section class="page">
+  <header><span>NITTE SMART MENTORSHIP &amp; STUDENT SUPPORT SYSTEM</span><span>INSTITUTIONAL REQUIREMENTS</span></header>
+  <main class="content">
+    <p class="kicker">College review and approval request</p>
+    <h1>College Requirements<br>and Pilot Launch Plan</h1>
+    <p class="subtitle">Institutional provisioning, operational responsibilities<br>and a controlled pilot with 100 students</p>
+    <span class="pill">100 invited students</span><span class="pill">Individual staff accounts</span><span class="pill">Supervised rollout</span>
+    <table class="meta">
+      <tr><td>Document reference</td><td><strong>NMIT-MENTOR-REQ-001 / Version 1.0</strong></td></tr>
+      <tr><td>Prepared on</td><td>3 November 2026 (Asia/Kolkata)</td></tr>
+      <tr><td>Submitted to</td><td>Principal, Dean, Heads of Department and College IT</td></tr>
+      <tr><td>Project</td><td>Nitte Smart Mentorship &amp; Student Support System</td></tr>
+      <tr><td>Status</td><td>For institutional review; launch approval is pending</td></tr>
+    </table>
+    <div class="box warning">
+      <p><strong>Current recommendation: prepare the pilot; do not open access yet.</strong></p>
+      <p>A 100-student pilot is an appropriate next target after the release gates in this document are met. Important software fixes, production setup and college confirmations remain outstanding. Passing local tests does not establish public-launch readiness or simultaneous-user capacity.</p>
+    </div>
+    <h3>What the college is requested to provide</h3>
+    <p>A named IT owner, approved hosting and domain, institutional email service, verified student/staff rosters, private data/media storage, backup and support arrangements, and written pilot authorization.</p>
+    <h3>How to use this document</h3>
+    <p>Pages 2–5 describe college provisions. Page 6 lists outstanding software work. Page 7 defines the pilot and its proposed acceptance targets. Page 8 is the college response and approval sheet. Page 9 records evidence, references and terms.</p>
+    <p class="small muted">This document contains no passwords, production credentials, fixed vendor quotation or institutional approval. Blank fields must be completed by the responsible college representatives.</p>
+  </main>
+  <footer><span>NMIT-MENTOR-REQ-001 · v1.0 · 3 Nov 2026</span><span>1 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>COLLEGE PROVISIONS</span><span>IT INFRASTRUCTURE</span></header>
+  <main class="content">
+    <p class="kicker">01 / Hosting, domain and deployment</p>
+    <h2>Provide an operated production environment</h2>
+    <p>The college may use its existing server if IT confirms its resources, connectivity and support. A development laptop or development web server must not be the public host.</p>
+    <table>
+      <colgroup><col style="width:24%"><col style="width:51%"><col style="width:25%"></colgroup>
+      <thead><tr><th>Requirement</th><th>Requested provision</th><th>Evidence / owner</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Application host</strong></td><td>Supported Linux VM or equivalent approved service; initial planning allocation of 2 vCPU, 4 GB RAM and 30 GB application/log disk. Database and video storage are separate.</td><td>IT provides specification, available capacity and responsible operator.</td></tr>
+        <tr><td><strong>Public hostname</strong></td><td>College-controlled subdomain; DNS access through IT; valid HTTPS certificate with automatic renewal. Serve the frontend and <code>/api</code> on the same origin.</td><td>Confirmed URL, DNS owner and certificate renewal test.</td></tr>
+        <tr><td><strong>Runtime and routing</strong></td><td>Supported Node.js runtime compatible with the locked dependencies; built frontend; reverse proxy to the private API port; supervised API/worker process with automatic startup.</td><td>Deployment runbook and reboot/restart test. [R1]</td></tr>
+        <tr><td><strong>Network controls</strong></td><td>HTTPS ingress; restrict administrative access. Keep the API's internal port private. Allow only required outbound database, mail and TURN connections.</td><td>IT reviews firewall/proxy rules and campus restrictions.</td></tr>
+        <tr><td><strong>Test environment</strong></td><td>Staging URL and isolated database/media bucket. Use test accounts; prevent unintended delivery to real recipients during testing.</td><td>Separate secrets and verified test isolation.</td></tr>
+        <tr><td><strong>Operations</strong></td><td>Health/readiness checks, disk limits, log rotation, alerts, deployment and rollback procedures, and a maintenance window.</td><td>IT/developer demonstrate failure alert and rollback.</td></tr>
+      </tbody>
+    </table>
+    <div class="box">
+      <p><strong>Sizing is a starting estimate, not a capacity guarantee.</strong> Measure the actual host with the intended database, networks, calls and uploads before approval. Sharing one VM with database/video services requires a separate resource assessment.</p>
+    </div>
+    <h3>Production settings to confirm jointly</h3>
+    <p>Set the production environment, public application URL and allowed origin; protect session cookies over HTTPS; configure database/mail/queue secrets only on the server. Build and deploy a reviewed commit with a lockfile. Do not use <code>npm run dev</code> or <code>vite preview</code> as the production service. [R1, R2]</p>
+    <p class="small muted">IT may select a different equivalent platform. No hosting purchase or public deployment is authorized by this requirements document.</p>
+  </main>
+  <footer><span>College IT + software developer</span><span>2 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>COLLEGE PROVISIONS</span><span>IDENTITIES &amp; EMAIL</span></header>
+  <main class="content">
+    <p class="kicker">02 / Accounts, rosters and communication</p>
+    <h2>Supply verified identities and an approved sender</h2>
+    <table>
+      <colgroup><col style="width:24%"><col style="width:76%"></colgroup>
+      <thead><tr><th>College input</th><th>Required details and operating rule</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Pilot students</strong></td><td>Exactly 100 selected students: unique institutional ID/USN, full name, institutional email, branch, semester and assigned mentor ID where applicable. Include representative branches. Student enrollment remains Admin roster import only.</td></tr>
+        <tr><td><strong>Mentors</strong></td><td>Unique mentor ID, name, institutional email, department and class/group. Verify student-to-mentor assignments and reporting responsibility.</td></tr>
+        <tr><td><strong>Relationship Officers</strong></td><td>Unique RO ID, name, institutional email and assigned issue category in the supported roster category/region field. Each enabled category must have exactly one responsible RO. Phone, jurisdiction and level are not requested.</td></tr>
+        <tr><td><strong>Professor Admins</strong></td><td>Provide names, unique IDs and institutional emails for the Principal, HODs, Dean and other approved professors (approximately 10). Each gets a separate account on the same existing Admin dashboard with the same Admin permissions; no new modules or Super Admin role.</td></tr>
+        <tr><td><strong>Mail service</strong></td><td>Approve a dedicated institutional sender and SMTP/API method supported by the deployment. IT supplies host/port, TLS requirements, secure credentials, actual rate/daily/recipient limits and a delivery-failure contact.</td></tr>
+        <tr><td><strong>Domain delivery</strong></td><td>IT verifies required sender-domain authentication (SPF/DKIM/DMARC as applicable), campus/external mailbox delivery, spam handling and bounce/rejection monitoring. Quotas are provider/account-specific. [R5]</td></tr>
+      </tbody>
+    </table>
+    <h3>Mandatory reminder before going live</h3>
+    <p>Create each approved professor account against the production database using <code>npm run admin:add</code>. Share the initial credential privately, have the owner change it, and verify individual login. Confirm the college accepts the broad permissions of the existing Admin role.</p>
+    <h3>Onboarding and email volume</h3>
+    <p>The importer accepts up to 2,000 validated rows in a file of at most 2 MB. Accounts are processed separately from queued emails. Current application defaults are <strong>10 sending attempts/minute and 400 per rolling 24 hours</strong>; these are conservative application settings, not a provider allowance. A 100-student import also needs capacity for staff onboarding, ticket notices, retries and other sender usage.</p>
+    <div class="box warning">
+      <p><strong>Before real recipients are enabled:</strong> replace developer/test addresses with approved institutional records; rotate previously exposed credentials; decide a safe initial-password/invitation process. Test intentional delivery to a small approved group first.</p>
+    </div>
+    <p class="small muted">No data has been cleared or real mail enabled for this document. Before the agreed test-data cleanup, stop or cancel pending import/mail work so old jobs cannot recreate accounts or send stale messages.</p>
+  </main>
+  <footer><span>Academic coordinator + college IT + authorized Admin</span><span>3 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>COLLEGE PROVISIONS</span><span>MEETINGS &amp; RECORDINGS</span></header>
+  <main class="content">
+    <p class="kicker">03 / Network reachability and private media</p>
+    <h2>Plan for calls across real student networks</h2>
+    <p>Calls are one-to-one WebRTC sessions. Media normally travels between participants; the API handles coordination. When a direct connection fails, a TURN relay carries the media and adds bandwidth/cost. STUN alone does not cover every campus or mobile network. [R3]</p>
+    <table>
+      <colgroup><col style="width:27%"><col style="width:73%"></colgroup>
+      <thead><tr><th>Provision</th><th>Requirement before enabling the feature publicly</th></tr></thead>
+      <tbody>
+        <tr><td><strong>TURN service</strong></td><td>Approve a managed relay or college-operated TURN host, bandwidth allowance, secure credential issuance and relevant UDP/TCP/TLS firewall rules. The developer must integrate authenticated, expiring credentials and prove a forced-relay call.</td></tr>
+        <tr><td><strong>Network/device tests</strong></td><td>Test campus Wi-Fi to mobile data, two different external networks, restrictive campus networks, camera/microphone denial, reconnects and supported browsers. HTTPS and user permission are required for camera/microphone access. [R2, R3]</td></tr>
+        <tr><td><strong>Recording storage</strong></td><td>Approve private object storage, region, budget, retention, deletion and backup policy. Store meeting/ownership metadata in PostgreSQL; use authenticated playback and resumable media uploads. Recordings must never use public file URLs.</td></tr>
+        <tr><td><strong>Access and notice</strong></td><td>Student recording playback remains unavailable. Authorized ROs can view their permitted recordings. The Admin viewer remains deferred until requested and implemented. College approves recording notices/permissions and who may access or export files.</td></tr>
+        <tr><td><strong>Fallback</strong></td><td>Provide an approved contact and rescheduling/in-person procedure if a call fails. If an institutional external meeting service is used as a temporary alternative, formally agree and test that workflow before advertising it.</td></tr>
+      </tbody>
+    </table>
+    <h3>Planning examples, not measured capacity</h3>
+    <p>If both participants send 1 Mbps and all media is relayed, two simultaneous calls produce approximately 4 Mbps of TURN outbound traffic, or 1.8 GB/hour, excluding audio/protocol overhead. Actual rates and relay usage vary.</p>
+    <p>At 0.9 Mbps, video alone is approximately 203 MB per 30-minute recording. One hundred such recordings require approximately 20 GB before audio, metadata or backup copies. Higher bitrate/duration changes storage and cost.</p>
+    <div class="box warning">
+      <p><strong>Current implementation limit:</strong> videos remain in the RO browser until final upload; the server buffers an upload up to 256 MiB and stores bytes in PostgreSQL. Interrupted/long recordings can be lost or fail. Finish resumable private storage, or explicitly disable recording in code and verify the reduced pilot scope before launch.</p>
+    </div>
+  </main>
+  <footer><span>College network/storage owners + software developer</span><span>4 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>COLLEGE PROVISIONS</span><span>DATA, SUPPORT &amp; FUNDING</span></header>
+  <main class="content">
+    <p class="kicker">04 / Institutional ownership and recovery</p>
+    <h2>Assign responsibility before accepting real grievances</h2>
+    <table>
+      <colgroup><col style="width:25%"><col style="width:75%"></colgroup>
+      <thead><tr><th>Area</th><th>College decision / evidence requested</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Database</strong></td><td>Approve the PostgreSQL service, data region, backend role, connection limit/pool budget, capacity monitoring and account ownership. Application tables must deny anonymous/public access. IT supplies the trusted database certificate/CA settings needed for verified TLS. [R4]</td></tr>
+        <tr><td><strong>Recovery</strong></td><td>Approve backup frequency, retention, encryption and off-host storage; name the restore operator. Before pilot, restore a backup into isolation and verify users, tickets, history and encrypted jobs. Private video storage needs its own recovery procedure. [R6]</td></tr>
+        <tr><td><strong>Recovery objectives</strong></td><td>Agree acceptable data loss (RPO) and downtime (RTO). Proposed pilot discussion targets: RPO no more than 24 hours and RTO no more than 4 hours; improve them if grievance operations require it. These are not current service guarantees.</td></tr>
+        <tr><td><strong>Secrets</strong></td><td>Use a college-controlled secret store with restricted access and rotation. Back up the queue encryption key separately and securely; it is required to recover encrypted pending imports/mail. Do not copy secrets into rosters, source code, screenshots or this PDF.</td></tr>
+        <tr><td><strong>Privacy and retention</strong></td><td>Name the data owner; approve access to sensitive grievances, notices, recording permissions, retention/deletion periods, export rules, temporary onboarding-credential retention and an incident-reporting route. College authorities should obtain their required policy review.</td></tr>
+        <tr><td><strong>Academic workflow</strong></td><td>Approve category owners, priority definitions, expected response/escalation times, feedback closure, and the two-slot/seven-day rule. Assign available ROs and a pilot coordinator; publish support hours and the alternative grievance route.</td></tr>
+        <tr><td><strong>Support and incident response</strong></td><td>Name primary/backup operators and security contacts. Alert on API failures, database/CPU/RAM/disk saturation, email backlog, failed recordings and TURN cost. Agree who can pause access and authorize rollback.</td></tr>
+        <tr><td><strong>Budget and ownership</strong></td><td>Approve application/database compute, media storage/egress, TURN, mail, backups, domain/certificates where applicable, monitoring and support. Provide a monthly ceiling, alert threshold, renewal owner and purchase contact.</td></tr>
+      </tbody>
+    </table>
+    <div class="box green">
+      <p><strong>Recommended pilot operating model:</strong> one supervised API instance while signaling remains in process memory, managed database/storage/relay services where approved, and a named human monitoring scheduled pilot sessions. Multiple API instances require shared signaling and a shared abuse limiter first.</p>
+    </div>
+    <p class="small muted">No vendor price is assumed. College IT must confirm actual availability, quotas, service terms and resource allocation before any production commitment.</p>
+  </main>
+  <footer><span>College IT + academic/data owner + budget authority</span><span>5 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>SOFTWARE TEAM DELIVERABLES</span><span>OPEN RELEASE GATES</span></header>
+  <main class="content">
+    <p class="kicker">05 / Changes still required</p>
+    <h2>The software is not yet cleared for public access</h2>
+    <p>Open findings from the working tree on 3 November 2026. Each needs a verified fix before public access; college provisioning alone does not close these gates.</p>
+    <table class="tight release-gates">
+      <colgroup><col style="width:8%"><col style="width:30%"><col style="width:62%"></colgroup>
+      <thead><tr><th>ID</th><th>Open item</th><th>Required completion / owner</th></tr></thead>
+      <tbody>
+        <tr><td>S1</td><td><strong>Remaining saves</strong></td><td>Developer: make Admin assignments/removals and mentor resources, reports, schedules and waivers confirm real database saves; remove duplicate/fake-success paths. Verify restart/refresh and failed-save recovery.</td></tr>
+        <tr><td>S2</td><td><strong>Credentials and TLS</strong></td><td>IT + developer: rotate previously exposed database/mail credentials and known/shared initial passwords. Replace database <code>rejectUnauthorized: false</code> with verified certificate settings; test failure on an untrusted certificate.</td></tr>
+        <tr><td>S3</td><td><strong>Real identities and delivery</strong></td><td>Authorized Admin + IT: agree test-data cleanup, replace developer recipients, provision individual professor Admins, configure sender/quota, and verify intended onboarding/ticket emails without unrelated recipients.</td></tr>
+        <tr><td>S4</td><td><strong>Production deployment</strong></td><td>Developer + IT: configure HTTPS routing, production URLs/secrets, health/readiness checks, supervision, controlled migrations and rollback. Build Tailwind locally rather than relying on the browser CDN.</td></tr>
+        <tr><td>S5</td><td><strong>Public-access protection</strong></td><td>Developer + IT: strengthen login/expensive-endpoint abuse limits, validate sensitive inputs and protect staff access (MFA or an approved equivalent). Verify role/record boundaries on the deployed host.</td></tr>
+        <tr><td>S6</td><td><strong>Live-call connectivity</strong></td><td>Developer + network IT: add TURN integration, restrict demo media fallbacks, and pass direct/forced-relay tests on real networks. Otherwise disable in-app video and explicitly approve a tested reduced scope.</td></tr>
+        <tr><td>S7</td><td><strong>Recording reliability</strong></td><td>Developer + storage IT: resumable private object storage, interrupted-upload recovery and authorized playback; or implement and verify recording disabled for the pilot. No existing production off-switch is assumed.</td></tr>
+        <tr><td>S8</td><td><strong>Recovery and support</strong></td><td>IT + developer: prove backup/restore, queue-key recovery, alerting, service restart and rollback; assign a live pilot support contact.</td></tr>
+        <tr><td>S9</td><td><strong>Production-size evidence</strong></td><td>Developer + pilot coordinator: run staged workflow/concurrency tests with realistic data and the intended host; verify video/upload load separately. Add pagination/incremental reads as measurements require.</td></tr>
+      </tbody>
+    </table>
+    <h3>Already implemented locally</h3>
+    <p class="small">Verified login and ownership checks; hashed passwords and database sessions; roster-only student creation; private database access; protected RO recording playback; recipient-aware queued mail; validated recoverable imports; transactional ticket/meeting saves; scoped dashboard SQL; and polling that pauses in hidden tabs.</p>
+    <p class="small muted">Verify completed changes in production. The deferred Admin recording viewer is required only if included in the agreed pilot scope.</p>
+  </main>
+  <footer><span>Release decision: pending completion and evidence</span><span>6 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>PROPOSED PILOT</span><span>100 INVITED STUDENTS</span></header>
+  <main class="content">
+    <p class="kicker">06 / Controlled rollout and acceptance</p>
+    <h2>Use 100 students as a pilot cohort</h2>
+    <p><strong>100 registered participants does not mean 100 simultaneous users or calls.</strong> The proposed initial operating target is 20 concurrently active dashboards and no more than two simultaneous one-to-one calls, enforced operationally through bookings and supervision. These limits are proposals to test, not proven capacity or existing software-enforced limits.</p>
+    <table class="tight">
+      <thead><tr><th style="width:19%">Stage</th><th>Activity and gate to continue</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Before invitations</strong></td><td>Close all applicable S1–S9 gates. Test production staging, actual email recipients, permissions, restore and monitoring. If video/recording is excluded, verify its code/UI is disabled and communicate that scope.</td></tr>
+        <tr><td><strong>Staff rehearsal</strong></td><td>Use approved test accounts to rehearse roster import, category routing, failed saves, schedule/reschedule, student-specific join links, minutes, escalation, resolution and feedback. Exercise the seven-day quota with test fixtures.</td></tr>
+        <tr><td><strong>20 students</strong></td><td>Invite a representative first group with staff present. Check sign-in, email receipt, privacy, device usability and support response. Correct failures before adding participants.</td></tr>
+        <tr><td><strong>50 students</strong></td><td>Expand after stable observation; test the agreed concurrent-dashboard target and two supervised calls on mixed networks. Measure database/API/relay and recording load where enabled.</td></tr>
+        <tr><td><strong>100 students</strong></td><td>Expand only after the previous stage passes. Observe for a proposed 7–14 days, review incidents and user feedback, then obtain approval for the next cohort. General enrollment and public signup remain closed.</td></tr>
+      </tbody>
+    </table>
+    <h3>Proposed acceptance criteria — college to confirm</h3>
+    <ul>
+      <li><strong>Privacy/data integrity:</strong> no unauthorized access; no lost or duplicated tickets, assignments, minutes or feedback in the tested workflows. Students receive a join prompt only for their own RO-started call.</li>
+      <li><strong>Responsiveness:</strong> target p95 dashboard/action response below 2 seconds and less than 1% unexpected API failures during an agreed 30-minute workload. Measure on the chosen host; exclude intentional policy rejections.</li>
+      <li><strong>Meetings:</strong> all planned network scenarios connect, including forced TURN; two concurrent calls remain usable for a representative session. If recording is enabled, test maximum intended duration, interruption, retry and authorized playback.</li>
+      <li><strong>Delivery/recovery:</strong> approved test recipients receive intended messages; failures/backlogs are visible. Restore and restart tests preserve agreed data, queue state and access controls.</li>
+    </ul>
+    <div class="box warning">
+      <p><strong>Pause immediately</strong> for data exposure, lost records, repeated wrong-recipient notices, sustained resource exhaustion or repeated call/recording failure. Stop invitations, inform the incident owner and use the approved fallback/rollback. Reopen only after the cause is fixed and rechecked.</p>
+    </div>
+  </main>
+  <footer><span>Proposed targets; no performance guarantee</span><span>7 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>COLLEGE RESPONSE SHEET</span><span>COMPLETE BEFORE INVITATIONS</span></header>
+  <main class="content">
+    <p class="kicker">07 / Decisions and authorization</p>
+    <h2>Record the college's provisions and decision</h2>
+    <table class="tight">
+      <thead><tr><th style="width:41%">Item</th><th>College response / responsible contact</th></tr></thead>
+      <tbody>
+        <tr><td>Academic sponsor / pilot coordinator</td><td>Name: _________________________________<br>Institutional contact: _____________________</td></tr>
+        <tr><td>Primary and backup IT operators</td><td>______________________________________<br>______________________________________</td></tr>
+        <tr><td>Server/platform; CPU, RAM, disk</td><td>______________________________________<br>______________________________________</td></tr>
+        <tr><td>Public hostname; DNS/HTTPS owner</td><td>______________________________________<br>______________________________________</td></tr>
+        <tr><td>Database/region; backup/restore owner</td><td>______________________________________<br>RPO: ______________ RTO: ______________</td></tr>
+        <tr><td>Sender/provider; sending allowances</td><td>______________________________________<br>Per minute: __________ Per day: __________</td></tr>
+        <tr><td>100-student roster; Mentor/RO mapping;<br>individual professor Admin list</td><td>Owner: _________________________________<br>Delivery date: ___________________________</td></tr>
+        <tr><td>TURN service and media storage</td><td>______________________________________<br>Recording retention: _____________________</td></tr>
+        <tr><td>Budget owner; monthly ceiling; alerts</td><td>______________________________________<br>______________________________________</td></tr>
+        <tr><td>Support hours; incident contact</td><td>______________________________________<br>______________________________________</td></tr>
+      </tbody>
+    </table>
+    <h3>Approval checklist</h3>
+    <p class="small check">☐ Applicable software gates closed with evidence &nbsp; ☐ Institutional rosters/mail verified<br>
+      ☐ Individual Admin logins verified &nbsp; ☐ Recovery and alerts demonstrated<br>
+      ☐ Privacy/retention/recording scope approved &nbsp; ☐ Pilot tests passed<br>
+      ☐ Support, fallback and rollback owners confirmed</p>
+    <p class="small"><strong>Approved scope:</strong> ☐ Grievance/mentorship workflows &nbsp; ☐ In-app video &nbsp; ☐ Recording<br>
+      <strong>Decision:</strong> ☐ Hold / corrections required &nbsp; ☐ Authorize limited 100-student pilot</p>
+    <p class="small">Pilot dates: _______________________ &nbsp; Concurrent-user/call limits: __________________</p>
+    <p class="small">Academic authority: __________________ Signature/date: ______________________________<br>
+      College IT: _________________________ Signature/date: ______________________________<br>
+      Software release owner: ______________ Reviewed release/commit: _____________________</p>
+    <p class="small muted">Approval applies only to the recorded scope and reviewed release. This unsigned form is not evidence of approval or authorization to deploy.</p>
+  </main>
+  <footer><span>Institutional sign-off remains pending</span><span>8 / 9</span></footer>
+</section>
+
+<section class="page">
+  <header><span>APPENDIX</span><span>EVIDENCE &amp; REFERENCES</span></header>
+  <main class="content">
+    <p class="kicker">08 / Basis and interpretation</p>
+    <h2>What this assessment establishes</h2>
+    <p>Prepared from the current repository and its hardening notes, with a focused source review on 3 November 2026. This document does not certify a deployed host, current provider quotas, security compliance, college policies or 100-user capacity. The latest recorded implementation validation on 1 November reported 178 passing regression tests, six opt-in database checks skipped in that run, a separate passing isolated database reliability test and a passing production build. Those tests were not rerun for this document.</p>
+    <p class="small"><strong>Project evidence:</strong> <code>docs/HARDENING_PROGRESS.md</code>, <code>docs/DATABASE_RELIABILITY.md</code>, <code>docs/ROSTER_IMPORTS.md</code>, <code>docs/EMAIL_ROUTING.md</code> and <code>docs/FOLLOW_UPS.md</code>. Open items are corroborated in the current database, meeting, recording, authentication and client-save source. The older launch assessment contains historical findings; completed fixes are not being listed as still missing.</p>
+    <h3>Official technical references — checked 3 November 2026</h3>
+    <ol class="refs">
+      <li><strong>R1 · Express: production performance and reliability.</strong><br><a href="https://expressjs.com/en/advanced/best-practice-performance/">expressjs.com/en/advanced/best-practice-performance/</a><br><span class="ref-label">Production environment, supervised service and reverse-proxy practices.</span></li>
+      <li><strong>R2 · MDN: camera/microphone access.</strong><br><a href="https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia">developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia</a><br><span class="ref-label">Secure contexts and browser permission requirements.</span></li>
+      <li><strong>R3 · MDN: WebRTC connectivity.</strong><br><a href="https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity">developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity</a><br><span class="ref-label">ICE candidates and direct/relayed connectivity.</span></li>
+      <li><strong>R4 · node-postgres: TLS/SSL configuration.</strong><br><a href="https://node-postgres.com/features/ssl">node-postgres.com/features/ssl</a><br><span class="ref-label">Trusted-certificate settings and connection-string interactions.</span></li>
+      <li><strong>R5 · Google Workspace: Gmail sending limits.</strong><br><a href="https://knowledge.workspace.google.com/admin/gmail/gmail-sending-limits-in-google-workspace">knowledge.workspace.google.com/admin/gmail/gmail-sending-limits-in-google-workspace</a><br><span class="ref-label">Relevant if the college uses Workspace; IT must confirm its actual provider/account allowances.</span></li>
+      <li><strong>R6 · PostgreSQL: backup and restore.</strong><br><a href="https://www.postgresql.org/docs/current/backup.html">postgresql.org/docs/current/backup.html</a><br><span class="ref-label">Database backup and recovery approaches; verify procedures for the deployed PostgreSQL version.</span></li>
+    </ol>
+    <h3>Terms used in this request</h3>
+    <p class="small"><strong>RO:</strong> Relationship Officer. <strong>TURN:</strong> media relay for calls that cannot connect directly. <strong>RPO:</strong> maximum acceptable lost data measured in time. <strong>RTO:</strong> target time to restore service. <strong>p95:</strong> response time within which 95% of measured requests complete. <strong>Pilot:</strong> a limited, monitored release with invited users and an explicit stop procedure.</p>
+    <p class="small muted">Server sizes, workload limits, recovery objectives and acceptance thresholds in this document are project planning proposals. Confirm or revise them jointly with college IT before sign-off.</p>
+  </main>
+  <footer><span>Prepared for review · No credentials included</span><span>9 / 9</span></footer>
+</section>
+</body>
+</html>

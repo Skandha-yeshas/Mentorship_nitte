@@ -8,6 +8,8 @@
     "dev:frontend": "vite",
     "server": "node server/server.js",
     "admin:add": "node scripts/add-admin.mjs",
+    "email:audit": "node scripts/audit-email-recipients.mjs",
+    "turn:check": "node scripts/check-turn.mjs",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -19,11 +21,16 @@
     "imap-simple": "^5.1.0",
     "lucide-react": "^1.25.0",
     "mailparser": "^3.9.15",
-    "nodemailer": "^9.0.5",
+    "nodemailer": "10.3.1",
     "pg": "^8.12.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "overrides": {
+    "utf7": {
+      "semver": "5.7.2"
+    }
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

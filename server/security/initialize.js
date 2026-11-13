@@ -39,7 +39,7 @@ export async function initializeSecurity(query) {
   // Browsers use our authenticated API. The public Supabase REST roles receive no table access.
   const tables = ['admins', 'auth_sessions', 'students', 'mentors', 'ros', 'issues', 'meetings',
     'group_sessions', 'resources', 'system_logs', 'mentor_session_records', 'email_logs',
-    'category_videos', 'mentor_feedbacks', 'meeting_recordings', 'app_settings'];
+    'category_videos', 'mentor_feedbacks', 'meeting_recordings', 'app_settings', 'roster_imports', 'roster_import_rows', 'mail_sending_limits', 'mail_sending_attempts'];
   const schema = (await query('SELECT current_schema() AS schema')).rows[0].schema;
   const quote = name => '"' + name.replaceAll('"', '""') + '"';
   const existing = (await query('SELECT tablename FROM pg_tables WHERE schemaname = $1 AND tablename = ANY($2::text[])', [schema, tables])).rows;

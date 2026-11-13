@@ -1,4 +1,5 @@
 import { buildIssueActivity, formatActivityTime, parseActivityTime } from '../../shared/issueActivity.js';
+import { formatTicketNumber } from '../../shared/ticketNumber.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -8,6 +9,7 @@ const section = (title, content) => content ? `<section><h2>${escapeHtml(title)}
 
 export function buildIssueSlipHtml({ issue, student = {}, officer = {}, history = {}, exportedAt = new Date().toISOString() }) {
   const issueId = String(issue?.id || issue?.issue_id || '').trim();
+  const ticketNumber = formatTicketNumber(issue);
   if (!issueId) throw new Error('Select an issue before exporting its slip.');
   if (history.issueId && String(history.issueId).trim().toUpperCase() !== issueId.toUpperCase()) {
     throw new Error('The activity history does not belong to the selected issue.');
@@ -30,7 +32,7 @@ export function buildIssueSlipHtml({ issue, student = {}, officer = {}, history 
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(issueId)} - Grievance Slip</title>
+<title>${escapeHtml(ticketNumber)} - Grievance Slip</title>
 <style>
   @page { size: A4; margin: 14mm; }
   * { box-sizing: border-box; }
@@ -53,10 +55,10 @@ export function buildIssueSlipHtml({ issue, student = {}, officer = {}, history 
   footer { border-top: 1px solid #d7dce4; padding-top: 10px; color: #4b5563; font-size: 10px; }
   h2, header { break-after: avoid; }
 </style></head><body>
-<header><p class="institution">NITTE Student Mentorship &amp; Grievance Portal</p><h1>Grievance Slip · ${escapeHtml(issueId)}</h1><p class="subtitle">Selected issue and its Action &amp; Procedure Log</p></header>
+<header><p class="institution">Smart Mentorship &amp; Grievance Portal</p><h1>Grievance Slip · ${escapeHtml(ticketNumber)}</h1><p class="subtitle">Selected issue and its Action &amp; Procedure Log</p></header>
 <main>
 <dl class="metadata">
-  ${field('Ticket ID', issueId)}
+  ${field('Ticket Number', ticketNumber)}
   ${field('Status', issue.status)}
   ${field('Student', issue.studentName || issue.student_name || student.name)}
   ${field('Student ID', issue.studentId || issue.student_id || student.id)}
@@ -73,7 +75,7 @@ ${section('Student Feedback', feedbackText)}
 <section><h2>Action &amp; Procedure Log</h2><p class="subtitle">${activity.length} events · Oldest first · All times in IST</p>
 ${events ? `<ol>${events}</ol>` : '<p>No actions have been recorded for this issue yet.</p>'}</section>
 </main>
-<footer>Ticket ${escapeHtml(issueId)} · Exported ${escapeHtml(formatActivityTime(parseActivityTime(exportedAt)))}</footer>
+<footer>Ticket ${escapeHtml(ticketNumber)} · Exported ${escapeHtml(formatActivityTime(parseActivityTime(exportedAt)))}</footer>
 </body></html>`;
 }
 

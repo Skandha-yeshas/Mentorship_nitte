@@ -4,7 +4,7 @@ import {
   GraduationCap, UserCheck, Briefcase, Shield, Key, Mail, Lock,
   ArrowRight, CheckCircle2, AlertCircle, Eye, EyeOff, RefreshCw, ShieldCheck, Sparkles
 } from 'lucide-react';
-import { NitteLogo } from '../components/NitteLogo';
+import { PortalLogo } from '../components/PortalLogo';
 
 export const LoginPage = ({ onLoginSuccess }) => {
   const { loginUser } = useContext(DatabaseContext);
@@ -183,10 +183,10 @@ export const LoginPage = ({ onLoginSuccess }) => {
         boxShadow: '0 2px 10px rgba(30, 58, 138, 0.05)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <NitteLogo height={36} />
+          <PortalLogo height={36} />
           <div>
             <h1 style={{ margin: 0, fontSize: '0.96rem', fontWeight: 800, letterSpacing: '0.3px', color: '#1e3a8a' }}>
-              NITTE (Deemed to be University)
+              Smart Mentorship & Grievance Portal
             </h1>
             <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
               Student Mentorship & Escalation Support Portal
@@ -252,7 +252,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
               <ShieldCheck size={13} /> Institutional Single Sign-On
             </div>
             <h2 style={{ fontSize: '1.45rem', fontWeight: 800, margin: '0 0 4px 0', letterSpacing: '-0.3px', color: '#1e3a8a' }}>
-              Sign In to NITTE Portal
+              Sign In to Smart Mentorship & Grievance Portal
             </h2>
             <p style={{ margin: 0, fontSize: '0.82rem', color: '#64748b' }}>
               Select your role and enter your institutional email & password.
@@ -539,7 +539,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
 
           {/* Footer Security Note */}
           <div style={{ textAlign: 'center', fontSize: '0.73rem', color: '#94a3b8' }}>
-            Official NITTE Institutional Portal • All account logins and activities are securely recorded and monitored.
+            Smart Mentorship & Grievance Portal • Account logins and activities are securely recorded and monitored.
           </div>
         </div>
       </main>

@@ -1,5 +1,6 @@
 // src/utils/webrtcService.js
 import { apiFetch as fetch } from './apiFetch.js';
+import { loadMeetingIceConfiguration } from './meetingIce.js';
 
 /**
  * WebRTC Real-Time Two-Way Video & Audio Meeting Session Manager
@@ -40,6 +41,8 @@ export class WebRtcMeetingSession {
     this.bc = null;
     this.pollTimer = null;
     this.readyTimer = null;
+    this.expiryTimer = null;
+    this.expiryDeadline = null;
     this.lastSignalTimestamp = Date.now() - 30000; // 30s lookback window so initial in-flight offers/candidates are never skipped
     this.isClosed = false;
     this.isConnected = false;
@@ -51,11 +54,33 @@ export class WebRtcMeetingSession {
     this.processedSignalIds = new Set();
     this.lastOfferTime = 0;
     this.storageListener = null;
+    this.iceConfiguration = null;
+    this.initializationController = null;
 
-    this.init();
+    this.ready = this.init();
   }
 
-  init() {
+  async init() {
+    this.initializationController = new AbortController();
+    const timeout = setTimeout(() => this.initializationController.abort(), 12000);
+    const requestedAt = performance.now();
+    try {
+      const settings = await loadMeetingIceConfiguration(this.issueId, { signal: this.initializationController.signal });
+      if (this.isClosed) return;
+      this.iceConfiguration = settings.configuration;
+      this.applyMeetingDeadline(settings.meeting?.endsAt, settings.now,
+        Math.max(0, performance.now() - requestedAt - (Number(settings.serverProcessingMs) || 0)));
+      this.onPeerStatus({ connected: false, live: false, warning: settings.warning || '', turnEnabled: settings.turnEnabled });
+    } catch (error) {
+      if (this.isClosed) return;
+      if (error.code === 'MEETING_ENDED') this.finishMeeting({ reason: 'ended' });
+      else {
+        this.close();
+        this.onPeerStatus({ connected: false, live: false, error: error.name === 'AbortError' ? 'The call connection timed out. Please retry.' : error.message });
+      }
+      return;
+    } finally { clearTimeout(timeout); }
+    if (this.isClosed) return;
     // 1. Cross-tab instant communication via BroadcastChannel (0ms latency on same machine)
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -157,18 +182,10 @@ export class WebRtcMeetingSession {
   }
 
   setupPeerConnection() {
-    const config = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun.cloudflare.com:3478' }
-      ],
-      iceCandidatePoolSize: 2
-    };
+    if (this.isClosed || !this.iceConfiguration) return;
 
     try {
-      this.pc = new RTCPeerConnection(config);
+      this.pc = new RTCPeerConnection(this.iceConfiguration);
 
       // 1. Add local tracks directly to RTCPeerConnection
       if (this.localStream) {
@@ -492,9 +509,16 @@ export class WebRtcMeetingSession {
     try {
       // Query signals with a 4s lookback overlap so in-flight signals are never skipped
       const querySince = Math.max(0, this.lastSignalTimestamp - 4000);
+      const requestedAt = performance.now();
       const res = await fetch(`/api/meetings/signals/${this.issueId}?since=${querySince}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (this.isClosed) return;
+      if (data.meeting?.active === false) {
+        this.finishMeeting({ reason: 'ended' });
+        return;
+      }
+      this.applyMeetingDeadline(data.meeting?.endsAt, data.now, performance.now() - requestedAt);
       if (data.now) this.lastSignalTimestamp = data.now;
       if (Array.isArray(data.signals)) {
         for (const sig of data.signals) {
@@ -532,7 +556,7 @@ export class WebRtcMeetingSession {
       // Automatic meeting ended signal from RO
       if (signal.type === 'meeting-ended' || signal.type === 'meeting_ended') {
         console.log(`[WebRTC ${this.role}] Meeting ended signal received.`);
-        this.onMeetingEnded();
+        this.finishMeeting({ reason: 'ended' });
         return;
       }
 
@@ -726,7 +750,27 @@ export class WebRtcMeetingSession {
     } catch (e) {}
   }
 
+  applyMeetingDeadline(endsAt, serverNow, elapsed = 0) {
+    if (!endsAt || !Number.isFinite(serverNow)) return;
+    const remaining = new Date(endsAt).getTime() - serverNow - elapsed;
+    if (!Number.isFinite(remaining)) return;
+    const deadline = performance.now() + Math.max(0, remaining);
+    if (this.expiryDeadline === null || deadline < this.expiryDeadline) {
+      this.expiryDeadline = deadline;
+      clearTimeout(this.expiryTimer);
+      this.expiryTimer = setTimeout(() => this.finishMeeting({ reason: 'time-limit' }), Math.max(0, remaining));
+    }
+  }
+
+  finishMeeting(details) {
+    if (this.isClosed) return;
+    this.close();
+    this.onMeetingEnded(details);
+  }
+
   close() {
+    this.initializationController?.abort();
+    clearTimeout(this.expiryTimer);
     // Notify peer immediately before closing
     try {
       this.sendSignal({ type: 'peer-left', role: this.role, sessionId: this.sessionId });

@@ -33,7 +33,7 @@ test('emails are interleaved chronologically and scoped to the selected issue on
   const activity = buildIssueActivity({ issue: { ...issue, logs: [log('Meeting scheduled by RO.', '04'), log('Meeting started by RO.', '06')] }, emailLogs });
   assert.equal(activity.filter(item => item.kind === 'email').length, 1);
   assert.deepEqual(activity.map(item => item.title), ['Issue Submitted', 'Meeting Scheduled', 'Email Dispatch', 'Meeting Started']);
-  assert.equal(activity[2].delivery, 'Dispatched via Gmail');
+  assert.equal(activity[2].delivery, 'Accepted by mail server');
   assert.equal(activity[2].recipient, 'student@example.test');
 });
 

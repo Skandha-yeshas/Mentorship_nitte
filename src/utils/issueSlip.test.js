@@ -42,7 +42,7 @@ test('all activity entries are printed without a scroll container or truncated h
 
 test('slip includes selected minutes, resolution, feedback, and accurate email dispatch status', () => {
   const html = buildIssueSlipHtml({ issue: { ...issue, discussionSummary: 'Reviewed enrollment.', actionItems: 'Submit elective form.', feedback: { rating: 5, comments: 'Resolved successfully.' } }, history });
-  for (const expected of ['Reviewed enrollment.', 'Submit elective form.', 'Enrollment corrected.', 'Rating: 5 / 5', 'Resolved successfully.', 'Dispatched via Gmail', 'IST']) assert.ok(html.includes(expected), expected);
+  for (const expected of ['Reviewed enrollment.', 'Submit elective form.', 'Enrollment corrected.', 'Rating: 5 / 5', 'Resolved successfully.', 'Accepted by mail server', 'IST']) assert.ok(html.includes(expected), expected);
 });
 
 test('student-supplied text is escaped and cannot become executable print-document markup', () => {

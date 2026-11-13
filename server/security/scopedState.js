@@ -36,7 +36,7 @@ export function scopeState(raw, user) {
     resources: (state.resources || []).filter(row => user.role === 'Admin' || visibleMentor(mentorOf(row))),
     groupSessions: (state.groupSessions || []).filter(row => user.role === 'Admin' || visibleMentor(mentorOf(row))),
     systemLogs: user.role === 'Admin' ? state.systemLogs || [] : [],
-    gmailLogs: (state.gmailLogs || []).filter(row => user.role === 'Admin' || visibleIssue(issueOf(row))).map(({ body, html, text, ...row }) => row),
+    gmailLogs: (state.gmailLogs || []).filter(row => user.role === 'Admin' || visibleIssue(issueOf(row)) || user.role === 'Mentor' && same(mentorOf(row), user.id)).map(({ body, html, text, ...row }) => row),
     recordings: ['Admin', 'RO'].includes(user.role) ? (state.recordings || []).filter(row => user.role === 'Admin' || visibleIssue(issueOf(row))) : [],
     gmailAddress: user.role === 'Admin' ? state.gmailAddress : undefined,
     imapStatus: user.role === 'Admin' ? state.imapStatus : undefined,

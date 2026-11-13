@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import dotenv from 'dotenv';
 import { chromium } from 'playwright';
-import XLSX from 'xlsx';
+import XLSX from '../shared/nodeSpreadsheet.js';
 import { isPasswordHash } from '../server/security/passwords.js';
 
 dotenv.config({ path: 'server/.env', quiet: true }); dotenv.config({ quiet: true });

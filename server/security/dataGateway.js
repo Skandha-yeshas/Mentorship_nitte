@@ -18,6 +18,7 @@ export function tableScope(table, user, params) {
   const ownedIssues = user.role === 'Student' ? `UPPER(student_id) = UPPER(${id})`
     : user.role === 'RO' ? `UPPER(ro_id) = UPPER(${id})`
       : `student_id IN (SELECT id FROM students WHERE UPPER(mentor_id) = UPPER(${id}))`;
+  if (table === 'email_logs' && user.role === 'Mentor') return `(UPPER(mentor_id) = UPPER(${id}) OR issue_id IN (SELECT id FROM issues WHERE ${ownedIssues}))`;
   if (table === 'issues') return ownedIssues;
   if (relation[table]) return `${relation[table]} IN (SELECT id FROM issues WHERE ${ownedIssues})`;
   if (table === 'students') return user.role === 'Student' ? `UPPER(id) = UPPER(${id})` : user.role === 'Mentor' ? `UPPER(mentor_id) = UPPER(${id})` : `id IN (SELECT student_id FROM issues WHERE ${ownedIssues})`;
@@ -41,7 +42,7 @@ export function createDataGateway(query) {
     if (!tables.has(table)) return res.status(404).json({ error: 'Table not available.' });
     try {
       const columns = await columnsFor(table);
-      const safeColumns = columns.filter(column => !/password|secret|credential|token|csrf/i.test(column) && !(table === 'email_logs' && column === 'body'));
+      const safeColumns = columns.filter(column => !/password|secret|credential|token|csrf|queued_payload|input_cipher|result_cipher/i.test(column) && !(table === 'email_logs' && column === 'body'));
       const returned = table === 'ros' && !['Admin', 'RO'].includes(req.user.role) ? ['id', 'name', 'region'] : safeColumns;
       const params = [];
       const bind = value => { params.push(value); return `$${params.length}`; };

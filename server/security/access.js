@@ -23,6 +23,8 @@ export function createAccessPolicy(query) {
     const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
     try {
       if (path === '/reset' || path === '/gmail/simulate-inbound') return res.status(404).json({ error: 'This development endpoint is disabled.' });
+      const mentorNotice = /^\/mentors\/([^/]+)\/notifications$/.exec(path);
+      if (mentorNotice) return user.role === 'Admin' || user.role === 'Mentor' && same(user.id, decodeURIComponent(mentorNotice[1])) ? next() : denied(res);
       if (path.startsWith('/admin/') || path.startsWith('/gmail/') && path !== '/gmail/logs') return user.role === 'Admin' ? next() : denied(res);
       if (path.startsWith('/recordings')) return ['Admin', 'RO'].includes(user.role) ? next() : denied(res);
       if (path.startsWith('/data/')) return next(); // The data gateway applies table and row authorization.
@@ -63,6 +65,11 @@ export function createAccessPolicy(query) {
         req.body.roId = user.id;
         req.body.userRole = user.role;
         return next();
+      }
+      const ice = /^\/meetings\/([^/]+)\/ice$/.exec(path);
+      if (ice) {
+        const row = await issue(decodeURIComponent(ice[1]));
+        return req.method === 'GET' && ['Student', 'RO', 'Admin'].includes(user.role) && await canReadIssue(user, row) ? next() : denied(res);
       }
       const signal = /^\/meetings\/signals\/([^/]+)$/.exec(path);
       if (signal || path === '/meetings/signal') {

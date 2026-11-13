@@ -9,49 +9,31 @@ const store = overrides => createIssueActivityStore({
   writeCloudIssue: async () => {}, getMemoryIssues: () => [], ...overrides
 });
 
-test('reads only the requested issue and merges its saved and in-memory logs', async () => {
+test('reads only persisted history for the requested issue', async () => {
   const activity = store({
     query: async (sql, params) => { assert.deepEqual(params, ['ISS-1']); return { rows: [{ id: 'ISS-1', logs: JSON.stringify([initial]) }] }; },
-    getMemoryIssues: () => [{ id: 'ISS-1', logs: [initial, event] }, { id: 'ISS-2', logs: [{ text: 'Private other ticket' }] }]
+    getMemoryIssues: () => [{ id: 'ISS-1', logs: [initial, event] }]
   });
   const result = await activity.read('ISS-1');
-  assert.equal(result.issueId, 'ISS-1');
-  assert.equal(result.logs.length, 2);
-  assert.doesNotMatch(JSON.stringify(result), /Private other ticket/);
+  assert.deepEqual(result.logs.map(log => log.text), [initial.text]);
 });
 
-test('cloud history is used when Postgres is unavailable or missing the ticket', async () => {
-  for (const query of [async () => { throw new Error('Offline'); }, async () => ({ rows: [] })]) {
-    const result = await store({ query, readCloudIssue: async () => ({ id: 'ISS-1', logs: [initial, event] }) }).read('ISS-1');
-    assert.equal(result.logs.length, 2);
-  }
+test('database failures propagate rather than accepting unsaved memory/cloud state', async () => {
+  const activity = store({
+    query: async () => { throw new Error('Database unavailable'); },
+    readCloudIssue: async () => { throw new Error('An anonymous fallback must not run'); }
+  });
+  await assert.rejects(activity.read('ISS-1'), /Database unavailable/);
+  await assert.rejects(activity.append('ISS-1', event), /Database unavailable/);
 });
 
 test('meeting events append atomically without replacing existing actions', async () => {
-  const memory = { id: 'ISS-1', logs: [initial], status: 'Assigned to RO' };
-  const activity = store({
-    getMemoryIssues: () => [memory],
-    query: async (sql, params) => {
-      assert.match(sql, /COALESCE\(logs, '\[\]'::jsonb\) \|\| \$1::jsonb/);
-      assert.deepEqual(params, [JSON.stringify([event]), 'ISS-1', 'Meeting Started']);
-      return { rows: [{ id: 'ISS-1', logs: [initial, event], status: 'Meeting Started' }] };
-    }
-  });
-  await activity.append('ISS-1', event, 'Meeting Started');
-  assert.equal(memory.logs.length, 2);
-  assert.equal(memory.status, 'Meeting Started');
-});
-
-test('cloud fallback preserves history and does not reopen resolved issues', async () => {
-  let saved;
-  const activity = store({
-    query: async () => { throw new Error('Offline'); },
-    readCloudIssue: async () => ({ id: 'ISS-1', status: 'Resolved', logs: [initial] }),
-    writeCloudIssue: async (id, update) => { saved = { id, ...update }; }
-  });
-  await activity.append('ISS-1', event, 'Meeting Started');
-  assert.equal(saved.status, 'Resolved');
-  assert.equal(saved.logs.length, 2);
+  const activity = store({ query: async (sql, params) => {
+    assert.match(sql, /COALESCE\(logs, '\[\]'::jsonb\) \|\| \$1::jsonb/);
+    assert.deepEqual(params, [JSON.stringify([event]), 'ISS-1', 'Meeting Started']);
+    return { rows: [{ id: 'ISS-1', logs: [initial, event], status: 'Meeting Started' }] };
+  } });
+  assert.equal((await activity.append('ISS-1', event, 'Meeting Started')).logs.length, 2);
 });
 
 test('simultaneous meeting-end and RO-feedback appends preserve both events', async () => {

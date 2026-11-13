@@ -49,7 +49,7 @@ export default function AdminGrievanceAnalytics({ branches = [] }) {
             <h3 className="text-sm font-bold text-slate-900 tracking-tight">Grievance Distribution Across Domains</h3>
             <p className="text-xs text-slate-500 mt-0.5">Active grievances by submitted domain; resolved and closed cases excluded.</p>
           </div>
-          {data && <span className="text-[11px] font-mono text-blue-700">Updated {updated} IST</span>}
+          {data && <span className="text-[11px] tabular-nums text-blue-700">Updated {updated} IST</span>}
         </div>
         {!data ? <p role="status" className="text-xs text-slate-500 py-6">{placeholder}</p>
           : data.totals.activeIssues === 0 ? <p className="text-xs text-slate-500 py-6">No active grievances in the database.</p>
@@ -57,7 +57,7 @@ export default function AdminGrievanceAnalytics({ branches = [] }) {
               {data.domains.map((item, index) => <div key={item.domain}>
                 <div className="flex justify-between gap-3 text-xs font-medium mb-1.5">
                   <span className="text-slate-700 flex items-center gap-2"><span className={`w-2.5 h-2.5 rounded-full ${colors[index % colors.length]}`}></span>{item.domain}</span>
-                  <span className="font-mono text-slate-900 font-semibold">{item.count} Cases ({percent(item.percentage)})</span>
+                  <span className="tabular-nums text-slate-900 font-semibold">{item.count} Cases ({percent(item.percentage)})</span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden" role="img" aria-label={`${item.domain}: ${item.count} active grievances, ${percent(item.percentage)}`}>
                   <div className={`h-full rounded-full ${colors[index % colors.length]}`} style={{ width: `${item.percentage}%` }}></div>
@@ -85,10 +85,10 @@ export default function AdminGrievanceAnalytics({ branches = [] }) {
                 <tbody className="divide-y divide-slate-100 text-slate-700">
                   {data.branches.map(branch => <tr key={branch.code} className="hover:bg-slate-50/80 transition">
                     <td className="py-3 px-3 font-semibold text-slate-900">{branch.code === '__UNASSIGNED__' ? 'Unassigned branch' : branchNames.has(branch.code) ? `${branch.code} (${branchNames.get(branch.code)})` : branch.code}</td>
-                    <td className="py-3 px-3 font-mono">{branch.enrolled}</td><td className="py-3 px-3 font-mono">{branch.mentorCount}</td>
-                    <td className="py-3 px-3"><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200">{branch.activeTickets} Open</span></td>
-                    <td className={`py-3 px-3 font-mono ${speedClass(branch.averageResolutionHours)}`} title={`${branch.timedResolutionCount} resolved or closed ticket(s) with valid timestamps`}>{hours(branch.averageResolutionHours)}</td>
-                    <td className="py-3 px-3 text-right font-mono" title={`${branch.resolvedCount} resolved or closed out of ${branch.totalTickets} total ticket(s)`}>{percent(branch.resolutionRate)}</td>
+                    <td className="py-3 px-3 tabular-nums">{branch.enrolled}</td><td className="py-3 px-3 tabular-nums">{branch.mentorCount}</td>
+                    <td className="py-3 px-3"><span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 tabular-nums border border-blue-200">{branch.activeTickets} Open</span></td>
+                    <td className={`py-3 px-3 tabular-nums ${speedClass(branch.averageResolutionHours)}`} title={`${branch.timedResolutionCount} resolved or closed ticket(s) with valid timestamps`}>{hours(branch.averageResolutionHours)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums" title={`${branch.resolvedCount} resolved or closed out of ${branch.totalTickets} total ticket(s)`}>{percent(branch.resolutionRate)}</td>
                   </tr>)}
                 </tbody>
               </table>

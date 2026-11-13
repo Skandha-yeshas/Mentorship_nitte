@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright';
-import XLSX from 'xlsx';
+import XLSX from '../../shared/nodeSpreadsheet.js';
 import { normalizeRoRosterRow } from '../../shared/roCatalog.js';
 
 const appUrl = process.env.RO_CATALOG_APP_URL || 'http://localhost:5173';

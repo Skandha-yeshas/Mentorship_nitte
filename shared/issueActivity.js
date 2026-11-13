@@ -84,13 +84,21 @@ export function buildIssueActivity({ issue, logs = [], emailLogs = [] }) {
     const inbound = normalize(email.direction) === 'INBOUND';
     const status = normalize(email.status);
     const delivery = inbound ? 'Received' :
-      status === 'DELIVERED_GMAIL' ? 'Dispatched via Gmail' :
+      status === 'DELIVERED_GMAIL' ? 'Accepted by mail server' :
       ['SENT', 'DELIVERED'].includes(status) ? 'Sent' :
-      ['FAILED', 'ERROR', 'BOUNCED'].includes(status) ? 'Dispatch failed' : 'Logged locally — delivery not confirmed';
+      ['FAILED', 'ERROR', 'BOUNCED'].includes(status) ? 'Dispatch failed' :
+      status === 'SKIPPED_DISABLED' ? 'Not sent — email disabled' :
+      status === 'SKIPPED_INVALID_RECIPIENT' ? 'Not sent — recipient needs correction' :
+      status === 'SKIPPED_UNCONFIGURED' ? 'Not sent — mail service needs configuration' :
+      ['QUEUED', 'DEFERRED', 'RETRY'].includes(status) ? 'Waiting for background email delivery' :
+      status === 'CANCELLED' ? 'Not sent — recipient details changed' :
+      status === 'SENDING' ? 'Email delivery in progress' :
+      status === 'PENDING' || status === 'DELIVERY_UNKNOWN' ? 'Delivery unconfirmed — check before retrying' : 'Logged locally — delivery not confirmed';
     activity.push({
       id: `email:${key}`, kind: 'email', title: inbound ? 'Email Received' : 'Email Dispatch',
       text: email.subject || 'Ticket notification', time, delivery, status,
       sender: email.sender || '', recipient: email.recipient || email.recipient_email || '',
+      deliveryReason: email.deliveryReason || email.delivery_reason || '',
       eventType: String(email.eventType || email.event_type || '').replaceAll('_', ' ')
     });
   }

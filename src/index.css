@@ -1,11 +1,17 @@
 /* Smart Mentorship & Student Support System - Ultra-Modern Light Theme */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap');
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/plus-jakarta-sans-variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
 
 :root {
   --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
-  /* Primary Institutional NITTE Blue Palette */
+  /* Primary portal color palette */
   --nitte-blue: #1e3a8a;
   --nitte-blue-dark: #172554;
   --nitte-blue-primary: #2563eb;
@@ -88,6 +94,16 @@ input,
 select,
 textarea {
   font-family: inherit;
+}
+
+/* Keep dashboard text and form controls on the same family, with or without
+   the utility stylesheet. Numeric columns align without changing typeface. */
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Base Layout Container - Full Viewport Continuous Dotted Canvas */
@@ -380,7 +396,7 @@ textarea {
   color: var(--text-primary);
 }
 
-/* Modern Button UI with Institutional NITTE Blue */
+/* Modern buttons using the primary portal colors */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1080,6 +1096,6 @@ textarea {
 .font-title-md { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.005em; }
 .font-body-md { font-size: 14px; line-height: 22px; font-weight: 400; }
 .font-body-sm { font-size: 13px; line-height: 18px; font-weight: 400; }
-.font-label-md { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; }
-.font-label-sm { font-size: 11px; line-height: 14px; font-weight: 700; letter-spacing: 0.04em; }
+.font-label-md { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.01em; }
+.font-label-sm { font-size: 11px; line-height: 14px; font-weight: 700; letter-spacing: 0.02em; }
 .font-metric-stat { font-size: 36px; line-height: 40px; font-weight: 800; letter-spacing: -0.03em; }

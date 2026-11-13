@@ -266,14 +266,12 @@ export const MentorDashboard = ({ mentorId }) => {
 
   const handleTriggerManualAlert = async () => {
     try {
-      if (shootMentorGmailAlert) {
-        await shootMentorGmailAlert(mentor.id, sessionDate, 'Fortnightly Mentorship Hour', mentoringSchedule.time);
-      } else if (shootMentorDeadlineAlert) {
-        await shootMentorDeadlineAlert(mentor.id, sessionDate);
-      }
-      showToast(`9:00 AM Automated Alert dispatched to all ${mentees.length} mentees via Gmail & SMS!`);
+      const result = shootMentorGmailAlert
+        ? await shootMentorGmailAlert(mentor.id, { ...mentoringSchedule, date: sessionDate })
+        : await shootMentorDeadlineAlert(mentor.id, sessionDate);
+      showToast(result?.delivered ? 'Reminder email accepted for your registered mentor address.' : result?.record?.deliveryReason || 'No reminder was sent.');
     } catch (err) {
-      showToast('Alert notification triggered: ' + err.message);
+      showToast('Email could not be sent: ' + err.message, true);
     }
   };
 
@@ -365,7 +363,7 @@ export const MentorDashboard = ({ mentorId }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `NITTE_Mentees_Roster_${mentor.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
+    link.setAttribute('download', `Smart_Mentorship_Mentees_Roster_${mentor.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -404,7 +402,7 @@ export const MentorDashboard = ({ mentorId }) => {
               <div className="flex flex-col">
                 <div className="flex flex-wrap items-center gap-space-xs">
                   <span className="font-headline-sm text-headline-sm text-on-surface font-extrabold">{mentor.name}</span>
-                  <span className="px-space-xs py-0.5 rounded bg-surface-container-high text-primary font-label-sm text-label-sm font-mono tracking-wider font-semibold">
+                  <span className="px-space-xs py-0.5 rounded bg-surface-container-high text-primary font-label-sm text-label-sm tabular-nums tracking-wider font-semibold">
                     {mentor.id}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-label-sm text-label-sm font-bold border border-emerald-200">
@@ -414,7 +412,7 @@ export const MentorDashboard = ({ mentorId }) => {
                 <span className="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
                   Associate Professor • Dept. of {mentor.dept || 'Computer Science & Engineering'} • Designated Mentor Batch 2022-26 & 2023-26
                 </span>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-on-surface-variant font-label-md text-label-md mt-1 font-mono">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-on-surface-variant font-label-md text-label-md mt-1 tabular-nums">
                   <span>Room: <strong>{mentoringSchedule.location || 'Seminar Hall 204 (Block III)'}</strong></span>
                   <span>•</span>
                   <span>Roster: <strong className="text-primary font-bold">{mentees.length} Active Mentees</strong></span>
@@ -439,8 +437,8 @@ export const MentorDashboard = ({ mentorId }) => {
                   </div>
                 </div>
                 <div className="flex items-baseline gap-space-xs mt-1">
-                  <span className="font-metric-stat text-metric-stat text-primary font-mono">{mentees.length}</span>
-                  <span className="font-headline-sm text-headline-sm text-on-surface-variant font-mono">/ 30</span>
+                  <span className="font-metric-stat text-metric-stat text-primary tabular-nums">{mentees.length}</span>
+                  <span className="font-headline-sm text-headline-sm text-on-surface-variant tabular-nums">/ 30</span>
                   <span className={`ml-auto px-2 py-0.5 rounded-full font-label-sm text-label-sm font-bold ${menteeCapacityPercent > 85 ? 'bg-amber-100 text-amber-800' : 'bg-tertiary-fixed text-on-tertiary-fixed'}`}>
                     {menteeCapacityPercent}% Loaded
                   </span>
@@ -458,7 +456,7 @@ export const MentorDashboard = ({ mentorId }) => {
                   <span className="material-symbols-outlined text-[16px]">check_circle</span>
                   <span>Cohort Capacity Active</span>
                 </div>
-                <span className="font-label-sm text-label-sm text-on-surface-variant font-mono">
+                <span className="font-label-sm text-label-sm text-on-surface-variant tabular-nums">
                   {availableSeats} Seats Available
                 </span>
               </div>
@@ -477,13 +475,13 @@ export const MentorDashboard = ({ mentorId }) => {
                   <span className="font-title-md text-title-md text-on-surface font-extrabold">
                     {mentoringSchedule.day || 'Friday'}, {sessionDate}
                   </span>
-                  <span className="font-body-sm text-body-sm text-secondary font-mono font-bold">
+                  <span className="font-body-sm text-body-sm text-secondary tabular-nums font-bold">
                     {mentoringSchedule.time || '03:30 PM'} – {mentoringSchedule.endTime || '04:30 PM'} IST
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-on-surface-variant font-body-sm text-body-sm mt-1">
                   <span className="material-symbols-outlined text-[16px] text-primary">location_on</span>
-                  <span className="font-mono text-xs">{mentoringSchedule.location || 'Seminar Hall 204, Block III'}</span>
+                  <span className="tabular-nums text-xs">{mentoringSchedule.location || 'Seminar Hall 204, Block III'}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-4 pt-3 border-t border-surface-container">
@@ -546,7 +544,7 @@ export const MentorDashboard = ({ mentorId }) => {
                         ? 'Draft Saved (Pending Submission)'
                         : 'Report Submission Pending'}
                   </span>
-                  <span className="font-body-sm text-body-sm text-on-surface-variant mt-1 font-mono">
+                  <span className="font-body-sm text-body-sm text-on-surface-variant mt-1 tabular-nums">
                     Session: {reportDate || sessionDate} • Status: {
                       isReportFiled
                         ? 'Submitted'
@@ -585,8 +583,8 @@ export const MentorDashboard = ({ mentorId }) => {
                 <div className="flex flex-col">
                   <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Active Vault Notes</span>
                   <div className="flex items-baseline gap-2">
-                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface font-mono">{myResources.length} Resources</span>
-                    <span className="font-body-sm text-body-sm text-tertiary font-bold font-mono">{myResources.length * 18 + 14} Mentee Downloads</span>
+                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface tabular-nums">{myResources.length} Resources</span>
+                    <span className="font-body-sm text-body-sm text-tertiary font-bold tabular-nums">{myResources.length * 18 + 14} Mentee Downloads</span>
                   </div>
                   <span className="font-label-sm text-label-sm text-on-surface-variant">98% Cohort Download Compliance Rate</span>
                 </div>
@@ -608,10 +606,10 @@ export const MentorDashboard = ({ mentorId }) => {
                 <div className="flex flex-col">
                   <span className="font-label-sm text-label-sm font-bold uppercase text-on-surface-variant">Mentee Support Inquiries</span>
                   <div className="flex items-baseline gap-2">
-                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface font-mono">
+                    <span className="font-headline-sm text-headline-sm font-bold text-on-surface tabular-nums">
                       {(db.issues || []).filter(i => mentees.some(m => String(m.id).toUpperCase() === String(i.studentId || i.student_id).toUpperCase())).length} Inquiries
                     </span>
-                    <span className="font-body-sm text-body-sm text-emerald-700 font-bold font-mono">Institutional Redressal Active</span>
+                    <span className="font-body-sm text-body-sm text-emerald-700 font-bold tabular-nums">Institutional Redressal Active</span>
                   </div>
                   <span className="font-label-sm text-label-sm text-on-surface-variant">Continuous Support Tracking Active</span>
                 </div>
@@ -770,7 +768,7 @@ export const MentorDashboard = ({ mentorId }) => {
 
                             return (
                               <tr key={st.id || idx} className="hover:bg-surface-container-low/50 transition-colors">
-                                <td className="py-3.5 px-4 font-mono font-bold text-primary">
+                                <td className="py-3.5 px-4 tabular-nums font-bold text-primary">
                                   {st.id}
                                 </td>
                                 <td className="py-3.5 px-4">
@@ -795,17 +793,17 @@ export const MentorDashboard = ({ mentorId }) => {
                                 <td className="py-3.5 px-4">
                                   <div className="flex flex-col">
                                     <span className="font-semibold text-xs">{st.branch || 'CSE'}</span>
-                                    <span className="text-on-surface-variant font-mono text-xs">Sem {st.sem || 5}</span>
+                                    <span className="text-on-surface-variant tabular-nums text-xs">Sem {st.sem || 5}</span>
                                   </div>
                                 </td>
-                                <td className="py-3.5 px-4 font-mono text-xs">
+                                <td className="py-3.5 px-4 tabular-nums text-xs">
                                   <div>{st.email}</div>
                                   <div className="text-on-surface-variant">{st.phone || '+91 98765 43210'}</div>
                                 </td>
                                 <td className="py-3.5 px-4 text-right">
                                   <div className="flex items-center justify-end">
                                     <a
-                                      href={`mailto:${st.email}?subject=NITTE Mentorship Interaction - ${mentor.name}`}
+                                      href={`mailto:${st.email}?subject=Smart Mentorship Interaction - ${mentor.name}`}
                                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-md text-label-md font-semibold transition-all shadow-xs"
                                       title="Email Student"
                                     >
@@ -824,7 +822,7 @@ export const MentorDashboard = ({ mentorId }) => {
 
                   <div className="flex items-center justify-between text-on-surface-variant font-label-sm text-label-sm px-2">
                     <span>Showing {filteredMentees.length} of {mentees.length} assigned mentees</span>
-                    <span className="font-mono">Mentor Record ID: NITTE-MENTOR-{mentor.id}</span>
+                    <span className="tabular-nums">Mentor Record ID: SMGP-MENTOR-{mentor.id}</span>
                   </div>
                 </div>
               )}
@@ -847,7 +845,7 @@ export const MentorDashboard = ({ mentorId }) => {
                         <h3 className="font-headline-sm text-headline-sm text-on-surface font-extrabold">
                           {mentoringSchedule.day || 'Friday'}, {sessionDate} • {mentoringSchedule.time || '03:30 PM'} to {mentoringSchedule.endTime || '04:30 PM'} ({mentoringSchedule.periodSlot || 'Period 6'})
                         </h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-md mt-2 font-mono text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-md mt-2 tabular-nums text-sm">
                           <div className="bg-surface-container-lowest p-space-md rounded-lg shadow-xs border border-surface-container">
                             <span className="text-on-surface-variant block text-xs uppercase font-sans">Physical Venue</span>
                             <strong className="text-on-surface text-base">{mentoringSchedule.location || 'Seminar Hall 204'}</strong>
@@ -918,7 +916,7 @@ export const MentorDashboard = ({ mentorId }) => {
                           </button>
                         )}
                       </div>
-                      <div className="p-space-sm rounded-lg bg-surface-container-low text-xs text-on-surface-variant font-mono">
+                      <div className="p-space-sm rounded-lg bg-surface-container-low text-xs text-on-surface-variant tabular-nums">
                         Last modified by {mentor.name} on {new Date().toLocaleDateString('en-GB')}.
                       </div>
                     </div>
@@ -970,11 +968,11 @@ export const MentorDashboard = ({ mentorId }) => {
                           </div>
                           <div className="flex flex-col mt-1">
                             <h4 className="font-title-md text-title-md font-bold text-on-surface">{res.title}</h4>
-                            <span className="font-label-sm text-label-sm text-on-surface-variant mt-1 font-mono">
+                            <span className="font-label-sm text-label-sm text-on-surface-variant mt-1 tabular-nums">
                               {res.type} Document • Uploaded {res.dateShared ? new Date(res.dateShared).toLocaleDateString() : 'Recently'}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between pt-2 border-t border-surface-container font-mono text-xs text-on-surface-variant">
+                          <div className="flex items-center justify-between pt-2 border-t border-surface-container tabular-nums text-xs text-on-surface-variant">
                             <span>{mentees.length} / {mentees.length} Downloaded</span>
                             <a
                               href={res.content || '#'}
@@ -1057,13 +1055,13 @@ export const MentorDashboard = ({ mentorId }) => {
                             <input
                               value={reportAttendance}
                               onChange={(e) => setReportAttendance(e.target.value)}
-                              className="w-full h-11 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface font-mono font-bold focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
+                              className="w-full h-11 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface tabular-nums font-bold focus:ring-2 focus:ring-primary focus:outline-none border border-surface-container"
                               max={mentees.length || 30}
                               min={0}
                               required
                               type="number"
                             />
-                            <span className="font-mono text-xs text-on-surface-variant shrink-0">/ {mentees.length} Allocated</span>
+                            <span className="tabular-nums text-xs text-on-surface-variant shrink-0">/ {mentees.length} Allocated</span>
                           </div>
                         </div>
                       </div>
@@ -1158,13 +1156,13 @@ export const MentorDashboard = ({ mentorId }) => {
                           ) : (
                             myRecords.map((rec, idx) => (
                               <tr key={rec.id || idx}>
-                                <td className="py-3 px-4 font-bold text-on-surface font-mono">
+                                <td className="py-3 px-4 font-bold text-on-surface tabular-nums">
                                   {rec.topic || `Mentorship Session #${idx + 1}`}
                                 </td>
-                                <td className="py-3 px-4 font-mono text-xs">
+                                <td className="py-3 px-4 tabular-nums text-xs">
                                   {rec.sessionDate || rec.createdAt ? new Date(rec.sessionDate || rec.createdAt).toLocaleDateString() : 'Recent'}
                                 </td>
-                                <td className="py-3 px-4 font-mono">
+                                <td className="py-3 px-4 tabular-nums">
                                   {rec.studentsAttended || mentees.length} / {mentees.length || 30} Present
                                 </td>
                                 <td className="py-3 px-4">
@@ -1421,7 +1419,7 @@ export const MentorDashboard = ({ mentorId }) => {
                   value={newResContent}
                   onChange={(e) => setNewResContent(e.target.value)}
                   placeholder="https://drive.google.com/file/d/..."
-                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface font-mono text-xs border border-surface-container"
+                  className="w-full h-10 px-3 bg-surface-container-low rounded-lg font-body-md text-body-md text-on-surface tabular-nums text-xs border border-surface-container"
                   required
                   type="text"
                 />
@@ -1451,7 +1449,7 @@ export const MentorDashboard = ({ mentorId }) => {
       {/* FOOTER */}
       <footer className="w-full bg-surface-container-low py-space-md border-t border-outline-variant/20 mt-auto">
         <div className="w-full px-gutter flex flex-col md:flex-row items-center justify-between gap-space-sm text-on-surface-variant font-label-sm text-label-sm">
-          <span>© 2025 NITTE (Deemed to be University) • Department of {mentor.dept || 'Computer Science & Engineering'}. All Rights Reserved.</span>
+          <span>© 2025 Smart Mentorship & Grievance Portal • Department of {mentor.dept || 'Computer Science & Engineering'}.</span>
           <div className="flex items-center gap-space-md">
             <span className="flex items-center gap-1">
               <span className="material-symbols-outlined text-[14px] text-tertiary">verified</span>

@@ -7,9 +7,11 @@ import { createFallbackMediaStream } from '../utils/mediaFallback';
 import VideoStreamPlayer from '../components/VideoStreamPlayer';
 import SelfHelpManagerModal from '../components/SelfHelpManagerModal';
 import RecordingSaveStatus from '../components/RecordingSaveStatus';
+import MeetingCountdown from '../components/MeetingCountdown';
 import { isStoredRecording, recordingExtension } from '../../shared/meetingRecordings.js';
 import { getMeetingReassignmentCount, MEETING_REASSIGNMENT_LIMIT } from '../../shared/meetingReassignments.js';
 import { resolveCategoryGuidance } from '../../shared/categoryGuidance.js';
+import { formatTicketNumber } from '../../shared/ticketNumber.js';
 import { getRoPriorityRank, sortRoIssuesByPriority, getRoIssueReadKey, getRoMeetingReadKey, RO_SEEN_STORAGE_KEY, getRoBrowserStorage, readRoSeenEntries, markRoItemsSeen } from '../utils/roInbox';
 import { getUniqueMeetings, getRoMeetingQueue, getMeetingIssueId, getRoMeetingState, hasRoMeetingFeedback, isRoMeetingAwaitingFeedback } from '../utils/roMeetings';
 
@@ -67,6 +69,7 @@ export const RODashboard = ({ roId }) => {
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [mediaPermissionState, setMediaPermissionState] = useState('idle'); // 'idle' | 'requesting' | 'granted' | 'denied'
   const [mediaPermissionError, setMediaPermissionError] = useState('');
+  const [callConnectionNotice, setCallConnectionNotice] = useState('');
   const [playingRecording, setPlayingRecording] = useState(null);
   const [recordingPlaybackError, setRecordingPlaybackError] = useState('');
   const [playbackRevision, setPlaybackRevision] = useState(0);
@@ -140,6 +143,7 @@ export const RODashboard = ({ roId }) => {
     if (!requestedRoom) return;
     setMediaPermissionState('requesting');
     setMediaPermissionError('');
+    setCallConnectionNotice('');
     try {
       let stream = null;
       try {
@@ -226,6 +230,7 @@ export const RODashboard = ({ roId }) => {
             },
             onPeerStatus: (status) => {
               setPeerConnected(Boolean(status.connected));
+              if (status.error || status.warning) setCallConnectionNotice(status.error || status.warning);
             },
             onRemoteMediaState: (state) => {
               if (typeof state.video === 'boolean') {
@@ -236,7 +241,7 @@ export const RODashboard = ({ roId }) => {
             },
             onMeetingEnded: () => {
               console.log('[RO] Remote peer ended session, automatically opening post-meeting feedback modal.');
-              handleStopAndSaveRecording();
+              handleStopAndSaveRecording({ automatic: true });
             }
           });
         }
@@ -251,7 +256,7 @@ export const RODashboard = ({ roId }) => {
           localStream: stream,
           localLabel: ro?.name || 'Relationship Officer',
           remoteLabel: selectedIssue ? (selectedIssue.studentName || 'Student') : 'Student',
-          ticketId: targetIssueId || 'TICKET',
+          ticketId: formatTicketNumber(selectedIssue || targetIssueId || 'TICKET'),
           localRole: 'RO',
           remoteRole: 'Student',
           width: 960,
@@ -465,6 +470,11 @@ export const RODashboard = ({ roId }) => {
   });
 
   const selectedIssue = roIssues.find(i => (i.id || i.issue_id)?.toUpperCase() === selectedIssueId?.toUpperCase());
+  const getTicketNumberForId = rawId => {
+    const target = String(rawId || '').trim().toUpperCase();
+    const issue = (db.issues || []).find(row => String(row.id || row.issue_id || '').trim().toUpperCase() === target);
+    return formatTicketNumber(issue || rawId);
+  };
   const selectedIssueReadKey = getRoIssueReadKey(ro.id, selectedIssue);
   const selectedMeetingReadKeys = uniqueMeetings
     .filter(meeting => String(meeting.roId || meeting.ro_id || '').trim().toUpperCase() === String(ro.id).trim().toUpperCase() &&
@@ -570,7 +580,7 @@ export const RODashboard = ({ roId }) => {
     setShowScheduleModal(true);
   };
 
-  const handleLaunchOnlineMeeting = (directMeet = null, directIssue = null) => {
+  const handleLaunchOnlineMeeting = async (directMeet = null, directIssue = null) => {
     if (activeMeetingIssueId) {
       alert('End the current meeting before starting another meeting.');
       return;
@@ -587,25 +597,25 @@ export const RODashboard = ({ roId }) => {
     }
     const rawTarget = (meetToUse && (meetToUse.issueId || meetToUse.issue_id)) || (issueToUse && issueToUse.id) || (meetToUse && meetToUse.id) || 'TICK-1002';
     const targetId = getCanonicalMeetingRoomId(rawTarget);
+    try { await updateMeetingStatus(meetToUse.id || meetToUse.issueId || targetId, 'Started'); }
+    catch (error) { alert(error.message); return; }
     setActiveMeetingIssueId(targetId);
     isEndingMeetingRef.current = false;
-    if (meetToUse && (meetToUse.id || meetToUse.issueId)) {
-      updateMeetingStatus(meetToUse.id || meetToUse.issueId || targetId, 'Started');
-    }
     setRecordingSeconds(0);
     setIsCameraOff(false);
     setIsMicMuted(false);
     setShowOnlineMeetingModal(true);
   };
 
-  const handleConcludeOfflineMeeting = () => {
+  const handleConcludeOfflineMeeting = async () => {
     if (!activeMeeting || !selectedIssue) return;
     if (selectedIssue.status === 'Resolved' || selectedIssue.status === 'Escalated' || selectedIssue.status === 'Re-escalated' || selectedIssue.isReEscalated) {
       alert('🔒 Ticket Locked: Meeting cannot be concluded because this ticket is resolved or escalated.');
       return;
     }
     const currentMeetId = activeMeeting.id || activeMeeting.issueId;
-    updateMeetingStatus(currentMeetId, 'Completed');
+    try { await updateMeetingStatus(currentMeetId, 'Completed'); }
+    catch (error) { alert(error.message); return; }
     setPostMeetingData({
       meetingId: currentMeetId,
       issueId: selectedIssue.id,
@@ -630,7 +640,7 @@ export const RODashboard = ({ roId }) => {
     const pending = pendingRecordingsRef.current.get(id);
     if (!pending || pending.uploading) return;
     pending.uploading = true;
-    updateRecordingUpload(id, { issueId: pending.issueId, status: 'saving', hasBlob: true, message: 'Keep this page open until the upload finishes.' });
+    updateRecordingUpload(id, { issueId: pending.issueId, ticketNumber: pending.ticketNumber, status: 'saving', hasBlob: true, message: 'Keep this page open until the upload finishes.' });
     try {
       await saveMeetingRecording(pending.meetingId, pending.issueId, pending.durationSeconds, pending.blob, pending.summary, { recordingId: id });
       pendingRecordingsRef.current.delete(id);
@@ -667,7 +677,7 @@ export const RODashboard = ({ roId }) => {
     }
   };
 
-  const handleStopAndSaveRecording = async () => {
+  const handleStopAndSaveRecording = async ({ automatic = false } = {}) => {
     if (isEndingMeetingRef.current) return;
     isEndingMeetingRef.current = true;
     const targetIssueId = activeMeetingIssueId || selectedIssue?.id;
@@ -677,16 +687,23 @@ export const RODashboard = ({ roId }) => {
     const meetingId = currentMeet?.id || currentMeet?.issueId || `MEET-${currentIssue.id}`;
     const recordingId = `REC-${crypto.randomUUID()}`;
 
+    if (automatic) {
+      // Close media and finalize the recording even if the database is temporarily
+      // unreachable. The persistent start time lets the worker finish the lifecycle.
+      updateMeetingStatus(meetingId, 'Completed').catch(error => console.warn('Meeting end is waiting for database recovery:', error.message));
+    } else {
+      try { await updateMeetingStatus(meetingId, 'Completed'); }
+      catch (error) { isEndingMeetingRef.current = false; alert(error.message); return; }
+    }
     // Detach and stop the recorder before hiding the stage triggers React cleanup.
     const recorder = compositeRecorderRef.current;
     compositeRecorderRef.current = null;
     const completion = recorder ? recorder.stop() : Promise.reject(new Error('No video was captured for this meeting. The recording was not saved.'));
-    updateRecordingUpload(recordingId, { issueId: currentIssue.id, status: 'saving', hasBlob: false, message: 'Finalizing the video file…' });
+    updateRecordingUpload(recordingId, { issueId: currentIssue.id, ticketNumber: formatTicketNumber(currentIssue), status: 'saving', hasBlob: false, message: 'Finalizing the video file…' });
     if (webrtcSessionRef.current) {
       try { webrtcSessionRef.current.sendSignal({ type: 'meeting-ended' }); } catch { }
     }
-    updateMeetingStatus(meetingId, 'Completed');
-    setPostMeetingData({ meetingId, issueId: currentIssue.id, studentName: currentIssue.studentName || 'Student', studentId: currentIssue.studentId || '', category: currentIssue.category || 'General', durationText: formatTimer(recordingSeconds) });
+    setPostMeetingData({ meetingId, issueId: currentIssue.id, ticketNumber: formatTicketNumber(currentIssue), studentName: currentIssue.studentName || 'Student', studentId: currentIssue.studentId || '', category: currentIssue.category || 'General', durationText: formatTimer(recordingSeconds) });
     setDiscussionSummary('');
     setActionItems('');
     setMeetingOutcome(currentIssue.status === 'Resolved' ? 'Resolved' : 'In-Progress');
@@ -698,12 +715,12 @@ export const RODashboard = ({ roId }) => {
     try {
       const result = await completion;
       pendingRecordingsRef.current.set(recordingId, {
-        meetingId, issueId: currentIssue.id, durationSeconds: result.durationSeconds, blob: result.blob,
+        meetingId, issueId: currentIssue.id, ticketNumber: formatTicketNumber(currentIssue), durationSeconds: result.durationSeconds, blob: result.blob,
         summary: `Meeting between RO ${ro.name} and ${currentIssue.studentName || 'Student'}; includes both video feeds and microphones.`
       });
       await uploadPendingRecording(recordingId);
     } catch (error) {
-      updateRecordingUpload(recordingId, { status: 'error', hasBlob: false, message: error.message || 'The browser could not finish the recording.' });
+      updateRecordingUpload(recordingId, { issueId: currentIssue.id, ticketNumber: formatTicketNumber(currentIssue), status: 'error', hasBlob: false, message: error.message || 'The browser could not finish the recording.' });
     }
   };
 
@@ -747,7 +764,7 @@ export const RODashboard = ({ roId }) => {
       );
       setShowMeetingFeedbackModal(false);
       setPostMeetingData(null);
-      alert(`📋 Meeting Minutes & Feedback Saved!\n\nDiscussions and agreed action items have been officially recorded to Ticket #${postMeetingData.issueId}.`);
+      alert(`📋 Meeting Minutes & Feedback Saved!\n\nDiscussions and agreed action items have been officially recorded to Ticket ${postMeetingData.ticketNumber || getTicketNumberForId(postMeetingData.issueId)}.`);
     } catch (err) {
       console.error('Failed to submit post-meeting feedback:', err);
       alert('Could not save meeting feedback. Please try again.');
@@ -790,7 +807,7 @@ export const RODashboard = ({ roId }) => {
     setShowResolveModal(true);
   };
 
-  const handleResolveSubmit = (e) => {
+  const handleResolveSubmit = async (e) => {
     e.preventDefault();
     if (!resolutionNotes.trim() || !selectedIssueId) return;
 
@@ -807,7 +824,8 @@ export const RODashboard = ({ roId }) => {
       return;
     }
 
-    resolveIssue(selectedIssueId, ro.id, resolutionNotes);
+    try { await resolveIssue(selectedIssueId, ro.id, resolutionNotes); }
+    catch (error) { alert(error.message); return; }
     setResolutionNotes('');
     setShowResolveModal(false);
   };
@@ -883,7 +901,7 @@ export const RODashboard = ({ roId }) => {
     setIsSubmittingEscalate(true);
     try {
       await escalateIssue(selectedIssueId, ro.id, escalationReason, isReEscalate);
-      setEscalateSuccessMsg(`✅ Ticket #${selectedIssueId} ${isReEscalate ? 're-escalation directive & urgency remarks' : 'escalation'} successfully dispatched to Admin Office!`);
+      setEscalateSuccessMsg(`✅ Ticket ${getTicketNumberForId(selectedIssueId)} ${isReEscalate ? 're-escalation directive & urgency remarks' : 'escalation'} successfully dispatched to Admin Office!`);
       setEscalationReason('');
       setShowEscalateModal(false);
       setTimeout(() => setEscalateSuccessMsg(''), 6000);
@@ -1010,7 +1028,7 @@ export const RODashboard = ({ roId }) => {
         offlineReassignFeedback.trim() // Feedback for switching to offline
       );
       setShowOnlineNotDoneModal(false);
-      alert(`📋 Online Meeting Reassigned to In-Person:\n\nFeedback recorded to Ticket #${selectedIssue.id}. Meeting mode updated to In-Person (Offline on Campus).`);
+      alert(`📋 Online Meeting Reassigned to In-Person:\n\nFeedback recorded to Ticket ${formatTicketNumber(selectedIssue)}. Meeting mode updated to In-Person (Offline on Campus).`);
     } catch (err) {
       console.error('Failed to reschedule offline:', err);
       alert(err.message || 'Could not reschedule meeting.');
@@ -1094,7 +1112,6 @@ export const RODashboard = ({ roId }) => {
           <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-4 min-w-0">
             <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-2xl border border-blue-100 bg-blue-50 text-blue-700">
               <span className="material-symbols-outlined text-3xl">account_circle</span>
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true"></span>
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1118,7 +1135,7 @@ export const RODashboard = ({ roId }) => {
                 <span className="text-slate-300">•</span>
                 <span className="text-slate-600">Cabin 302, Academic Block IV</span>
                 <span className="text-slate-300">•</span>
-                <span className="bg-slate-100 px-2 py-0.5 rounded-md text-slate-700 font-mono text-xs border border-slate-200 font-semibold">RO ID: {ro.id}</span>
+                <span className="bg-slate-100 px-2 py-0.5 rounded-md text-slate-700 tabular-nums text-xs border border-slate-200 font-semibold">RO ID: {ro.id}</span>
               </p>
             </div>
           </div>
@@ -1246,7 +1263,7 @@ export const RODashboard = ({ roId }) => {
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Queue Pipeline</span>
               </div>
               <span className="text-[11px] text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Real-Time Sync
+                Real-Time Sync
               </span>
             </div>
 
@@ -1362,7 +1379,7 @@ export const RODashboard = ({ roId }) => {
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${isOnline ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                          <span className={`px-1.5 py-0.5 rounded tabular-nums text-[10px] font-bold ${isOnline ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
                             {meet.time}
                           </span>
                           <span className="font-bold text-slate-900 truncate">{meet.studentName}</span>
@@ -1410,7 +1427,7 @@ export const RODashboard = ({ roId }) => {
                 <span className="material-symbols-outlined text-base text-blue-700">ballot</span>
                 <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Active Assigned Queue</h4>
               </div>
-              <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+              <span className="text-[10px] tabular-nums text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                 {filteredIssues.length} Tickets
               </span>
             </div>
@@ -1456,7 +1473,7 @@ export const RODashboard = ({ roId }) => {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-mono font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">
+                          <span className="text-[11px] tabular-nums font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">
                             #{issue.id}
                           </span>
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${priorityClass}`}>
@@ -1490,9 +1507,9 @@ export const RODashboard = ({ roId }) => {
                         <div className="flex items-center gap-1.5 text-slate-700 font-semibold truncate">
                           <span className="material-symbols-outlined text-[13px] text-blue-600">person</span>
                           <span className="truncate">{issue.studentName}</span>
-                          <span className="text-slate-400 font-mono text-[10px]">({issue.studentId})</span>
+                          <span className="text-slate-400 tabular-nums text-[10px]">({issue.studentId})</span>
                         </div>
-                        <span className="text-[10px] text-slate-400 font-mono">
+                        <span className="text-[10px] text-slate-400 tabular-nums">
                           {new Date(issue.createdAt).toLocaleDateString()}
                         </span>
                       </div>
@@ -1530,7 +1547,7 @@ export const RODashboard = ({ roId }) => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 font-mono">
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 tabular-nums">
                         CASE #{selectedIssue.id}
                       </span>
                       <span className="text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-0.5 rounded flex items-center gap-1">
@@ -1551,7 +1568,7 @@ export const RODashboard = ({ roId }) => {
                     </h2>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
+                    <span className="text-xs tabular-nums font-semibold px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-sm text-amber-600">timer</span>
                       Status: {selectedIssue.status}
                     </span>
@@ -1566,7 +1583,7 @@ export const RODashboard = ({ roId }) => {
                     </div>
                     <div className="min-w-0">
                       <p className="font-bold text-slate-900 leading-tight truncate">{selectedIssue.studentName}</p>
-                      <p className="text-[11px] font-mono text-slate-500 mt-0.5">USN: {selectedIssue.studentId}</p>
+                      <p className="text-[11px] tabular-nums text-slate-500 mt-0.5">USN: {selectedIssue.studentId}</p>
                     </div>
                   </div>
                   <div className="space-y-0.5">
@@ -1576,7 +1593,7 @@ export const RODashboard = ({ roId }) => {
                   <div className="space-y-0.5">
                     <p className="text-slate-500 text-[11px] font-semibold uppercase">Submission Details</p>
                     <p className="text-slate-800 font-medium">Logged: {new Date(selectedIssue.createdAt).toLocaleDateString()}</p>
-                    <p className="text-[11px] text-slate-500 font-mono">Assigned RO: {ro.name}</p>
+                    <p className="text-[11px] text-slate-500 tabular-nums">Assigned RO: {ro.name}</p>
                   </div>
                 </div>
 
@@ -1665,7 +1682,7 @@ export const RODashboard = ({ roId }) => {
                           type="button"
                           onClick={() => activeMeeting.mode === 'Online'
                             ? handleLaunchOnlineMeeting(activeMeeting, selectedIssue)
-                            : updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started')}
+                            : updateMeetingStatus(activeMeeting.id || activeMeeting.issueId, 'Started').catch(error => alert(error.message))}
                           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs sm:text-sm transition shadow-sm"
                         >
                           <span className="material-symbols-outlined text-base">play_arrow</span>
@@ -1863,7 +1880,7 @@ export const RODashboard = ({ roId }) => {
                   {selectedIssue.logs && selectedIssue.logs.map((log, idx) => (
                     <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <span className="text-slate-700 font-medium">{log.text}</span>
-                      <span className="text-[11px] font-mono text-slate-400 flex-shrink-0">
+                      <span className="text-[11px] tabular-nums text-slate-400 flex-shrink-0">
                         {new Date(log.time).toLocaleString()}
                       </span>
                     </div>
@@ -1884,7 +1901,7 @@ export const RODashboard = ({ roId }) => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-emerald-400">🎥 {rec.mode} Session</span>
-                            <span className="text-[10px] font-mono text-slate-400">({rec.durationText})</span>
+                            <span className="text-[10px] tabular-nums text-slate-400">({rec.durationText})</span>
                           </div>
                           <p className="text-[11px] text-slate-400 mt-0.5">{rec.transcriptSummary || 'Automated dual-feed conference recording'}</p>
                         </div>
@@ -2305,7 +2322,7 @@ export const RODashboard = ({ roId }) => {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-slate-900 text-sm">{selectedIssue.studentName}</span>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold border border-blue-200">
+                          <span className="text-[10px] tabular-nums px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold border border-blue-200">
                             {selectedIssue.studentId}
                           </span>
                         </div>
@@ -2420,7 +2437,7 @@ export const RODashboard = ({ roId }) => {
                     required
                     value={meetLocation}
                     onChange={(e) => setMeetLocation(e.target.value)}
-                    placeholder="e.g. Cabin 302, Academic Block IV, NITTE Campus"
+                    placeholder="e.g. Cabin 302, Academic Block IV, Campus"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs sm:text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
                   />
                 </div>
@@ -2442,7 +2459,7 @@ export const RODashboard = ({ roId }) => {
 
               {/* Modal Footer Actions */}
               <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1">
+                <span className="text-[11px] text-slate-500 tabular-nums flex items-center gap-1">
                   <span className="material-symbols-outlined text-sm text-emerald-600">mark_email_read</span>
                   Dispatches calendar ICS + SMS alert
                 </span>
@@ -2647,14 +2664,14 @@ export const RODashboard = ({ roId }) => {
             <div className="px-4 py-3 bg-[#0d1322]/90 border-b border-slate-800/80 flex items-center justify-between gap-3 flex-shrink-0 z-20">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-xs text-xs tracking-wider flex-shrink-0">
-                  NITTE
+                  SM
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs sm:text-sm font-bold text-white truncate tracking-tight">
-                      NITTE Encrypted WebRTC Session{' '}
-                      <span className="text-slate-400 font-normal font-mono">
-                        • Room #{activeMeeting.room || activeMeeting.id || 'NITTE-ROOM-402'}
+                      Smart Mentorship Secure Video Session{' '}
+                      <span className="text-slate-400 font-normal tabular-nums">
+                        • Room #{activeMeeting.room || activeMeeting.id || 'SMGP-ROOM-402'}
                       </span>
                     </h3>
                     <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-semibold">
@@ -2662,7 +2679,7 @@ export const RODashboard = ({ roId }) => {
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 truncate flex items-center gap-2 mt-0.5">
-                    <span>Case #{selectedIssue.id}</span>
+                    <span>Case {formatTicketNumber(selectedIssue)}</span>
                     <span className="text-slate-600">•</span>
                     <span className="text-slate-300">Student: {selectedIssue.studentName}</span>
                     <span className="text-slate-600">•</span>
@@ -2680,13 +2697,13 @@ export const RODashboard = ({ roId }) => {
                 >
                   <span className="material-symbols-outlined text-sm text-blue-400">edit_note</span>
                   <span className="hidden sm:inline">In-Meeting Minutes</span>
-                  <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-mono text-blue-200">
+                  <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] tabular-nums text-blue-200">
                     {showInMeetingSidebar ? 'Active' : 'Hidden'}
                   </span>
                 </button>
 
                 <div
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono font-semibold ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs tabular-nums font-semibold ${
                     isRecActive
                       ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
                       : 'bg-slate-800 border-slate-700 text-slate-400'
@@ -2696,8 +2713,12 @@ export const RODashboard = ({ roId }) => {
                   <span className={`w-2 h-2 rounded-full ${isRecActive ? 'bg-rose-500 animate-pulse' : 'bg-slate-500'}`}></span>
                   <span>REC {formatTimer(recordingSeconds)}</span>
                 </div>
+                <MeetingCountdown
+                  meeting={uniqueMeetings.find(meeting => getMeetingIssueId(meeting) === String(activeMeetingIssueId || '').toUpperCase())}
+                  onExpire={() => handleStopAndSaveRecording({ automatic: true })}
+                />
 
-                <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-300 text-[11px] font-mono">
+                <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-300 text-[11px] tabular-nums">
                   <span className="flex items-center gap-1 text-emerald-400 font-semibold">
                     <span className="material-symbols-outlined text-[13px]">lock</span> E2E Encrypted
                   </span>
@@ -2735,6 +2756,10 @@ export const RODashboard = ({ roId }) => {
             {/* Video Viewport & In-Meeting Drawer */}
             <div className="flex-1 flex overflow-hidden relative">
               <div className="flex-1 p-3 sm:p-4 flex flex-col gap-3 overflow-y-auto">
+                {callConnectionNotice && <div role="alert" className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
+                  <span>{callConnectionNotice}</span>
+                  <button type="button" className="shrink-0 underline font-semibold" onClick={requestMediaPermissions}>Retry connection</button>
+                </div>}
                 {/* Media Permissions Warning Banner */}
                 {mediaPermissionState === 'denied' && (
                   <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between gap-3">
@@ -2757,7 +2782,7 @@ export const RODashboard = ({ roId }) => {
                   {(() => {
                     const currentMeetingIssue = (db.issues || []).find(i => (i.id || i.issue_id)?.toUpperCase() === (activeMeetingIssueId || selectedIssueId)?.toUpperCase()) || selectedIssue || {};
                     const sName = currentMeetingIssue.studentName || selectedIssue?.studentName || 'Student';
-                    const sId = currentMeetingIssue.studentId || selectedIssue?.studentId || 'NITTE-STU';
+                    const sId = currentMeetingIssue.studentId || selectedIssue?.studentId || 'STUDENT';
                     const sCategory = currentMeetingIssue.category || selectedIssue?.category || 'General';
                     const sTicket = currentMeetingIssue.id || selectedIssue?.id || 'TICK-1002';
                     const sInitials = sName ? sName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST';
@@ -2803,12 +2828,12 @@ export const RODashboard = ({ roId }) => {
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-slate-100 font-semibold">
                               <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Student Complainant Feed
                             </span>
-                            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-400/20 font-mono text-[11px]">
+                            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-400/20 tabular-nums text-[11px]">
                               {sCategory} • Cisco-AP-09
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-xs font-mono text-emerald-400 flex items-center gap-1">
+                            <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-xs tabular-nums text-emerald-400 flex items-center gap-1">
                               <span className="material-symbols-outlined text-sm">wifi</span> {remoteStream ? '1080p HD • 60 FPS' : 'Connected (STUN/TURN)'}
                             </span>
                           </div>
@@ -2823,12 +2848,12 @@ export const RODashboard = ({ roId }) => {
                             <div className="min-w-0 truncate">
                               <div className="flex items-center gap-1.5">
                                 <p className="text-xs sm:text-sm font-bold text-white leading-none truncate">{sName}</p>
-                                <span className="text-[10px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-400/20 flex-shrink-0">
+                                <span className="text-[10px] tabular-nums text-blue-300 bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-400/20 flex-shrink-0">
                                   {sId}
                                 </span>
                               </div>
                               <p className="text-[11px] text-slate-300 mt-1 truncate">
-                                {sCategory} • Case #{sTicket}
+                                {sCategory} • Case {getTicketNumberForId(sTicket)}
                               </p>
                             </div>
                           </div>
@@ -2837,7 +2862,7 @@ export const RODashboard = ({ roId }) => {
                             <span className="w-1.5 h-4 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></span>
                             <span className="w-1 h-2.5 bg-emerald-400 rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></span>
                             <span className="material-symbols-outlined text-emerald-400 text-sm ml-0.5">mic</span>
-                            <span className="text-[10px] text-emerald-400 font-mono">-14dB</span>
+                            <span className="text-[10px] text-emerald-400 tabular-nums">-14dB</span>
                           </div>
                         </div>
                       </div>
@@ -2854,7 +2879,7 @@ export const RODashboard = ({ roId }) => {
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                         <span className="font-bold text-slate-100 truncate">RO Host Feed</span>
                       </div>
-                      <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono border border-blue-400/20">Cabin 302</span>
+                      <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[10px] tabular-nums border border-blue-400/20">Cabin 302</span>
                     </div>
 
                     {/* PiP Visual Content */}
@@ -2957,7 +2982,7 @@ export const RODashboard = ({ roId }) => {
                         {inMeetingDirectives.map((directive, idx) => (
                           <div key={idx} className="p-2 rounded bg-slate-900/90 border border-slate-800 text-slate-300 flex items-center justify-between text-xs">
                             <span className="truncate">{directive}</span>
-                            <span className="text-[10px] font-mono text-emerald-400 flex-shrink-0 ml-1">Added</span>
+                            <span className="text-[10px] tabular-nums text-emerald-400 flex-shrink-0 ml-1">Added</span>
                           </div>
                         ))}
                       </div>
@@ -3015,10 +3040,10 @@ export const RODashboard = ({ roId }) => {
                     <div className="space-y-1.5 pt-1">
                       <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Session Chat &amp; System Events</label>
                       <div className="h-28 bg-[#070b14] rounded-lg p-2 border border-slate-800 overflow-y-auto space-y-1 text-[11px]">
-                        <p className="text-slate-400"><span className="text-emerald-400 font-mono">[15:30]</span> WebRTC Peer Connection Established (STUN/TURN)</p>
+                        <p className="text-slate-400"><span className="text-emerald-400 tabular-nums">[15:30]</span> WebRTC Peer Connection Established (STUN/TURN)</p>
                         <p className="text-slate-300"><strong className="text-blue-400">{ro.name}:</strong> "We've reviewed your speedtest telemetry log."</p>
                         <p className="text-slate-300"><strong className="text-teal-400">{selectedIssue.studentName}:</strong> "Thank you sir, Friday morning is my VTU exam."</p>
-                        <p className="text-slate-400"><span className="text-emerald-400 font-mono">[15:33]</span> Live composite recording active</p>
+                        <p className="text-slate-400"><span className="text-emerald-400 tabular-nums">[15:33]</span> Live composite recording active</p>
                       </div>
                     </div>
                   </div>

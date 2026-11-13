@@ -1,23 +1,11 @@
 import { getGrievanceQuota } from '../shared/grievanceQuota.js';
 
-export function createIssueQuotaReader({ query, isDbConnected, fetchCloudIssues, getMemoryIssues, now = Date.now }) {
+export function createIssueQuotaReader({ query, now = Date.now }) {
   return async studentId => {
-    const records = [...getMemoryIssues()];
-    let persistentSourceAvailable = false;
-    const sources = await Promise.allSettled([
-      fetchCloudIssues(studentId),
-      isDbConnected()
-        ? query('SELECT id, student_id, created_at, status FROM issues WHERE LOWER(student_id) = LOWER($1)', [studentId]).then(result => result.rows)
-        : Promise.reject(new Error('Database unavailable'))
-    ]);
-    for (const result of sources) {
-      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-        persistentSourceAvailable = true;
-        records.push(...result.value);
-      }
-    }
-    if (!persistentSourceAvailable) throw new Error('Cannot verify the 7-day grievance quota. Please try again when the database is available.');
-    return getGrievanceQuota({ issues: records, studentId, now: now() });
+    try {
+      const records = (await query("SELECT id, student_id, created_at AT TIME ZONE 'UTC' AS created_at, status FROM issues WHERE UPPER(student_id) = UPPER($1)", [studentId])).rows;
+      return getGrievanceQuota({ issues: records, studentId, now: now() });
+    } catch { throw new Error('Cannot verify the 7-day grievance quota. Please try again when the database is available.'); }
   };
 }
 

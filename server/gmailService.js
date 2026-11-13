@@ -1,115 +1,44 @@
 import nodemailer from 'nodemailer';
 import { query } from './db.js';
+import { loadQueueCipher } from './security/queueCipher.js';
 import dotenv from 'dotenv';
+import { createEmailDelivery } from './emailDelivery.js';
+import { normalizeEmail } from './emailAddress.js';
+import { createInboundEmailProcessor } from './emailInbound.js';
 dotenv.config();
 
-export const GMAIL_ADDRESS = (process.env.GMAIL_USER || '').trim();
-export const GMAIL_APP_PASS = (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
-
-// In-memory fallback cache if DB is resetting/unavailable
+export const GMAIL_ADDRESS = normalizeEmail(process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER || '');
+export const GMAIL_APP_PASS = process.env.SMTP_PASSWORD || (process.env.GMAIL_APP_PASS || '').replace(/[\s"']/g, '').trim();
+const allowLegacy = process.env.NODE_ENV !== 'production';
 let fallbackEmailLogs = [];
-
-// Initialize Nodemailer transporter for Gmail
+let transporter;
 const createTransporter = () => {
-  const user = GMAIL_ADDRESS;
-  const pass = GMAIL_APP_PASS;
-
-  if (user && pass) {
-    return nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: { user, pass },
-      tls: {
-        rejectUnauthorized: false
-      }
-    });
-  }
-  return null;
+  const user = process.env.SMTP_USER || process.env.GMAIL_USER;
+  if (!user || !GMAIL_APP_PASS) return null;
+  const port = Number(process.env.SMTP_PORT || 465);
+  transporter ||= nodemailer.createTransport({ host: process.env.SMTP_HOST || 'smtp.gmail.com', port,
+    secure: port === 465, requireTLS: port !== 465, auth: { user, pass: GMAIL_APP_PASS },
+    tls: { rejectUnauthorized: true }, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000,
+    disableFileAccess: true, disableUrlAccess: true });
+  return transporter;
 };
-
-/**
- * Send an email notification via skandhayashu2906@gmail.com
- * and persist transaction into database logs.
- */
-export const sendGmailNotification = async ({
-  to,
-  subject,
-  html,
-  text = '',
-  issueId = null,
-  eventType = 'NOTIFICATION',
-  recipientName = '',
-  replyTo = null,
-  fromName = 'NITTE Mentorship System'
-}) => {
-  const sender = GMAIL_ADDRESS;
-  const bodyText = text || html.replace(/<[^>]+>/g, ' ');
-  let dispatchStatus = 'SENT';
-
-  const transporter = createTransporter();
-
-  if (transporter && process.env.DISABLE_EMAIL !== '1') {
-    try {
-      const mailOptions = {
-        from: `"${fromName}" <${sender}>`,
-        to,
-        subject,
-        text: bodyText,
-        html,
-        headers: {
-          'X-Priority': '1',
-          'Priority': 'urgent',
-          'Importance': 'high'
-        }
-      };
-
-      if (replyTo) {
-        mailOptions.replyTo = replyTo;
-      }
-
-      await transporter.sendMail(mailOptions);
-      dispatchStatus = 'DELIVERED_GMAIL';
-      console.log(`[Gmail SMTP] REAL Email dispatched from ${sender} TO ${to} (Subject: "${subject}")`);
-    } catch (err) {
-      console.warn(`[Gmail SMTP] Delivery notice (${err.message}). Stored in email logs.`);
-      dispatchStatus = 'DISPATCHED_LOCAL';
-    }
-  } else {
-    dispatchStatus = 'DISPATCHED_LOCAL';
-    console.log(`[Gmail System] Email logged and dispatched via ${sender} to ${to}`);
-  }
-
-  const emailRecord = {
-    direction: 'OUTBOUND',
-    sender,
-    recipient: to,
-    subject,
-    body: bodyText,
-    event_type: eventType,
-    issue_id: issueId,
-    status: dispatchStatus,
-    created_at: new Date().toISOString()
+export const mailConfigurationProblem = () => {
+    if (process.env.NODE_ENV !== 'production') return null;
+    try { if (new URL(process.env.APP_URL).protocol === 'https:') return null; } catch { /* Configuration message below. */ }
+    return 'A public HTTPS portal URL must be configured before sending production email.';
   };
-
-  try {
-    const res = await query(
-      `INSERT INTO email_logs (direction, sender, recipient, recipient_email, recipient_name, subject, body, event_type, issue_id, status)
-       VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at AS "createdAt"`,
-      ['OUTBOUND', sender, to, recipientName || to, subject, bodyText, eventType, issueId, dispatchStatus]
-    );
-    if (res.rows.length > 0) {
-      emailRecord.id = res.rows[0].id;
-      emailRecord.created_at = res.rows[0].createdAt;
-    }
-  } catch (dbErr) {
-    console.error('[Gmail System] Failed to write to email_logs table, storing in fallback:', dbErr.message);
-    emailRecord.id = Date.now();
-    fallbackEmailLogs.unshift(emailRecord);
-  }
-
-  return emailRecord;
-};
+export const mailWorkerOptions = { sender: GMAIL_ADDRESS, getTransporter: createTransporter,
+  enabled: () => process.env.DISABLE_EMAIL !== '1', allowLegacy, configurationProblem: mailConfigurationProblem,
+  quotaAccount: (process.env.SMTP_USER || process.env.GMAIL_USER || GMAIL_ADDRESS).trim().toLowerCase() };
+export function createQueuedMailSender(queryOverride = query) {
+  return async message => {
+    const queueCipher = await loadQueueCipher();
+    return createEmailDelivery({ query: queryOverride, ...mailWorkerOptions, queueCipher,
+      rememberFailure: record => { fallbackEmailLogs.unshift(record); fallbackEmailLogs = fallbackEmailLogs.slice(0, 500); }
+    })(message);
+  };
+}
+export const sendGmailNotification = createQueuedMailSender();
 
 /**
  * Get all Gmail logs (Outbound & Inbound)
@@ -120,9 +49,9 @@ export const getEmailLogs = async ({ issueId } = {}) => {
     : fallbackEmailLogs;
   try {
     const res = await query(
-      `SELECT id, direction, sender, recipient, subject, body, 
-              event_type AS "eventType", issue_id AS "issueId", 
-              status, created_at AS "createdAt" 
+      `SELECT id, direction, sender, recipient, subject, body,
+              event_type AS "eventType", issue_id AS "issueId",
+              status, delivery_reason AS "deliveryReason", mentor_id AS "mentorId", created_at AS "createdAt"
        FROM email_logs ${issueId ? 'WHERE UPPER(issue_id) = UPPER($1)' : ''}
        ORDER BY created_at DESC ${issueId ? '' : 'LIMIT 100'}`,
       issueId ? [issueId] : []
@@ -134,55 +63,4 @@ export const getEmailLogs = async ({ issueId } = {}) => {
   }
 };
 
-/**
- * Process inbound reply to skandhayashu2906@gmail.com
- * Updates issue in PostgreSQL database directly.
- */
-export const processInboundGmailReply = async ({
-  senderEmail,
-  senderName = 'External User',
-  issueId,
-  replyText
-}) => {
-  const timestamp = new Date().toISOString();
-  const recipient = GMAIL_ADDRESS;
-  const subject = `Re: [${issueId}] Update from Gmail Response`;
-  const bodyText = `Response received from ${senderName} (${senderEmail}): "${replyText}"`;
-
-  try {
-    // 1. Save inbound email log
-    await query(
-      `INSERT INTO email_logs (direction, sender, recipient, recipient_email, recipient_name, subject, body, event_type, issue_id, status)
-       VALUES ('INBOUND', $1, $2, $2, $3, $4, $5, 'GMAIL_REPLY', $6, 'RECEIVED')`,
-      [senderEmail, recipient, 'NITTE System Desk', subject, bodyText, issueId]
-    );
-
-    // 2. Fetch existing logs for the issue
-    const issueRes = await query(`SELECT logs, status FROM issues WHERE id = $1`, [issueId]);
-
-    if (issueRes.rowCount > 0) {
-      let logs = issueRes.rows[0].logs || [];
-      if (typeof logs === 'string') logs = JSON.parse(logs);
-
-      logs.push({
-        text: `Gmail Response received via ${GMAIL_ADDRESS} from ${senderName} (${senderEmail}): "${replyText}"`,
-        time: timestamp
-      });
-
-      // Update issue with new log
-      await query(
-        `UPDATE issues SET logs = $1 WHERE id = $2`,
-        [JSON.stringify(logs), issueId]
-      );
-    }
-
-    return {
-      success: true,
-      message: `Gmail reply successfully processed for ${issueId}`,
-      issueId
-    };
-  } catch (err) {
-    console.error('[Gmail System] Error processing inbound reply:', err);
-    throw err;
-  }
-};
+export const processInboundGmailReply = createInboundEmailProcessor({ query, sender: GMAIL_ADDRESS, allowLegacy });

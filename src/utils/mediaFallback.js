@@ -101,7 +101,7 @@ export function createFallbackMediaStream({ label = 'Participant', role = 'Stude
     ctx.font = '14px sans-serif';
     ctx.fillStyle = '#38bdf8';
     ctx.textAlign = 'right';
-    ctx.fillText('NITTE WebRTC Secure Bridge', canvas.width - 40, 52);
+    ctx.fillText('Smart Mentorship Secure Video', canvas.width - 40, 52);
 
     // Actively dispatch frame to captureStream
     if (canvasStream && typeof canvasStream.requestFrame === 'function') {

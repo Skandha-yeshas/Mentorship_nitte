@@ -79,7 +79,7 @@ export default function SelfHelpManagerModal({
                 {targetIssueId && (
                   <>
                     <span>•</span>
-                    <span className="font-mono font-semibold text-slate-700">#{targetIssueId}</span>
+                    <span className="tabular-nums font-semibold text-slate-700">#{targetIssueId}</span>
                   </>
                 )}
               </p>
@@ -189,7 +189,7 @@ export default function SelfHelpManagerModal({
                     </span>
                     <input
                       type="url"
-                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-xs sm:text-sm font-mono font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
+                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 text-xs sm:text-sm tabular-nums font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-700 transition"
                       value={videoUrl}
                       onChange={(e) => setVideoUrl(e.target.value)}
                       placeholder="Paste standard YouTube watch URL or share link..."
@@ -249,7 +249,7 @@ export default function SelfHelpManagerModal({
                       <span className="font-bold text-slate-200 truncate">
                         {noVideo ? 'No Video Available' : (videoTitle || `${category || 'Self-Help'} Guidance SOP`)}
                       </span>
-                      {!noVideo && <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">HD 1080p</span>}
+                      {!noVideo && <span className="text-[10px] tabular-nums text-slate-400 bg-slate-800 px-2 py-0.5 rounded">HD 1080p</span>}
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1 leading-snug">
                       Broadcast channel: Student Portal &gt; Self-Help Hub &gt; {category || 'Support'}

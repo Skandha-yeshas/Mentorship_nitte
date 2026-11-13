@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Smart Mentorship & Student Support System for Nitte Meenakshi Institute of Technology. Streamlining student support across academic, hostel, and administrative categories." />
-    <title>Nitte Smart Mentorship & Student Support System</title>
-    <!-- Fonts & Icons for Stitch UI -->
+    <meta name="description" content="Smart Mentorship & Grievance Portal for student support, mentoring, and grievance resolution." />
+    <title>Smart Mentorship &amp; Grievance Portal</title>
+    <!-- Serve the shared dashboard font with the app. -->
+    <link rel="preload" href="/fonts/plus-jakarta-sans-variable.ttf" as="font" type="font/ttf" crossorigin>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <script>
@@ -37,8 +37,8 @@
               }
             },
             fontFamily: {
-              sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
-              mono: ['"JetBrains Mono"', 'monospace'],
+              sans: ['var(--font-sans)'],
+              mono: ['ui-monospace', 'SFMono-Regular', 'Consolas', 'monospace'],
             },
             boxShadow: {
               'card': '0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03)',

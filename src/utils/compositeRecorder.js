@@ -237,10 +237,10 @@ export class CompositeMeetingRecorder {
     ctx.lineTo(W, headerH);
     ctx.stroke();
 
-    // NITTE Title
+    // Portal title
     ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#38bdf8';
-    ctx.fillText('🎓 NITTE MENTORSHIP & GRIEVANCE', 20, Math.round(headerH * 0.65));
+    ctx.fillText('🎓 SMART MENTORSHIP & GRIEVANCE PORTAL', 20, Math.round(headerH * 0.65));
 
     // Ticket Badge (Center)
     const badgeText = `[#${this.ticketId}] DUAL ARCHIVE`;
@@ -327,7 +327,7 @@ export class CompositeMeetingRecorder {
     ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.fillText('🔒 Tamper-Proof Automated Cloud Meeting Archive • End-to-End Encrypted DTLS-SRTP Dual Recording', 16, H - 10);
-    ctx.fillText('NITTE DU', W - 60, H - 10);
+    ctx.fillText('SMGP', W - 60, H - 10);
   }
 
   /**

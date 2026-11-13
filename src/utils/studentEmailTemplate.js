@@ -1,7 +1,7 @@
 /**
  * Generates modern, responsive institutional onboarding HTML and plain-text emails
  * for students uploaded via the Admin Roster Bulk Import.
- * Includes a One-Click Direct Sign-In action button containing the Student ID & Password.
+ * Includes a One-Click Direct Sign-In action button containing the Student ID.
  */
 
 export const generateStudentOnboardingEmailHtml = ({
@@ -13,14 +13,14 @@ export const generateStudentOnboardingEmailHtml = ({
   generatedPassword = '',
   portalBaseUrl = 'http://localhost:5173'
 }) => {
-  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NITTE Student Account Credentials</title>
+  <title>Smart Mentorship &amp; Grievance Portal — Student Account Credentials</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f1f5f9; padding: 32px 12px;">
@@ -33,10 +33,10 @@ export const generateStudentOnboardingEmailHtml = ({
           <tr>
             <td style="background: linear-gradient(135deg, #091e42 0%, #1e3a8a 52%, #2563eb 100%); padding: 36px 32px 28px; text-align: center; color: #ffffff;">
               <div style="display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 30px; padding: 5px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #bfdbfe; margin-bottom: 14px;">
-                🏛️ NITTE (DEEMED TO BE UNIVERSITY)
+                SMART MENTORSHIP &amp; GRIEVANCE PORTAL
               </div>
               <h1 style="margin: 0; font-size: 23px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; line-height: 1.3;">
-                Student Mentorship Portal
+                Smart Mentorship &amp; Grievance Portal
               </h1>
               <p style="margin: 8px 0 0 0; font-size: 13px; color: #93c5fd; font-weight: 400;">
                 Official Account Activation & One-Click Login Access
@@ -51,7 +51,7 @@ export const generateStudentOnboardingEmailHtml = ({
                 Dear <strong style="color: #1e3a8a;">${name}</strong>,
               </p>
               <p style="margin: 0 0 18px; font-size: 14px; color: #475569; line-height: 1.6;">
-                Welcome! Your official student account has been created and verified by the College Administration. You are now officially enrolled in the <strong>NITTE Student Mentorship & Grievance Escalation System</strong>.
+                Welcome! Your student account has been created for the <strong>Smart Mentorship &amp; Grievance Portal</strong>.
               </p>
 
               <!-- Academic Profile Snapshot Tag -->
@@ -118,7 +118,7 @@ export const generateStudentOnboardingEmailHtml = ({
                       </tr>
                     </table>
                     <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b; text-align: center;">
-                      ⚡ Pre-fills your USN & password on the login page. Simply click "Sign In" to enter.
+                      ⚡ Pre-fills your USN on the login page. Simply click "Sign In" to enter.
                     </p>
                   </td>
                 </tr>
@@ -157,7 +157,7 @@ export const generateStudentOnboardingEmailHtml = ({
           <tr>
             <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
               <p style="margin: 0 0 4px; font-weight: 600; color: #334155;">
-                NITTE Mentorship & Academic Support Administration
+                Smart Mentorship &amp; Grievance Portal Support
               </p>
               <p style="margin: 0; font-size: 11px; color: #94a3b8;">
                 This is an automated credential notification. Please keep your credentials confidential.
@@ -182,10 +182,10 @@ export const generateStudentOnboardingEmailText = ({
   generatedPassword = '',
   portalBaseUrl = 'http://localhost:5173'
 }) => {
-  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}&pwd=${encodeURIComponent(generatedPassword)}`;
+  const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}`;
 
-  return `NITTE (Deemed to be University) - Student Mentorship Portal
-Official Account Activation & Credentials
+  return `Smart Mentorship & Grievance Portal - Student Account Credentials
+Account Activation
 
 Dear ${name},
 
@@ -205,7 +205,7 @@ Your Login Credentials:
 ${directLoginUrl}
 
 Portal: ${portalBaseUrl}
-NITTE Mentorship & Academic Support Desk`;
+Smart Mentorship & Grievance Portal Support`;
 };
 
 /**
@@ -223,7 +223,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
   description = '',
   roName = 'Relationship Officer',
   roId = 'RO',
-  roEmail = 'skandhayashu2906@gmail.com',
+  roEmail = '',
   roJurisdiction = '',
   date = '',
   time = '',
@@ -257,7 +257,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
           <tr>
             <td style="background: linear-gradient(135deg, #091e42 0%, #1e3a8a 52%, #2563eb 100%); padding: 36px 32px 28px; text-align: center; color: #ffffff;">
               <div style="display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 30px; padding: 5px 16px; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #bfdbfe; margin-bottom: 14px;">
-                🏛️ NITTE (DEEMED TO BE UNIVERSITY)
+                SMART MENTORSHIP &amp; GRIEVANCE PORTAL
               </div>
               <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.3px; color: #ffffff; line-height: 1.3;">
                 ${isReschedule ? '🔄 Grievance Meeting Rescheduled' : '📅 Grievance Meeting Scheduled'}
@@ -414,7 +414,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
           <tr>
             <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 12px; color: #64748b; line-height: 1.5;">
               <p style="margin: 0 0 4px; font-weight: 600; color: #334155;">
-                NITTE Student Mentorship & Grievance Redressal Cell
+                Smart Mentorship &amp; Grievance Portal Support
               </p>
               <p style="margin: 0; font-size: 11px; color: #94a3b8;">
                 This institutional alert was dispatched on behalf of Relationship Officer ${roName} (${roEmail}).
@@ -450,7 +450,7 @@ export const generateRoMeetingScheduledEmailText = ({
 }) => {
   const directLoginUrl = `${portalBaseUrl.replace(/\/$/, '')}/?role=Student&id=${encodeURIComponent(studentId)}`;
 
-  return `NITTE (Deemed to be University) - Student Mentorship Portal
+  return `Smart Mentorship & Grievance Portal
 ${isReschedule ? 'MEETING RESCHEDULED NOTICE' : 'OFFICIAL MEETING SCHEDULED NOTICE'}
 
 Dear ${studentName},
@@ -470,5 +470,5 @@ ${feedback ? `- Switch Feedback: ${feedback}\n` : ''}${agenda ? `- Agenda / Minu
 👉 Access Student Portal & View Meeting:
 ${directLoginUrl}
 
-NITTE Student Mentorship & Grievance Redressal Cell`;
+Smart Mentorship & Grievance Portal Support`;
 };

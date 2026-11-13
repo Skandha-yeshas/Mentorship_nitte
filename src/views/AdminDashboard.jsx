@@ -1,8 +1,15 @@
 import React, { useContext, useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { readRosterFile } from '../utils/rosterFile.js';
+import { exportRosterPasswords } from '../utils/rosterCredentialExport.js';
+import { RosterImportProgress } from '../components/RosterImportProgress';
 import { DatabaseContext } from '../context/DatabaseContext';
 import AdminGrievanceAnalytics from '../components/AdminGrievanceAnalytics';
 import { AccountSecurity } from '../components/AccountSecurity';
+import IssueActivityLog from '../components/IssueActivityLog.jsx';
+import { buildIssueSlipHtml, printIssueSlip } from '../utils/issueSlip.js';
+import { isStoredRecording } from '../../shared/meetingRecordings.js';
+import { formatTicketNumber } from '../../shared/ticketNumber.js';
 import {
   Users, Ticket, CheckCircle2, AlertTriangle, Star, ShieldAlert,
   Download, RefreshCw, FileText, Search, Bell, HelpCircle, ArrowUpRight,
@@ -11,7 +18,7 @@ import {
   Upload, FileSpreadsheet, Mail, Key, Check, AlertCircle, X, UserPlus, Grid,
   Printer, FileDown, MessageSquare, Plus, Trash2, Edit3, SlidersHorizontal,
   ChevronLeft, ChevronRight, Sparkles, BookOpen, School, FolderPlus, Calendar,
-  ArrowLeftRight, PhoneCall, CheckCheck, Landmark, LogOut
+  ArrowLeftRight, PhoneCall, CheckCheck, Landmark, LogOut, Video, Play
 } from 'lucide-react';
 
 export const AdminDashboard = ({ onLogout }) => {
@@ -21,6 +28,8 @@ export const AdminDashboard = ({ onLogout }) => {
     adminResolveIssue,
     scheduleAdminMeeting,
     reassignIssue,
+    rosterImports,
+    refreshRosterImports,
     bulkUploadStudents,
     bulkUploadMentors,
     bulkUploadRos,
@@ -31,6 +40,7 @@ export const AdminDashboard = ({ onLogout }) => {
     resetBranchesToDefault,
     assignStudentsToMentor,
     isMatchingMentorId,
+    loadMeetingRecording,
     removeStudent,
     removeAllStudents,
     removeMentor,
@@ -100,6 +110,11 @@ export const AdminDashboard = ({ onLogout }) => {
 
   // Direct Dean Executive Intervention State
   const [interventionModalIssue, setInterventionModalIssue] = useState(null);
+  const [isPrintingIssue, setIsPrintingIssue] = useState(false);
+  const [issuePrintError, setIssuePrintError] = useState('');
+  const [adminRecordingToPlay, setAdminRecordingToPlay] = useState(null);
+  const [adminRecordingError, setAdminRecordingError] = useState('');
+  const [adminPlaybackRevision, setAdminPlaybackRevision] = useState(0);
   const [interventionType, setInterventionType] = useState('resolve'); // 'resolve' | 'reassign' | 'offline_meeting'
   const [interventionDirectiveText, setInterventionDirectiveText] = useState('');
   const [interventionRoTarget, setInterventionRoTarget] = useState('RO-01');
@@ -225,6 +240,13 @@ export const AdminDashboard = ({ onLogout }) => {
     ? (ratedIssues.reduce((sum, i) => sum + i.feedback.rating, 0) / ratedIssues.length).toFixed(1)
     : '4.8';
   const reEscalatedCount = (db.issues || []).filter(isReEscalatedIssue).length;
+  const interventionRecordings = useMemo(() => {
+    const issueId = String(interventionModalIssue?.id || interventionModalIssue?.issue_id || '').trim().toUpperCase();
+    if (!issueId) return [];
+    return (db.recordings || [])
+      .filter(recording => String(recording.issueId || recording.issue_id || '').trim().toUpperCase() === issueId)
+      .sort((a, b) => new Date(b.recordedAt || b.recorded_at || 0) - new Date(a.recordedAt || a.recorded_at || 0));
+  }, [db.recordings, interventionModalIssue]);
 
   // Memoized Filtered Students
   const filteredStudents = useMemo(() => {
@@ -322,6 +344,7 @@ export const AdminDashboard = ({ onLogout }) => {
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim();
       list = list.filter(i =>
+        formatTicketNumber(i).toLowerCase().includes(q) ||
         (i.id || '').toLowerCase().includes(q) ||
         (i.studentName || '').toLowerCase().includes(q) ||
         (i.studentId || '').toLowerCase().includes(q) ||
@@ -387,6 +410,9 @@ export const AdminDashboard = ({ onLogout }) => {
   const handleOpenInterventionModal = (issue) => {
     if (!issue) return;
     setInterventionModalIssue(issue);
+    setIssuePrintError('');
+    setAdminRecordingToPlay(null);
+    setAdminRecordingError('');
     setSelectedIssueId(issue.id || issue.issue_id);
     setInterventionType('resolve');
     setInterventionDirectiveText('');
@@ -399,17 +425,52 @@ export const AdminDashboard = ({ onLogout }) => {
     setAdminMeetingLocation('Principal / Senior Admin Chamber (Main Admin Block)');
   };
 
+  const handlePrintAdminIssue = async () => {
+    if (!interventionModalIssue || isPrintingIssue) return;
+    const issue = interventionModalIssue;
+    const issueId = issue.id || issue.issue_id;
+    setIsPrintingIssue(true);
+    setIssuePrintError('');
+    try {
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}/activity`, { cache: 'no-store' });
+      const history = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(history.error || 'Could not load the complete action log for this issue.');
+      const studentId = issue.studentId || issue.student_id;
+      const officerId = issue.roId || issue.ro_id;
+      const student = (db.users?.students || []).find(row => String(row.id).trim().toUpperCase() === String(studentId || '').trim().toUpperCase()) || {};
+      const officer = (db.users?.ros || []).find(row => String(row.id).trim().toUpperCase() === String(officerId || '').trim().toUpperCase()) || {};
+      const html = buildIssueSlipHtml({ issue, student, officer, history });
+      await printIssueSlip(html);
+    } catch (error) {
+      setIssuePrintError(error.message || 'Could not prepare this grievance for printing.');
+    } finally {
+      setIsPrintingIssue(false);
+    }
+  };
+
+  const handlePlayAdminRecording = async recording => {
+    setAdminRecordingToPlay(recording);
+    setAdminRecordingError('');
+    try {
+      const saved = await loadMeetingRecording(recording.id);
+      setAdminRecordingToPlay(current => current?.id === recording.id ? saved : current);
+      setAdminPlaybackRevision(revision => revision + 1);
+    } catch (error) {
+      setAdminRecordingError(error.message || 'Could not open this meeting recording.');
+    }
+  };
+
   const handleExecuteIntervention = async () => {
     if (!interventionModalIssue) return;
     const issueId = interventionModalIssue.id || interventionModalIssue.issue_id;
     if (interventionType === 'resolve') {
       const notes = interventionDirectiveText.trim() || 'Direct Executive Resolution authorized.';
       await adminResolveIssue(issueId, notes);
-      showToast(`Binding Executive Settlement logged for Ticket #${issueId}.`);
+      showToast(`Binding Executive Settlement logged for Ticket ${formatTicketNumber(interventionModalIssue)}.`);
     } else if (interventionType === 'reassign') {
       const targetRo = interventionRoTarget || 'RO-01';
       await reassignIssue(issueId, targetRo);
-      showToast(`Ticket #${issueId} reassigned to Senior Relationship Officer (${targetRo}).`);
+      showToast(`Ticket ${formatTicketNumber(interventionModalIssue)} reassigned to Senior Relationship Officer (${targetRo}).`);
     } else if (interventionType === 'offline_meeting') {
       const location = adminMeetingLocation || 'Principal / Senior Admin Chamber (Main Admin Block)';
       const notes = interventionDirectiveText.trim() || 'Mandatory In-Person Grievance Deliberation Hearing. Student and RO must attend in person.';
@@ -422,7 +483,7 @@ export const AdminDashboard = ({ onLogout }) => {
         location,
         notes
       );
-      showToast(`In-Person Offline Hearing scheduled for Ticket #${issueId} on ${adminMeetingDate} at ${adminMeetingTime}.`);
+      showToast(`In-Person Offline Hearing scheduled for Ticket ${formatTicketNumber(interventionModalIssue)} on ${adminMeetingDate} at ${adminMeetingTime}.`);
     }
     setInterventionModalIssue(null);
   };
@@ -551,41 +612,18 @@ export const AdminDashboard = ({ onLogout }) => {
   };
 
   // Excel / CSV File Handlers
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+  const handleFileSelect = async event => {
+    const file = event.target.files[0];
     if (!file) return;
-    setRosterFile(file);
-    setUploadError('');
-    setUploadResult(null);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const buffer = evt.target.result;
-        const wb = XLSX.read(buffer, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rawData = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        const data = (rawData || []).filter(row =>
-          row && typeof row === 'object' && Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== '')
-        );
-        setParsedRoster(data);
-      } catch (err) {
-        setUploadError('Failed to parse file: ' + err.message);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+    setRosterFile(file); setUploadError(''); setUploadResult(null); setParsedRoster([]);
+    try { setParsedRoster(await readRosterFile(file, 'students')); }
+    catch (error) { setUploadError(error.message); setRosterFile(null); }
   };
 
   const handleDownloadTemplate = () => {
-    const sampleData = [
-      { 'Student ID': '4NM23BCA001', 'Student Name': 'Yeshas M', 'Student Gmail': 'yeshas@nitte.edu.in', 'Branch': 'BCA', 'Semester': 3, 'Section': 'B' },
-      { 'Student ID': '4NM22CS089', 'Student Name': 'Ananya Rao', 'Student Gmail': 'ananya@nitte.edu.in', 'Branch': 'CSE', 'Semester': 5, 'Section': 'A' },
-      { 'Student ID': '4NM21EC045', 'Student Name': 'Rohan Kamath', 'Student Gmail': 'rohan@nitte.edu.in', 'Branch': 'ECE', 'Semester': 7, 'Section': 'C' }
-    ];
-    const ws = XLSX.utils.json_to_sheet(sampleData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Student Roster');
-    XLSX.writeFile(wb, 'nitte_student_directory_specimen.xlsx');
-    showToast('Downloading official NITTE Excel Specimen Template...');
+    const ws = XLSX.utils.json_to_sheet([{ 'Student ID': '', 'Student Name': '', 'Official Email': '', 'Branch': '', 'Semester': '', 'Mentor ID': '', 'Initial Password': '' }]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Student Roster');
+    XLSX.writeFile(wb, 'smart_mentorship_student_roster_template.xlsx');
   };
 
   const handleRosterSubmit = async () => {
@@ -600,7 +638,7 @@ export const AdminDashboard = ({ onLogout }) => {
       setUploadResult(res);
       setParsedRoster([]);
       setRosterFile(null);
-      showToast(`Batch file validated: ${res?.totalProcessed || parsedRoster.length} student records ingested.`);
+      showToast(res.queued ? `Queued ${res.total} students. Progress appears below.` : `Processed ${res.totalProcessed} students.`);
     } catch (err) {
       setUploadError(err.message || 'Failed to process student roster.');
     } finally {
@@ -608,75 +646,28 @@ export const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  const handleExportCredentialsCsv = () => {
-    const records = (uploadResult && Array.isArray(uploadResult.results) && uploadResult.results.length > 0)
-      ? uploadResult.results
-      : (db.users?.students || []);
-
-    if (!records || records.length === 0) {
-      showToast('No student records available to export.');
-      return;
-    }
-
-    let csvContent = 'Index,Student ID,Student Name,Gmail Address,Generated Password,Email Delivery Status\n';
-    records.forEach((row, i) => {
-      const id = String(row.id || '').replace(/"/g, '""');
-      const name = String(row.name || '').replace(/"/g, '""');
-      const email = String(row.email || '').replace(/"/g, '""');
-      const pwd = String(row.password || 'N/A').replace(/"/g, '""');
-      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
-      csvContent += `${i + 1},"${id}","${name}","${email}","${pwd}","${status}"\n`;
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `nitte_student_credentials_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${records.length} student credentials to CSV.`);
+  const handlePasswordExport = async (kind, jobId) => {
+    try {
+      const count = await exportRosterPasswords(kind, { jobId });
+      showToast(`Downloaded ${count} initial passwords from the ${kind} import. Keep this file private.`);
+    } catch (error) { showToast(error.message || 'The password download failed. Please retry.'); }
   };
+  const handleExportCredentialsCsv = () => handlePasswordExport('students', uploadResult?.jobId);
+
 
   // Faculty Mentor Roster Handlers
-  const handleMentorFileSelect = (e) => {
-    const file = e.target.files[0];
+  const handleMentorFileSelect = async event => {
+    const file = event.target.files[0];
     if (!file) return;
-    setMentorRosterFile(file);
-    setMentorUploadError('');
-    setMentorUploadResult(null);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const buffer = evt.target.result;
-        const wb = XLSX.read(buffer, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rawData = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        const data = (rawData || []).filter(row =>
-          row && typeof row === 'object' && Object.values(row).some(v => v !== null && v !== undefined && String(v).trim() !== '')
-        );
-        setParsedMentorRoster(data);
-      } catch (err) {
-        setMentorUploadError('Failed to parse file: ' + err.message);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+    setMentorRosterFile(file); setMentorUploadError(''); setMentorUploadResult(null); setParsedMentorRoster([]);
+    try { setParsedMentorRoster(await readRosterFile(file, 'mentors')); }
+    catch (error) { setMentorUploadError(error.message); setMentorRosterFile(null); }
   };
 
   const handleDownloadMentorTemplate = () => {
-    const sampleData = [
-      { 'Mentor ID': 'FAC-CSE-01', 'Faculty Name': 'Dr. Rekha Bhandary', 'Official Email': 'rekha.bhandary@nitte.edu.in', 'Department': 'CSE', 'Assigned Class / Batch': '3rd Yr CSE-A & BCA', 'Initial Password': 'Nit#Mnt2026' },
-      { 'Mentor ID': 'FAC-CSE-02', 'Faculty Name': 'Prof. Ramesh Naik', 'Official Email': 'ramesh.naik@nitte.edu.in', 'Department': 'CSE', 'Assigned Class / Batch': '5th Sem CSE-B', 'Initial Password': 'Nit#Mnt2026' },
-      { 'Mentor ID': 'FAC-BCA-01', 'Faculty Name': 'Prof. Shailaja Shetty', 'Official Email': 'shailaja.s@nitte.edu.in', 'Department': 'BCA', 'Assigned Class / Batch': '3rd Sem BCA-A', 'Initial Password': 'Nit#Mnt2026' },
-      { 'Mentor ID': 'FAC-AIML-01', 'Faculty Name': 'Dr. Pradeep Kumar', 'Official Email': 'pradeep.k@nitte.edu.in', 'Department': 'AIML', 'Assigned Class / Batch': '5th Sem AIML', 'Initial Password': 'Nit#Mnt2026' }
-    ];
-    const ws = XLSX.utils.json_to_sheet(sampleData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Faculty Mentors Roster');
-    XLSX.writeFile(wb, 'nitte_faculty_mentor_roster_specimen.xlsx');
-    showToast('Downloading official NITTE Faculty Mentor Specimen Template...');
+    const ws = XLSX.utils.json_to_sheet([{ 'Mentor ID': '', 'Faculty Name': '', 'Official Email': '', 'Department': '', 'Assigned Class / Batch': '', 'Initial Password': '' }]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Faculty Mentors Roster');
+    XLSX.writeFile(wb, 'smart_mentorship_faculty_mentors_roster_template.xlsx');
   };
 
   const handleMentorRosterSubmit = async () => {
@@ -691,7 +682,7 @@ export const AdminDashboard = ({ onLogout }) => {
       setMentorUploadResult(res);
       setParsedMentorRoster([]);
       setMentorRosterFile(null);
-      showToast(`Mentor Batch Ingested: ${res?.count || parsedMentorRoster.length} Faculty Mentors added/updated.`);
+      showToast(res.queued ? `Queued ${res.total} mentors. Progress appears below.` : `Processed ${res.count} mentors.`);
     } catch (err) {
       setMentorUploadError(err.message || 'Failed to process faculty mentor roster.');
     } finally {
@@ -699,60 +690,15 @@ export const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  const handleExportMentorCredentialsCsv = () => {
-    const records = (mentorUploadResult && Array.isArray(mentorUploadResult.results) && mentorUploadResult.results.length > 0)
-      ? mentorUploadResult.results
-      : (db.users?.mentors || []);
-
-    if (!records || records.length === 0) {
-      showToast('No Faculty Mentor records available to export.');
-      return;
-    }
-
-    let csvContent = 'Index,Faculty ID,Faculty Name,Official Email,Department,Assigned Class / Batch,Generated Password,Delivery Status\n';
-    records.forEach((row, i) => {
-      const id = String(row.id || '').replace(/"/g, '""');
-      const name = String(row.name || '').replace(/"/g, '""');
-      const email = String(row.email || '').replace(/"/g, '""');
-      const dept = String(row.dept || 'CSE').replace(/"/g, '""');
-      const cls = String(row.class || '').replace(/"/g, '""');
-      const pwd = String(row.password || 'Not available').replace(/"/g, '""');
-      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
-      csvContent += `${i + 1},"${id}","${name}","${email}","${dept}","${cls}","${pwd}","${status}"\n`;
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `nitte_faculty_mentor_credentials_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${records.length} mentor credentials to CSV.`);
-  };
+  const handleExportMentorCredentialsCsv = () => handlePasswordExport('mentors', mentorUploadResult?.jobId);
 
   // RO Roster & Modal Handlers
-  const handleRoFileSelect = (e) => {
-    const file = e.target.files[0];
+  const handleRoFileSelect = async event => {
+    const file = event.target.files[0];
     if (!file) return;
-    setRoRosterFile(file);
-    setRoUploadError('');
-    setRoUploadResult(null);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const buffer = evt.target.result;
-        const wb = XLSX.read(buffer, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        setParsedRoRoster(data || []);
-      } catch (err) {
-        setRoUploadError('Failed to parse file: ' + err.message);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+    setRoRosterFile(file); setRoUploadError(''); setRoUploadResult(null); setParsedRoRoster([]);
+    try { setParsedRoRoster(await readRosterFile(file, 'ros')); }
+    catch (error) { setRoUploadError(error.message); setRoRosterFile(null); }
   };
 
   const handleDownloadRoTemplate = () => {
@@ -760,8 +706,8 @@ export const AdminDashboard = ({ onLogout }) => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'RO Roster');
-    XLSX.writeFile(wb, 'nitte_relationship_officers_specimen.xlsx');
-    showToast('Downloading official NITTE Relationship Officers Specimen Template...');
+    XLSX.writeFile(wb, 'smart_mentorship_relationship_officers_template.xlsx');
+    showToast('Downloading the Relationship Officers roster template...');
   };
 
   const handleRoRosterSubmit = async () => {
@@ -776,7 +722,7 @@ export const AdminDashboard = ({ onLogout }) => {
       setRoUploadResult(res);
       setParsedRoRoster([]);
       setRoRosterFile(null);
-      showToast(`RO Batch Ingested: ${res?.count || parsedRoRoster.length} Relationship Officers added/updated.`);
+      showToast(res.queued ? `Queued ${res.total} officers. Progress appears below.` : `Processed ${res.count} officers.`);
     } catch (err) {
       setRoUploadError(err.message || 'Failed to process RO roster.');
     } finally {
@@ -784,38 +730,7 @@ export const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  const handleExportRoCredentialsCsv = () => {
-    const records = (roUploadResult && Array.isArray(roUploadResult.results) && roUploadResult.results.length > 0)
-      ? roUploadResult.results
-      : (db.users?.ros || []);
-
-    if (!records || records.length === 0) {
-      showToast('No Relationship Officer records available to export.');
-      return;
-    }
-
-    let csvContent = 'Index,RO ID,RO Name,Official Email,Domain Category,Initial Password,Delivery Status\n';
-    records.forEach((row, i) => {
-      const id = String(row.id || '').replace(/"/g, '""');
-      const name = String(row.name || '').replace(/"/g, '""');
-      const email = String(row.email || '').replace(/"/g, '""');
-      const cat = String(row.category || row.region || 'General').replace(/"/g, '""');
-      const pwd = String(row.password || 'Not available').replace(/"/g, '""');
-      const status = String(row.emailStatus || 'REGISTERED').replace(/"/g, '""');
-      csvContent += `${i + 1},"${id}","${name}","${email}","${cat}","${pwd}","${status}"\n`;
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `NITTE_RO_Credentials_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${records.length} RO credentials to CSV.`);
-  };
+  const handleExportRoCredentialsCsv = () => handlePasswordExport('ros', roUploadResult?.jobId);
 
   const handleSingleRoSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -877,7 +792,7 @@ export const AdminDashboard = ({ onLogout }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `nitte_grievance_report_${Date.now()}.csv`);
+    link.setAttribute('download', `smart_mentorship_grievance_report_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -897,7 +812,7 @@ export const AdminDashboard = ({ onLogout }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `nitte_student_mentor_feedbacks_${Date.now()}.csv`);
+    link.setAttribute('download', `smart_mentorship_student_mentor_feedbacks_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -957,7 +872,7 @@ export const AdminDashboard = ({ onLogout }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `NITTE_Faculty_Mentoring_Records_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `Smart_Mentorship_Faculty_Mentoring_Records_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -975,13 +890,13 @@ export const AdminDashboard = ({ onLogout }) => {
           <div className="flex items-center space-x-3.5">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-700 via-indigo-700 to-blue-900 p-0.5 shadow-md shadow-blue-900/10 flex items-center justify-center">
               <div className="w-full h-full rounded-[10px] bg-[#1e3a8a] flex items-center justify-center font-extrabold text-white tracking-wider text-xs shadow-inner">
-                NITTE
+                SM
               </div>
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Deemed to be University</span>
-                <span className="text-xs text-slate-500 font-medium">NIRF Top 50 • NITTE DU</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Administration Dashboard</span>
+                <span className="text-xs text-slate-500 font-medium">Smart Mentorship & Grievance Portal</span>
               </div>
               <h1 className="text-sm lg:text-base font-bold text-slate-900 tracking-tight flex items-center gap-1.5 mt-0.5">
                 Central Mentorship, Escalation & Academic Governance Console
@@ -1056,7 +971,7 @@ export const AdminDashboard = ({ onLogout }) => {
               placeholder="Search Ticket #, USN, Mentor, Branch (⌘K)..."
               className="w-full bg-slate-50 text-xs text-slate-800 pl-9 pr-14 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400 font-sans transition"
             />
-            <div className="absolute right-2.5 top-2 px-1.5 py-0.5 rounded bg-slate-200/60 border border-slate-200 text-[10px] font-mono text-slate-600 font-medium">
+            <div className="absolute right-2.5 top-2 px-1.5 py-0.5 rounded bg-slate-200/60 border border-slate-200 text-[10px] tabular-nums text-slate-600 font-medium">
               ⌘K
             </div>
           </div>
@@ -1076,7 +991,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <GraduationCap size={15} />
               <span>Student Directory</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700 font-mono font-semibold">{(db.users?.students || []).length}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700 tabular-nums font-semibold">{(db.users?.students || []).length}</span>
             </button>
             <button
               onClick={() => setActiveTab('mentors')}
@@ -1084,7 +999,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <UserCheck size={15} />
               <span>Faculty Mentors</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700 font-mono font-semibold">{(db.users?.mentors || []).length}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700 tabular-nums font-semibold">{(db.users?.mentors || []).length}</span>
             </button>
             <button
               onClick={() => setActiveTab('ros')}
@@ -1092,7 +1007,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <Briefcase size={15} />
               <span>Relationship Officers</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-50 text-amber-800 font-mono font-semibold border border-amber-200">{(db.users?.ros || []).length}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-50 text-amber-800 tabular-nums font-semibold border border-amber-200">{(db.users?.ros || []).length}</span>
             </button>
             <button
               onClick={() => setActiveTab('mentor-logs')}
@@ -1100,7 +1015,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <FileText size={15} />
               <span>Mentor Logs</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-50 text-blue-700 font-mono font-semibold border border-blue-200">{(db.mentorSessionRecords || []).length}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-50 text-blue-700 tabular-nums font-semibold border border-blue-200">{(db.mentorSessionRecords || []).length}</span>
             </button>
             <button
               onClick={() => setActiveTab('mentor-feedbacks')}
@@ -1108,7 +1023,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <MessageSquare size={15} />
               <span>Mentor Feedback</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-50 text-blue-700 font-mono font-semibold border border-blue-200">{totalMf}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-50 text-blue-700 tabular-nums font-semibold border border-blue-200">{totalMf}</span>
             </button>
             <button
               onClick={() => setActiveTab('all-tickets')}
@@ -1116,7 +1031,7 @@ export const AdminDashboard = ({ onLogout }) => {
             >
               <AlertTriangle size={15} />
               <span>Grievance Master Queue</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-50 text-rose-700 font-mono font-semibold border border-rose-200">{activeIssues}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-50 text-rose-700 tabular-nums font-semibold border border-rose-200">{activeIssues}</span>
             </button>
           </nav>
         </div>
@@ -1124,6 +1039,7 @@ export const AdminDashboard = ({ onLogout }) => {
 
       {/* ================= MAIN VIEW CONTAINER ================= */}
       <main className="flex-1 max-w-[1920px] w-full mx-auto p-4 lg:p-8 space-y-6">
+        {['students', 'mentors', 'ros'].includes(activeTab) && <RosterImportProgress jobs={rosterImports} kind={activeTab} refresh={refreshRosterImports} />}
 
         {/* ================= TAB 1: EXECUTIVE OVERVIEW ================= */}
         {activeTab === 'overview' && (
@@ -1138,10 +1054,10 @@ export const AdminDashboard = ({ onLogout }) => {
                   <div>
                     <div className="flex items-center space-x-2">
                       <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white uppercase tracking-wider">Level 3 Executive Escalation</span>
-                      <span className="text-xs text-rose-700 font-mono font-semibold">Resolution SLA &lt; 8 Hours</span>
+                      <span className="text-xs text-rose-700 tabular-nums font-semibold">Resolution SLA &lt; 8 Hours</span>
                     </div>
                     <h2 className="text-base font-bold text-slate-900 mt-1">
-                      Ticket #{escalations[0].id}: {escalations[0].category} — {escalations[0].studentName}
+                      Ticket {formatTicketNumber(escalations[0])}: {escalations[0].category} — {escalations[0].studentName}
                     </h2>
                     <p className="text-xs text-slate-600 mt-0.5">
                       Complainant: <span className="font-semibold text-slate-900">{escalations[0].studentName} ({escalations[0].studentId})</span> • Assigned RO: <span className="text-blue-700 font-semibold">{escalations[0].roName || escalations[0].roId || 'Prof. Suresh Nayak'}</span> • RO deliberation requested Registrar intervention.
@@ -1173,7 +1089,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     <h3 className="text-sm font-bold text-slate-900">All Escalated Grievances Resolved Within SLA Timelines</h3>
                   </div>
                 </div>
-                <span className="text-xs text-emerald-700 font-mono font-semibold bg-white px-3 py-1 rounded-lg border border-emerald-200">100% Redressed</span>
+                <span className="text-xs text-emerald-700 tabular-nums font-semibold bg-white px-3 py-1 rounded-lg border border-emerald-200">100% Redressed</span>
               </div>
             )}
 
@@ -1192,7 +1108,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     <div key={esc.id} className="p-4 rounded-xl bg-slate-50 border border-rose-200 hover:border-rose-300 transition flex flex-col justify-between">
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="font-mono text-xs text-rose-700 font-bold">#{esc.id}</span>
+                          <span className="tabular-nums text-xs text-rose-700 font-bold">{formatTicketNumber(esc)}</span>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isReEscalatedIssue(esc) ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
                             {isReEscalatedIssue(esc) ? 'Re-Opened' : 'L3 Escalated'}
                           </span>
@@ -1200,17 +1116,17 @@ export const AdminDashboard = ({ onLogout }) => {
                         <h4 className="text-xs font-bold text-slate-900 line-clamp-1">{esc.category}</h4>
                         <p className="text-[11px] text-slate-600 mt-1 line-clamp-2">{esc.description}</p>
                         <div className="mt-2 text-[11px] text-slate-500">
-                          Student: <span className="text-slate-900 font-mono font-semibold">{esc.studentId}</span> ({esc.studentName})<br />
+                          Student: <span className="text-slate-900 tabular-nums font-semibold">{esc.studentId}</span> ({esc.studentName})<br />
                           Assigned RO: <span className="text-blue-700 font-medium">{esc.roName || esc.roId || 'Relationship Officer'}</span>
                         </div>
                       </div>
                       <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
-                        <span className="text-[10px] text-rose-700 font-mono font-semibold">SLA: 06h remaining</span>
+                        <span className="text-[10px] text-rose-700 tabular-nums font-semibold">SLA: 06h remaining</span>
                         <button
                           onClick={() => handleOpenInterventionModal(esc)}
                           className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition"
                         >
-                          Take Action
+                          View Details &amp; Take Action
                         </button>
                       </div>
                     </div>
@@ -1236,7 +1152,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   </span>
                 </div>
                 <div className="mt-3.5 flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-slate-100">
-                  <span>Allocated to Mentors: <strong className="text-slate-800 font-mono font-semibold">{(db.users?.students || []).filter(s => s.mentorId).length}</strong></span>
+                  <span>Allocated to Mentors: <strong className="text-slate-800 tabular-nums font-semibold">{(db.users?.students || []).filter(s => s.mentorId).length}</strong></span>
                   <span className="text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                     {(db.users?.students || []).filter(s => !s.mentorId).length} Unassigned
                   </span>
@@ -1256,7 +1172,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   <span className="text-xs text-slate-500 font-medium">across 8 Depts</span>
                 </div>
                 <div className="mt-3.5 flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-slate-100">
-                  <span>Avg Mentee Ratio: <strong className="text-slate-800 font-mono font-semibold">1:26.1</strong></span>
+                  <span>Avg Mentee Ratio: <strong className="text-slate-800 tabular-nums font-semibold">1:26.1</strong></span>
                   <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">100% Verified</span>
                 </div>
               </div>
@@ -1276,7 +1192,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   </span>
                 </div>
                 <div className="mt-3.5 flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-slate-100">
-                  <span>Re-opened: <strong className="text-rose-700 font-mono font-semibold">{reEscalatedCount} Tickets</strong></span>
+                  <span>Re-opened: <strong className="text-rose-700 tabular-nums font-semibold">{reEscalatedCount} Tickets</strong></span>
                   <span className="text-slate-600">{(db.issues || []).filter(i => i.status === 'Submitted' || i.status === 'Open').length} at Mentor L1</span>
                 </div>
               </div>
@@ -1294,7 +1210,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Optimal Resolution</span>
                 </div>
                 <div className="mt-3.5 flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-slate-100">
-                  <span>Average SLA: <strong className="text-slate-800 font-mono font-semibold">31.8 hrs</strong></span>
+                  <span>Average SLA: <strong className="text-slate-800 tabular-nums font-semibold">31.8 hrs</strong></span>
                   <span className="text-amber-600 font-bold">★ {averageSatisfaction} / 5.0 CSAT</span>
                 </div>
               </div>
@@ -1352,14 +1268,14 @@ export const AdminDashboard = ({ onLogout }) => {
               </div>
 
               <div className="flex items-center space-x-2">
-                {(db.users?.students || []).length > 0 && (
+                {((db.users?.students || []).length > 0 || rosterImports.some(job => job.kind === 'students')) && (
                   <button
                     onClick={handleExportCredentialsCsv}
                     className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-                    title="Export credentials for all current students as CSV"
+                    title="Download initial passwords from the latest student roster import"
                   >
                     <Key size={13} className="text-emerald-600" />
-                    <span>Download Passwords CSV</span>
+                    <span>Download Initial Passwords CSV</span>
                   </button>
                 )}
                 {(db.users?.students || []).length > 0 && (
@@ -1377,7 +1293,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
                 >
                   <Download size={14} className="text-emerald-600" />
-                  <span>Download NITTE Template</span>
+                  <span>Download Student Roster Template</span>
                 </button>
                 <button
                   onClick={() => setIsImportDrawerOpen(!isImportDrawerOpen)}
@@ -1399,8 +1315,8 @@ export const AdminDashboard = ({ onLogout }) => {
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-900">Import Student Registry File (.xlsx or .csv)</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">Accepts NITTE University standard schema: USN, Full Name, Program, Branch, Sem, Sec, Mentor Employee ID.</p>
-                      <div className="flex items-center space-x-3 text-[11px] text-slate-500 font-mono mt-2">
+                      <p className="text-xs text-slate-500 mt-0.5">Accepted fields: USN, Full Name, Program, Branch, Semester, Section, and Mentor Employee ID.</p>
+                      <div className="flex items-center space-x-3 text-[11px] text-slate-500 tabular-nums mt-2">
                         <span>Max file size: 25MB</span>
                         <span>•</span>
                         <span>Auto-checks duplicate USNs</span>
@@ -1425,14 +1341,14 @@ export const AdminDashboard = ({ onLogout }) => {
                   </div>
                 </div>
 
-                {uploadResult && (
+                {uploadResult && !uploadResult.queued && (
                   <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs">
                     <span className="text-emerald-800 font-medium">✅ {uploadResult.message || `Processed ${uploadResult.totalProcessed} student records.`}</span>
                     <button
                       onClick={handleExportCredentialsCsv}
                       className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
                     >
-                      Download Passwords CSV
+                      Download Initial Passwords CSV
                     </button>
                   </div>
                 )}
@@ -1487,7 +1403,7 @@ export const AdminDashboard = ({ onLogout }) => {
                               </div>
                               <div>
                                 <div className="font-bold text-slate-900 text-xs">{s.name}</div>
-                                <div className="font-mono text-[11px] text-blue-700 font-medium">{s.id}</div>
+                                <div className="tabular-nums text-[11px] text-blue-700 font-medium">{s.id}</div>
                               </div>
                             </div>
                           </td>
@@ -1495,7 +1411,7 @@ export const AdminDashboard = ({ onLogout }) => {
                             <span className="font-semibold text-slate-900">{s.branch || 'BCA'}</span>
                             <span className="text-slate-500 text-[11px] block">{s.program || 'Computer Applications'}</span>
                           </td>
-                          <td className="py-3.5 px-4 font-mono font-medium text-slate-600">Sem {s.semester || s.sem || 3} • Sec {s.sec || s.section || 'A'}</td>
+                          <td className="py-3.5 px-4 tabular-nums font-medium text-slate-600">Sem {s.semester || s.sem || 3} • Sec {s.sec || s.section || 'A'}</td>
                           <td className="py-3.5 px-4">
                             <div className="flex items-center space-x-2">
                               <div className="w-6 h-6 rounded-full bg-slate-200 text-[10px] flex items-center justify-center text-slate-700 font-bold">
@@ -1505,17 +1421,17 @@ export const AdminDashboard = ({ onLogout }) => {
                             </div>
                           </td>
                           <td className="py-3.5 px-4">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold font-mono ${quotaCount >= 2 ? 'bg-rose-50 text-rose-700 border border-rose-200' : quotaCount === 1 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold tabular-nums ${quotaCount >= 2 ? 'bg-rose-50 text-rose-700 border border-rose-200' : quotaCount === 1 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                               {quotaCount}/2 {quotaCount >= 2 ? 'Reached' : 'Available'}
                             </span>
                           </td>
                           <td className="py-3.5 px-4">
                             {activeIssue ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-rose-50 text-rose-700 border border-rose-200 font-bold">
-                                #{activeIssue.id} ({activeIssue.status})
+                              <span className="px-2 py-0.5 rounded text-[11px] tabular-nums bg-rose-50 text-rose-700 border border-rose-200 font-bold">
+                                {formatTicketNumber(activeIssue)} ({activeIssue.status})
                               </span>
                             ) : (
-                              <span className="text-[11px] text-slate-400 font-mono italic">No Active Tickets</span>
+                              <span className="text-[11px] text-slate-400 tabular-nums italic">No Active Tickets</span>
                             )}
                           </td>
                           <td className="py-3.5 px-4 text-right">
@@ -1554,7 +1470,7 @@ export const AdminDashboard = ({ onLogout }) => {
 
               {/* Table Pagination */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-                <span>Displaying {paginatedStudents.length} of <strong className="text-slate-800 font-semibold">{filteredStudents.length}</strong> registered students across NITTE DU faculties</span>
+                <span>Displaying {paginatedStudents.length} of <strong className="text-slate-800 font-semibold">{filteredStudents.length}</strong> registered students</span>
                 <div className="flex items-center space-x-1.5">
                   <button
                     onClick={() => setStudentPage(p => Math.max(1, p - 1))}
@@ -1598,14 +1514,14 @@ export const AdminDashboard = ({ onLogout }) => {
                     <span>Clear All Mentors</span>
                   </button>
                 )}
-                {(db.users?.mentors || []).length > 0 && (
+                {((db.users?.mentors || []).length > 0 || rosterImports.some(job => job.kind === 'mentors')) && (
                   <button
                     onClick={handleExportMentorCredentialsCsv}
                     className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-                    title="Export credentials for all current faculty mentors as CSV"
+                    title="Download initial passwords from the latest mentor roster import"
                   >
                     <Key size={13} className="text-emerald-600" />
-                    <span>Download Passwords CSV</span>
+                    <span>Download Initial Passwords CSV</span>
                   </button>
                 )}
                 {(db.users?.mentors || []).length > 0 && (
@@ -1620,7 +1536,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <button
                   onClick={handleDownloadMentorTemplate}
                   className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-                  title="Download NITTE Faculty Mentor Excel Specimen Template"
+                  title="Download Faculty Mentor Excel Template"
                 >
                   <FileSpreadsheet size={14} className="text-emerald-600" />
                   <span>Download Specimen Template</span>
@@ -1653,9 +1569,9 @@ export const AdminDashboard = ({ onLogout }) => {
                     <div>
                       <h4 className="text-sm font-bold text-slate-900">Import Faculty Mentor Registry (.xlsx or .csv)</h4>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Upload official NITTE Faculty Mentors spreadsheet: Mentor ID / Faculty ID, Full Name, Official Email, Department, Assigned Class / Batch, Initial Password.
+                        Upload the faculty mentor spreadsheet: Mentor ID / Faculty ID, Full Name, Official Email, Department, Assigned Class / Batch, Initial Password.
                       </p>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono mt-2">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 tabular-nums mt-2">
                         <span>Max file size: 25MB</span>
                         <span>•</span>
                         <span>Auto-creates LDAP Credentials</span>
@@ -1697,7 +1613,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                       <span>Preview of Parsed Faculty Mentor Roster ({parsedMentorRoster.length} Rows Detected)</span>
-                      <span className="text-[11px] text-slate-500 font-mono">Ready to Ingest</span>
+                      <span className="text-[11px] text-slate-500 tabular-nums">Ready to Ingest</span>
                     </div>
                     <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white">
                       <table className="w-full text-left text-xs">
@@ -1714,20 +1630,20 @@ export const AdminDashboard = ({ onLogout }) => {
                         <tbody className="divide-y divide-slate-100 text-slate-700">
                           {parsedMentorRoster.slice(0, 10).map((r, i) => (
                             <tr key={i} className="hover:bg-slate-50">
-                              <td className="py-2 px-3 font-mono text-slate-400">{i + 1}</td>
-                              <td className="py-2 px-3 font-mono font-bold text-blue-700">
+                              <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
+                              <td className="py-2 px-3 tabular-nums font-bold text-blue-700">
                                 {r['Mentor ID'] || r['Faculty ID'] || r.id || `M-${101 + i}`}
                               </td>
                               <td className="py-2 px-3 font-semibold text-slate-900">
                                 {r['Faculty Name'] || r['Mentor Name'] || r.name || 'Faculty Member'}
                               </td>
-                              <td className="py-2 px-3 font-mono text-slate-600">
+                              <td className="py-2 px-3 tabular-nums text-slate-600">
                                 {r['Official Email'] || r['Email'] || r.email || 'N/A'}
                               </td>
                               <td className="py-2 px-3 text-slate-700">
                                 {r['Department'] || r['Dept'] || r.dept || 'CSE'}
                               </td>
-                              <td className="py-2 px-3 font-mono text-slate-500">
+                              <td className="py-2 px-3 tabular-nums text-slate-500">
                                 {r['Assigned Class / Batch'] || r['Assigned Batch'] || r.class || 'General Mentorship'}
                               </td>
                             </tr>
@@ -1744,7 +1660,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 )}
 
                 {/* Ingestion Results Card */}
-                {mentorUploadResult && (
+                {mentorUploadResult && !mentorUploadResult.queued && (
                   <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-3 text-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2 text-emerald-800 font-bold">
@@ -1756,7 +1672,7 @@ export const AdminDashboard = ({ onLogout }) => {
                         className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition flex items-center space-x-1.5 shadow-sm"
                       >
                         <Key size={13} />
-                        <span>Download Passwords CSV</span>
+                        <span>Download Initial Passwords CSV</span>
                       </button>
                     </div>
                   </div>
@@ -1817,14 +1733,14 @@ export const AdminDashboard = ({ onLogout }) => {
                               <div className="text-[10px] text-slate-500">Dept. of {mentor.dept || 'Engineering'}</div>
                             </div>
                           </div>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">Active</span>
+                          <span className="px-2 py-0.5 rounded text-[10px] tabular-nums bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">Active</span>
                         </div>
 
                         {/* Allocation Capacity Meter */}
                         <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5">
                           <div className="flex justify-between text-xs font-medium">
                             <span className="text-slate-500">Mentee Allocation</span>
-                            <span className="font-mono text-slate-900 font-bold">{menteeCount} / 30 Mentees</span>
+                            <span className="tabular-nums text-slate-900 font-bold">{menteeCount} / 30 Mentees</span>
                           </div>
                           <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
                             <div
@@ -1832,19 +1748,19 @@ export const AdminDashboard = ({ onLogout }) => {
                               style={{ width: `${ratioPct}%` }}
                             ></div>
                           </div>
-                          <div className={`text-[10px] font-mono font-medium ${ratioPct >= 100 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                          <div className={`text-[10px] tabular-nums font-medium ${ratioPct >= 100 ? 'text-rose-700' : 'text-emerald-700'}`}>
                             {ratioPct >= 100 ? 'Maximum Capacity Reached' : `${30 - menteeCount} slots remaining before cap`}
                           </div>
                         </div>
 
                         <div className="mt-3 text-[11px] text-slate-500 space-y-1">
                           <div>Assigned Batch: <span className="text-slate-900 font-medium">{mentor.class || 'All Semesters'}</span></div>
-                          <div>Official ID: <span className="text-slate-700 font-mono font-medium">{mentor.id}</span></div>
+                          <div>Official ID: <span className="text-slate-700 tabular-nums font-medium">{mentor.id}</span></div>
                         </div>
                       </div>
 
                       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-xs text-blue-700 font-mono font-semibold">{mentor.email}</span>
+                        <span className="text-xs text-blue-700 tabular-nums font-semibold">{mentor.email}</span>
                         <div className="flex items-center space-x-1">
                           <button
                             onClick={() => handleOpenAssignmentModal(mentor)}
@@ -1881,6 +1797,16 @@ export const AdminDashboard = ({ onLogout }) => {
                 <p className="text-xs text-slate-500 mt-0.5">Manage institutional Relationship Officers, assign specialized domain categories, and import officer rosters</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {((db.users?.ros || []).length > 0 || rosterImports.some(job => job.kind === 'ros')) && (
+                  <button
+                    onClick={handleExportRoCredentialsCsv}
+                    className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+                    title="Download initial passwords from the latest RO roster import"
+                  >
+                    <Key size={13} className="text-emerald-600" />
+                    <span>Download Initial Passwords CSV</span>
+                  </button>
+                )}
                 <button
                   onClick={handleDownloadRoTemplate}
                   className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
@@ -1919,8 +1845,8 @@ export const AdminDashboard = ({ onLogout }) => {
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-900">Import Relationship Officers Registry (.xlsx or .csv)</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">Upload official NITTE RO roster spreadsheet: RO ID, RO Name, Official Email, Assigned Domain Category, Initial Password.</p>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono mt-2">
+                      <p className="text-xs text-slate-500 mt-0.5">Upload the relationship officer roster: RO ID, RO Name, Official Email, Assigned Domain Category, Initial Password.</p>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 tabular-nums mt-2">
                         <span>Max file size: 25MB</span>
                         <span>•</span>
                         <span>Auto-creates LDAP Credentials</span>
@@ -1962,7 +1888,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                       <span>Preview of Parsed RO Roster ({parsedRoRoster.length} Rows Detected)</span>
-                      <span className="text-[11px] text-slate-500 font-mono">Ready to Ingest</span>
+                      <span className="text-[11px] text-slate-500 tabular-nums">Ready to Ingest</span>
                     </div>
                     <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white">
                       <table className="w-full text-left text-xs">
@@ -1978,10 +1904,10 @@ export const AdminDashboard = ({ onLogout }) => {
                         <tbody className="divide-y divide-slate-100 text-slate-700">
                           {parsedRoRoster.slice(0, 10).map((r, i) => (
                             <tr key={i} className="hover:bg-slate-50">
-                              <td className="py-2 px-3 font-mono text-slate-400">{i + 1}</td>
-                              <td className="py-2 px-3 font-mono font-bold text-blue-700">{r['RO ID'] || r.id || r.roId || `RO-${100 + i}`}</td>
+                              <td className="py-2 px-3 tabular-nums text-slate-400">{i + 1}</td>
+                              <td className="py-2 px-3 tabular-nums font-bold text-blue-700">{r['RO ID'] || r.id || r.roId || `RO-${100 + i}`}</td>
                               <td className="py-2 px-3 font-semibold text-slate-900">{r['RO Name'] || r.name || r.roName || 'Officer'}</td>
-                              <td className="py-2 px-3 font-mono text-slate-600">{r['Official Email'] || r.email || r.Email || 'N/A'}</td>
+                              <td className="py-2 px-3 tabular-nums text-slate-600">{r['Official Email'] || r.email || r.Email || 'N/A'}</td>
                               <td className="py-2 px-3 text-slate-700">{r['Assigned Domain Category'] || r.category || 'General Support'}</td>
                             </tr>
                           ))}
@@ -1997,7 +1923,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 )}
 
                 {/* Ingestion Results Card */}
-                {roUploadResult && (
+                {roUploadResult && !roUploadResult.queued && (
                   <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-3 text-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2 text-emerald-800 font-bold">
@@ -2044,7 +1970,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   ))}
                 </select>
               </div>
-              <span className="text-xs text-slate-500 font-mono">
+              <span className="text-xs text-slate-500 tabular-nums">
                 Showing <strong className="text-slate-800">{filteredRos.length}</strong> of {(db.users?.ros || []).length} Relationship Officers
               </span>
             </div>
@@ -2080,7 +2006,7 @@ export const AdminDashboard = ({ onLogout }) => {
                                 </div>
                                 <div>
                                   <div className="font-bold text-slate-900 text-xs">{ro.name}</div>
-                                  <div className="font-mono text-[11px] text-blue-700 font-semibold">{ro.id}</div>
+                                  <div className="tabular-nums text-[11px] text-blue-700 font-semibold">{ro.id}</div>
                                 </div>
                               </div>
                             </td>
@@ -2089,11 +2015,11 @@ export const AdminDashboard = ({ onLogout }) => {
                                 {ro.region ?? ro.category ?? 'Unassigned'}
                               </span>
                             </td>
-                            <td className="py-3.5 px-4 font-mono text-[11px]">
+                            <td className="py-3.5 px-4 tabular-nums text-[11px]">
                               <div className="text-slate-800">{ro.email}</div>
                             </td>
                             <td className="py-3.5 px-4">
-                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold font-mono ${
+                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold tabular-nums ${
                                 activeCaseload > 5
                                   ? 'bg-rose-50 text-rose-700 border border-rose-200'
                                   : activeCaseload > 0
@@ -2156,7 +2082,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Total Session Reports</span>
-                    <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{allRecords.length}</div>
+                    <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{allRecords.length}</div>
                     <div className="text-[11px] text-slate-400 mt-0.5">Logged across cohorts</div>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
@@ -2167,7 +2093,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <span className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wider">Submitted Reports</span>
-                    <div className="text-2xl font-bold text-emerald-700 mt-1 font-mono">{submittedCount}</div>
+                    <div className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">{submittedCount}</div>
                     <div className="text-[11px] text-emerald-600/80 mt-0.5">Submitted by mentors</div>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -2178,7 +2104,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <span className="text-[11px] text-amber-700 font-semibold uppercase tracking-wider">Drafts Saved</span>
-                    <div className="text-2xl font-bold text-amber-700 mt-1 font-mono">{draftCount}</div>
+                    <div className="text-2xl font-bold text-amber-700 mt-1 tabular-nums">{draftCount}</div>
                     <div className="text-[11px] text-amber-600/80 mt-0.5">Pending submission</div>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
@@ -2189,7 +2115,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Active Faculty Reporting</span>
-                    <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{uniqueMentorIds.size}</div>
+                    <div className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">{uniqueMentorIds.size}</div>
                     <div className="text-[11px] text-slate-400 mt-0.5">Advisors with session logs</div>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -2282,14 +2208,14 @@ export const AdminDashboard = ({ onLogout }) => {
 
                           return (
                             <tr key={rec.id || idx} className="hover:bg-slate-50/80 transition">
-                              <td className="py-3 px-4 font-mono font-medium text-slate-900 whitespace-nowrap">
+                              <td className="py-3 px-4 tabular-nums font-medium text-slate-900 whitespace-nowrap">
                                 <div>{displayDate}</div>
                                 <div className="text-[10px] text-slate-400 font-sans">{rec.location || 'Seminar Hall'}</div>
                               </td>
                               <td className="py-3 px-4">
                                 <div className="font-bold text-slate-900">{mentorName}</div>
                                 <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className="font-mono text-[10px] text-blue-700 font-semibold">{rec.mentorId || rec.mentor_id || mentor?.id}</span>
+                                  <span className="tabular-nums text-[10px] text-blue-700 font-semibold">{rec.mentorId || rec.mentor_id || mentor?.id}</span>
                                   <span className="text-slate-300">•</span>
                                   <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] text-slate-600 font-semibold">{mentor?.dept || 'CSE'}</span>
                                 </div>
@@ -2297,7 +2223,7 @@ export const AdminDashboard = ({ onLogout }) => {
                               <td className="py-3 px-4 font-medium text-blue-800">
                                 {cohort}
                               </td>
-                              <td className="py-3 px-4 font-mono font-bold text-emerald-700 whitespace-nowrap">
+                              <td className="py-3 px-4 tabular-nums font-bold text-emerald-700 whitespace-nowrap">
                                 {attendedCount} Mentees Present
                               </td>
                               <td className="py-3 px-4 max-w-sm">
@@ -2449,19 +2375,19 @@ export const AdminDashboard = ({ onLogout }) => {
                           <tr key={f.id || i} className="hover:bg-slate-50/80 transition">
                             <td className="py-3.5 px-4">
                               <div className="font-bold text-slate-900">{f.studentName || f.student_name || student?.name || 'Student'}</div>
-                              <div className="font-mono text-[11px] text-blue-700 font-semibold">{f.studentId || f.student_id || student?.id}</div>
+                              <div className="tabular-nums text-[11px] text-blue-700 font-semibold">{f.studentId || f.student_id || student?.id}</div>
                               {student && (
                                 <div className="text-[10px] text-slate-400 mt-0.5">{student.branch || 'Branch'} • Sem {student.sem || 5}</div>
                               )}
                             </td>
                             <td className="py-3.5 px-4">
                               <div className="font-semibold text-slate-800">{f.mentorName || f.mentor_name || mentor?.name || 'Faculty Mentor'}</div>
-                              <div className="text-[10px] text-slate-500 font-mono">{f.mentorId || f.mentor_id || mentor?.id || 'Mentor'}</div>
+                              <div className="text-[10px] text-slate-500 tabular-nums">{f.mentorId || f.mentor_id || mentor?.id || 'Mentor'}</div>
                               {mentor && (
                                 <div className="text-[10px] text-slate-400">{mentor.dept || 'Engineering'}</div>
                               )}
                             </td>
-                            <td className="py-3.5 px-4 font-mono text-slate-500 text-[11px]">
+                            <td className="py-3.5 px-4 tabular-nums text-slate-500 text-[11px]">
                               {f.createdAt ? new Date(f.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Recent'}
                             </td>
                             <td className="py-3.5 px-4 max-w-md">
@@ -2552,12 +2478,12 @@ export const AdminDashboard = ({ onLogout }) => {
                       return (
                         <tr key={issue.id} className={`hover:bg-slate-50/80 transition ${isEsc ? 'bg-rose-50/40' : ''}`}>
                           <td className="py-3.5 px-4">
-                            <div className={`font-mono text-xs font-bold ${isEsc ? 'text-rose-700' : 'text-slate-900'}`}>#{issue.id}</div>
-                            <div className="text-[10px] text-slate-500 font-mono">{new Date(issue.createdAt || Date.now()).toLocaleDateString()}</div>
+                            <div className={`tabular-nums text-xs font-bold ${isEsc ? 'text-rose-700' : 'text-slate-900'}`}>{formatTicketNumber(issue)}</div>
+                            <div className="text-[10px] text-slate-500 tabular-nums">{new Date(issue.createdAt || Date.now()).toLocaleDateString()}</div>
                           </td>
                           <td className="py-3.5 px-4">
                             <div className="font-bold text-slate-900">{issue.studentName}</div>
-                            <div className="font-mono text-[11px] text-blue-700 font-semibold">{issue.studentId}</div>
+                            <div className="tabular-nums text-[11px] text-blue-700 font-semibold">{issue.studentId}</div>
                           </td>
                           <td className="py-3.5 px-4">
                             <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
@@ -2569,13 +2495,13 @@ export const AdminDashboard = ({ onLogout }) => {
                           </td>
                           <td className="py-3.5 px-4">
                             <div className="flex items-center space-x-1.5">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${isEsc ? 'bg-rose-600 text-white' : 'bg-blue-600 text-white'}`}>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold tabular-nums ${isEsc ? 'bg-rose-600 text-white' : 'bg-blue-600 text-white'}`}>
                                 {isEsc ? 'L3 Admin' : 'L2 RO'}
                               </span>
                               <span className="text-xs text-slate-700 font-medium">→ {issue.roName || issue.roId || 'Assigned RO'}</span>
                             </div>
                           </td>
-                          <td className="py-3.5 px-4 font-mono font-bold text-rose-700">
+                          <td className="py-3.5 px-4 tabular-nums font-bold text-rose-700">
                             {issue.status === 'Resolved' ? <span className="text-emerald-700">Completed</span> : '06h 18m left'}
                           </td>
                           <td className="py-3.5 px-4 text-right">
@@ -2583,7 +2509,7 @@ export const AdminDashboard = ({ onLogout }) => {
                               onClick={() => handleOpenInterventionModal(issue)}
                               className={`px-3 py-1.5 rounded-lg text-white text-xs font-bold transition shadow-sm ${isEsc ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                             >
-                              Intervene
+                              View Details
                             </button>
                           </td>
                         </tr>
@@ -2604,15 +2530,15 @@ export const AdminDashboard = ({ onLogout }) => {
       {/* 1. ADMIN DIRECT INTERVENTION MODAL */}
       {interventionModalIssue && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-5">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center space-x-3">
                 <div className="p-2.5 rounded-xl bg-rose-100 text-rose-600 border border-rose-200">
                   <GavelIcon size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Registrar Executive Intervention</h3>
-                  <p className="text-xs text-slate-500 font-mono">Case #{interventionModalIssue.id}</p>
+                  <h3 className="text-base font-bold text-slate-900">Grievance Details &amp; Admin Action</h3>
+                  <p className="text-xs text-slate-500 tabular-nums">Case {formatTicketNumber(interventionModalIssue)}</p>
                 </div>
               </div>
               <button
@@ -2623,20 +2549,105 @@ export const AdminDashboard = ({ onLogout }) => {
               </button>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Complainant Student:</span>
-                <span className="font-bold text-slate-900">{interventionModalIssue.studentName} ({interventionModalIssue.studentId})</span>
+            <section aria-label="Complete grievance details" className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                <div><span className="text-slate-500 font-medium">Student:</span> <span className="font-bold text-slate-900">{interventionModalIssue.studentName || 'Student'} ({interventionModalIssue.studentId || interventionModalIssue.student_id || 'ID unavailable'})</span></div>
+                <div><span className="text-slate-500 font-medium">Category:</span> <span className="font-semibold text-blue-700">{interventionModalIssue.category || 'Not recorded'}</span></div>
+                <div><span className="text-slate-500 font-medium">Assigned RO:</span> <span className="font-medium text-slate-800">{interventionModalIssue.roName || interventionModalIssue.roId || interventionModalIssue.ro_id || 'Not assigned'}</span></div>
+                <div><span className="text-slate-500 font-medium">Status:</span> <span className="font-semibold text-slate-800">{interventionModalIssue.status || 'Not recorded'}</span></div>
+                <div><span className="text-slate-500 font-medium">Priority:</span> <span className="font-semibold text-slate-800">{interventionModalIssue.priority || 'Not recorded'}</span></div>
+                <div><span className="text-slate-500 font-medium">Submitted:</span> <span className="font-medium text-slate-800">{interventionModalIssue.createdAt || interventionModalIssue.created_at ? new Date(interventionModalIssue.createdAt || interventionModalIssue.created_at).toLocaleString() : 'Not recorded'}</span></div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Issue Category:</span>
-                <span className="font-semibold text-blue-700">{interventionModalIssue.category}</span>
+              <div className="border-t border-slate-200 pt-3">
+                <h4 className="font-bold text-slate-800">Reported Issue</h4>
+                <p className="mt-1 whitespace-pre-wrap break-words text-slate-700">{interventionModalIssue.description || 'No issue description was recorded.'}</p>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Assigned Relationship Officer:</span>
-                <span className="font-medium text-slate-800">{interventionModalIssue.roName || interventionModalIssue.roId || 'Prof. Suresh Nayak'}</span>
+              {(interventionModalIssue.resolutionNotes || interventionModalIssue.discussionSummary || interventionModalIssue.actionItems) && (
+                <div className="border-t border-slate-200 pt-3 space-y-2">
+                  {interventionModalIssue.resolutionNotes && <p className="whitespace-pre-wrap"><strong>Resolution:</strong> {interventionModalIssue.resolutionNotes}</p>}
+                  {interventionModalIssue.discussionSummary && <p className="whitespace-pre-wrap"><strong>Meeting minutes:</strong> {interventionModalIssue.discussionSummary}</p>}
+                  {interventionModalIssue.actionItems && <p className="whitespace-pre-wrap"><strong>Action items:</strong> {interventionModalIssue.actionItems}</p>}
+                </div>
+              )}
+              <div className="border-t border-slate-200 pt-3 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-slate-500">Print this grievance and its full action and email log.</span>
+                <button
+                  type="button"
+                  onClick={handlePrintAdminIssue}
+                  disabled={isPrintingIssue}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900 disabled:opacity-60"
+                >
+                  <Printer size={14} /> {isPrintingIssue ? 'Preparing Print…' : 'View / Print Grievance'}
+                </button>
               </div>
-            </div>
+              {issuePrintError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-800">{issuePrintError}</p>}
+            </section>
+
+            <IssueActivityLog
+              key={interventionModalIssue.id || interventionModalIssue.issue_id}
+              issue={interventionModalIssue}
+              emailLogs={(db.gmailLogs || []).filter(log => String(log.issueId || log.issue_id || '').trim().toUpperCase() === String(interventionModalIssue.id || interventionModalIssue.issue_id || '').trim().toUpperCase())}
+            />
+
+            {(isEscalatedOrReEscalated(interventionModalIssue) || interventionRecordings.length > 0) && (
+              <section aria-label="Student and RO meeting recordings" className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                    <Video size={15} className="text-blue-700" /> Student–RO Meeting Recordings
+                  </h4>
+                  <span className="text-[11px] text-slate-500">{interventionRecordings.length} recording{interventionRecordings.length === 1 ? '' : 's'}</span>
+                </div>
+                {interventionRecordings.length === 0 ? (
+                  <p className="text-xs text-slate-500">No recorded RO meeting is stored for this grievance.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {interventionRecordings.map(recording => (
+                      <div key={recording.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-xs">
+                          <p className="font-semibold text-slate-800">Online RO meeting</p>
+                          <p className="mt-0.5 text-slate-500">
+                            {recording.recordedAt || recording.recorded_at
+                              ? new Date(recording.recordedAt || recording.recorded_at).toLocaleString()
+                              : 'Recording date unavailable'}
+                            {recording.durationText ? ` · ${recording.durationText}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!isStoredRecording(recording)}
+                          onClick={() => handlePlayAdminRecording(recording)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                        >
+                          <Play size={13} /> {isStoredRecording(recording) ? 'Play Recording' : 'Video Unavailable'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {adminRecordingToPlay && String(adminRecordingToPlay.issueId || adminRecordingToPlay.issue_id || '').toUpperCase() === String(interventionModalIssue.id || interventionModalIssue.issue_id || '').toUpperCase() && (
+                  <div className="overflow-hidden rounded-lg border border-slate-800 bg-black">
+                    <video
+                      key={`${adminRecordingToPlay.id}:${adminPlaybackRevision}`}
+                      src={adminRecordingToPlay.videoUrl}
+                      controls
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                      onError={() => setAdminRecordingError('The recording could not be loaded. Retry playback to renew access.')}
+                      className="block max-h-[55vh] w-full"
+                    >
+                      Your browser does not support video playback.
+                    </video>
+                  </div>
+                )}
+                {adminRecordingError && (
+                  <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <span>{adminRecordingError}</span>
+                    {adminRecordingToPlay && <button type="button" className="shrink-0 font-bold underline" onClick={() => handlePlayAdminRecording(adminRecordingToPlay)}>Retry</button>}
+                  </div>
+                )}
+              </section>
+            )}
 
             <div className="space-y-4">
               <div>
@@ -2802,7 +2813,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="space-y-1.5 text-xs pt-2 border-t border-slate-200">
                   <div className="flex justify-between text-slate-600">
                     <span>Current Allocation:</span>
-                    <span className="font-mono text-slate-900 font-bold">{selectedStudentIdsForMentor.length} / 30 Mentees</span>
+                    <span className="tabular-nums text-slate-900 font-bold">{selectedStudentIdsForMentor.length} / 30 Mentees</span>
                   </div>
                   <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
                     <div
@@ -2810,7 +2821,7 @@ export const AdminDashboard = ({ onLogout }) => {
                       style={{ width: `${Math.min(100, Math.round((selectedStudentIdsForMentor.length / 30) * 100))}%` }}
                     ></div>
                   </div>
-                  <div className={`text-[11px] font-mono font-medium ${selectedStudentIdsForMentor.length >= 30 ? 'text-rose-700' : 'text-amber-700'}`}>
+                  <div className={`text-[11px] tabular-nums font-medium ${selectedStudentIdsForMentor.length >= 30 ? 'text-rose-700' : 'text-amber-700'}`}>
                     {selectedStudentIdsForMentor.length >= 30 ? 'Capacity cap reached' : `Available slots: ${30 - selectedStudentIdsForMentor.length} students`}
                   </div>
                 </div>
@@ -2852,10 +2863,10 @@ export const AdminDashboard = ({ onLogout }) => {
                           />
                           <div>
                             <div className="text-xs font-bold text-slate-900">{stu.name}</div>
-                            <div className="text-[10px] font-mono text-slate-500">{stu.id} • {stu.branch} Sem {stu.semester || stu.sem || 3}</div>
+                            <div className="text-[10px] tabular-nums text-slate-500">{stu.id} • {stu.branch} Sem {stu.semester || stu.sem || 3}</div>
                           </div>
                         </div>
-                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${isSelected ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                        <span className={`text-[10px] tabular-nums font-bold px-2 py-0.5 rounded border ${isSelected ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
                           {isSelected ? 'Assigned' : 'Available'}
                         </span>
                       </label>
@@ -2911,7 +2922,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     value={singleMentorId}
                     onChange={(e) => setSingleMentorId(e.target.value)}
                     placeholder="NIT-FAC-095"
-                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white tabular-nums"
                   />
                 </div>
                 <div>
@@ -2937,7 +2948,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   value={singleMentorEmail}
                   onChange={(e) => setSingleMentorEmail(e.target.value)}
                   placeholder="sudesh.rao@nitte.edu.in"
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white tabular-nums"
                 />
               </div>
               <div>
@@ -2968,7 +2979,7 @@ export const AdminDashboard = ({ onLogout }) => {
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-xl rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">NITTE DU Academic Program & Branch Registry</h3>
+              <h3 className="text-sm font-bold text-slate-900">Academic Program & Branch Registry</h3>
               <button onClick={() => setIsBranchManagerOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
@@ -2983,14 +2994,14 @@ export const AdminDashboard = ({ onLogout }) => {
                       <div className="font-bold text-slate-900">{b} — Department & Degree Program</div>
                       <div className="text-slate-500 text-[11px]">{count} Students Enrolled • {mCount} Active Mentors</div>
                     </div>
-                    <span className="text-emerald-700 font-mono font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Active</span>
+                    <span className="text-emerald-700 tabular-nums font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Active</span>
                   </div>
                 );
               })}
             </div>
             <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
               <button
-                onClick={() => { resetBranchesToDefault(); showToast('Reset branches to NITTE official default curricula.'); }}
+                onClick={() => { resetBranchesToDefault(); showToast('Reset branches to the default curricula.'); }}
                 className="text-xs text-slate-500 hover:text-slate-800 underline"
               >
                 Reset to Default Branches
@@ -3241,7 +3252,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     value={singleRoId}
                     onChange={(e) => setSingleRoId(e.target.value.toUpperCase())}
                     placeholder="e.g. RO-04"
-                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white tabular-nums"
                   />
                 </div>
                 <div>
@@ -3265,7 +3276,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     value={singleRoEmail}
                     onChange={(e) => setSingleRoEmail(e.target.value)}
                     placeholder="officer@nitte.edu.in"
-                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                    className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white tabular-nums"
                   />
                 </div>
               </div>
@@ -3277,7 +3288,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   value={singleRoPassword}
                   onChange={(e) => setSingleRoPassword(e.target.value)}
                   placeholder="Defaults to Nit#Ro2026"
-                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white font-mono"
+                  className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white tabular-nums"
                 />
               </div>
 
@@ -3351,7 +3362,7 @@ export const AdminDashboard = ({ onLogout }) => {
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Submitted By Student</span>
                 <div className="font-bold text-slate-900 mt-0.5">{selectedFeedbackModal.studentName || selectedFeedbackModal.student_name}</div>
-                <div className="font-mono text-blue-700 font-semibold">{selectedFeedbackModal.studentId || selectedFeedbackModal.student_id}</div>
+                <div className="tabular-nums text-blue-700 font-semibold">{selectedFeedbackModal.studentId || selectedFeedbackModal.student_id}</div>
                 {selectedFeedbackModal.student && (
                   <div className="text-[11px] text-slate-500 mt-0.5">{selectedFeedbackModal.student.branch} • Sem {selectedFeedbackModal.student.sem}</div>
                 )}
@@ -3359,7 +3370,7 @@ export const AdminDashboard = ({ onLogout }) => {
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Assigned Faculty Mentor</span>
                 <div className="font-bold text-slate-900 mt-0.5">{selectedFeedbackModal.mentorName || selectedFeedbackModal.mentor_name}</div>
-                <div className="font-mono text-slate-600">{selectedFeedbackModal.mentorId || selectedFeedbackModal.mentor_id}</div>
+                <div className="tabular-nums text-slate-600">{selectedFeedbackModal.mentorId || selectedFeedbackModal.mentor_id}</div>
                 {selectedFeedbackModal.mentor && (
                   <div className="text-[11px] text-slate-500 mt-0.5">{selectedFeedbackModal.mentor.dept} Department</div>
                 )}
@@ -3411,7 +3422,7 @@ export const AdminDashboard = ({ onLogout }) => {
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  <p className="text-[11px] text-slate-500 tabular-nums mt-0.5">
                     Report Reference: #{selectedMentorReportModal.id || 'REC-XXXX'}
                   </p>
                 </div>
@@ -3431,7 +3442,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="font-bold text-slate-900 text-sm mt-0.5">
                   {selectedMentorReportModal.mentorName || selectedMentorReportModal.mentor?.name || 'Faculty Mentor'}
                 </div>
-                <div className="font-mono text-blue-700 font-semibold mt-0.5">
+                <div className="tabular-nums text-blue-700 font-semibold mt-0.5">
                   ID: {selectedMentorReportModal.mentorId || selectedMentorReportModal.mentor_id || selectedMentorReportModal.mentor?.id}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
@@ -3450,7 +3461,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="text-slate-800 font-medium mt-0.5">
                   <strong>Target Class:</strong> {selectedMentorReportModal.cohort || selectedMentorReportModal.whichClass || selectedMentorReportModal.which_class || '3rd Yr CSE'}
                 </div>
-                <div className="text-emerald-700 font-mono font-bold mt-1 inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                <div className="text-emerald-700 tabular-nums font-bold mt-1 inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                   <CheckCircle2 size={12} />
                   <span>{selectedMentorReportModal.attendedCount !== undefined ? selectedMentorReportModal.attendedCount : selectedMentorReportModal.studentsAttended} Mentees Recorded Present</span>
                 </div>
@@ -3494,7 +3505,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     : 'Submitted by Faculty Mentor'}
                 </span>
               </div>
-              <span className="font-mono text-[10px] text-slate-500 shrink-0">
+              <span className="tabular-nums text-[10px] text-slate-500 shrink-0">
                 Logged: {selectedMentorReportModal.createdAt ? new Date(selectedMentorReportModal.createdAt).toLocaleString() : 'Current Academic Cycle'}
               </span>
             </div>
