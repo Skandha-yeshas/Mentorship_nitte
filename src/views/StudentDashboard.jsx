@@ -287,7 +287,7 @@ export const StudentDashboard = ({ studentId }) => {
             show: true,
             issueId: targetIssueId,
             reason: details?.reason === 'time-limit' ? 'The 30-minute meeting limit has been reached.' : '',
-            roName: activeFormRO?.name || 'Relationship Officer',
+            roName: activeFormRO?.name || 'Resolution Officer',
             endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           });
         }
@@ -529,7 +529,7 @@ export const StudentDashboard = ({ studentId }) => {
               <div className="flex items-start gap-4">
                 <div className="relative flex-shrink-0">
                   <img
-                    alt={activeFormRO?.name || 'Relationship Officer'}
+                    alt={activeFormRO?.name || 'Resolution Officer'}
                     className="w-14 h-14 rounded-2xl object-cover ring-2 ring-emerald-400 shadow-md"
                     src={activeFormRO?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDLel99doHvbxmjryAfLBN2VNfpzynyvztUhQKhSNRExE89T18FYlvcmYM4tfaI_vM-172N9v2yX-Wld2Ntk59R4GxGXx7RABEII48GwhkCWqpuVBraR42HJWaKusfr93_AqXCXzXlrp9ejOk8nCkU5_qQ_UiN-glmZbFW-tIcIkJF3cTSY0S2B_q68gOQ-wDAWqktdFkdV_gkrZIVaMDWFM5iPNVJ7xKSySssioXk'}
                   />
@@ -860,7 +860,7 @@ export const StudentDashboard = ({ studentId }) => {
                 <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-100">
                   <button
                     type="button"
-                    onClick={() => setSubmissionVideoModal({ issueId: 'PREVIEW', category, roName: activeFormRO?.name || 'Relationship Officer' })}
+                    onClick={() => setSubmissionVideoModal({ issueId: 'PREVIEW', category, roName: activeFormRO?.name || 'Resolution Officer' })}
                     disabled={!categoryGuidance.available}
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
                   >
@@ -973,7 +973,7 @@ export const StudentDashboard = ({ studentId }) => {
                     {category.split(' - ')[1] || category} Walkthrough
                   </h5>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    {categoryGuidance.available ? 'Watch the official department guidelines before contacting the Relationship Officer.' : 'No video is available for this issue. Your submission will go directly to the Relationship Officer for review.'}
+                    {categoryGuidance.available ? 'Watch the official department guidelines before contacting the Resolution Officer.' : 'No video is available for this issue. Your submission will go directly to the Resolution Officer for review.'}
                   </p>
                   <button
                     type="button"
@@ -1086,7 +1086,7 @@ export const StudentDashboard = ({ studentId }) => {
                           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
                             <span className="flex items-center gap-1">
                               <span className="material-symbols-outlined text-[13px]">person</span>
-                              {issue.roName || 'Relationship Officer'}
+                              {issue.roName || 'Resolution Officer'}
                             </span>
                             <span>{issue.submittedAt ? new Date(issue.submittedAt).toLocaleDateString() : 'Active'}</span>
                           </div>
@@ -1136,7 +1136,7 @@ export const StudentDashboard = ({ studentId }) => {
                         />
                         <div>
                           <p className="text-xs font-bold text-slate-900">{selectedIssue.roName || activeFormRO?.name || 'Assigned officer'} (Assigned Officer)</p>
-                          <p className="text-[11px] text-slate-500">Relationship Officer • {selectedIssue.category?.split(' - ')[0] || 'Academic Cell'}</p>
+                          <p className="text-[11px] text-slate-500">Resolution Officer • {selectedIssue.category?.split(' - ')[0] || 'Academic Cell'}</p>
                         </div>
                       </div>
 
@@ -1192,7 +1192,7 @@ export const StudentDashboard = ({ studentId }) => {
                               <span className="font-bold text-slate-900">Assigned to Officer</span>
                               <span className="tabular-nums text-[10px] text-slate-400">RO Allocated</span>
                             </div>
-                            <p className="text-slate-500 text-[11px] mt-0.5">{selectedIssue.roName || 'Relationship Officer'} designated for jurisdiction review.</p>
+                            <p className="text-slate-500 text-[11px] mt-0.5">{selectedIssue.roName || 'Resolution Officer'} designated for jurisdiction review.</p>
                           </div>
                         </div>
 
@@ -1579,7 +1579,7 @@ export const StudentDashboard = ({ studentId }) => {
                     WebRTC Encrypted Session • Ticket {getTicketNumberForId(activeMeetingIssueId || 'TICKET')}
                   </span>
                   <span className="text-[10px] text-slate-400">
-                    {activeFormRO?.name || 'Relationship Officer'} &amp; {student?.name || 'Student'} ({student?.id})
+                    {activeFormRO?.name || 'Resolution Officer'} &amp; {student?.name || 'Student'} ({student?.id})
                   </span>
                 </div>
               </div>
@@ -1589,7 +1589,7 @@ export const StudentDashboard = ({ studentId }) => {
                   onExpire={() => {
                     const issueId = activeMeetingIssueId;
                     handleCloseStudentVideo();
-                    setMeetingEndedPopup({ issueId, roName: activeFormRO?.name || 'Relationship Officer',
+                    setMeetingEndedPopup({ issueId, roName: activeFormRO?.name || 'Resolution Officer',
                       endedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                       reason: 'The 30-minute meeting limit has been reached.' });
                   }}
@@ -1620,7 +1620,7 @@ export const StudentDashboard = ({ studentId }) => {
                     objectFit="contain"
                     isMicMuted={isRoMicMuted}
                     isCameraOff={isRoCameraOff}
-                    participantName={activeFormRO?.name || 'Relationship Officer'}
+                    participantName={activeFormRO?.name || 'Resolution Officer'}
                   />
                 </div>
               ) : (
@@ -1630,7 +1630,7 @@ export const StudentDashboard = ({ studentId }) => {
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-white">Connecting Secure WebRTC Link...</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Waiting for {activeFormRO?.name || 'Relationship Officer'} video stream</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Waiting for {activeFormRO?.name || 'Resolution Officer'} video stream</p>
                   </div>
                 </div>
               )}
@@ -1746,7 +1746,7 @@ export const StudentDashboard = ({ studentId }) => {
 
               {/* Guidance label */}
               <p className="text-[11px] text-slate-500 text-center leading-relaxed">
-                {submissionGuidance.available && <>Watch the guidance above. If your issue is resolved, click <strong>Issue Resolved</strong>. Otherwise, click <strong>Escalate to RO</strong> to route it to {submissionVideoModal.roName || 'your Relationship Officer'}.</>}
+                {submissionGuidance.available && <>Watch the guidance above. If your issue is resolved, click <strong>Issue Resolved</strong>. Otherwise, click <strong>Escalate to RO</strong> to route it to {submissionVideoModal.roName || 'your Resolution Officer'}.</>}
               </p>
 
               {/* Action buttons — only show for real tickets */}

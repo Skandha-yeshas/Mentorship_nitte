@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS mentors (
   password VARCHAR(255)
 );
 
--- 2. Relationship Officers (ROs) Table
+-- 2. Resolution Officers (ROs) Table
 CREATE TABLE IF NOT EXISTS ros (
   id VARCHAR(50) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,

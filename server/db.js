@@ -88,7 +88,7 @@ const createTables = async () => {
       password VARCHAR(255)
     )`,
     
-    // 2. Relationship Officers imported through the roster
+    // 2. Resolution Officers imported through the roster
     `CREATE TABLE IF NOT EXISTS ros (
       id VARCHAR(50) PRIMARY KEY,
       name VARCHAR(100) NOT NULL,

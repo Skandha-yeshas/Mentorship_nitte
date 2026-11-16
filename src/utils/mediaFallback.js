@@ -84,7 +84,7 @@ export function createFallbackMediaStream({ label = 'Participant', role = 'Stude
     // Subtitle
     ctx.font = '18px sans-serif';
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText(role === 'RO' ? 'Relationship Officer (Virtual HD Feed)' : 'Student (Virtual HD Feed)', cx, cy + 160);
+    ctx.fillText(role === 'RO' ? 'Resolution Officer (Virtual HD Feed)' : 'Student (Virtual HD Feed)', cx, cy + 160);
 
     // Live REC indicator badge in top-left corner
     ctx.beginPath();

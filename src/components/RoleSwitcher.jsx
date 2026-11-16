@@ -27,7 +27,7 @@ export const RoleSwitcher = ({ selectedSubProfile, onOpenLoginPage }) => {
     }
     if (currentUser === 'RO') {
       const ro = db.users?.ros?.find(r => r.id === selectedSubProfile);
-      return ro ? ro.name : (selectedSubProfile || 'Relationship Officer');
+      return ro ? ro.name : (selectedSubProfile || 'Resolution Officer');
     }
     return currentUser;
   };

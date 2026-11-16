@@ -19,7 +19,7 @@ export function createRecordingAuth({ now = Date.now, secure = false } = {}) {
       const session = token && sessions.get(token);
       if (!session || session.expiresAt <= now()) {
         if (token) sessions.delete(token);
-        return res.status(401).json({ error: 'Sign in as a Relationship Officer or Admin to access recordings.' });
+        return res.status(401).json({ error: 'Sign in as a Resolution Officer or Admin to access recordings.' });
       }
       req.recordingUser = session.user;
       next();

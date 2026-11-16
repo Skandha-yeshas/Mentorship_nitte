@@ -161,7 +161,7 @@ export const AdminDashboard = ({ onLogout }) => {
   const [mlStatusFilter, setMlStatusFilter] = useState('ALL'); // 'ALL' | 'Submitted' | 'Draft'
   const [selectedMentorReportModal, setSelectedMentorReportModal] = useState(null);
 
-  // Relationship Officer (RO) Management State
+  // Resolution Officer (RO) Management State
   const [roSearchTerm, setRoSearchTerm] = useState('');
   const [roCategoryFilter, setRoCategoryFilter] = useState('ALL');
   const [isRoImportDrawerOpen, setIsRoImportDrawerOpen] = useState(false);
@@ -304,7 +304,7 @@ export const AdminDashboard = ({ onLogout }) => {
     return list;
   }, [db.users?.mentors, mentorFilterDept, searchTerm]);
 
-  // Memoized Filtered Relationship Officers
+  // Memoized Filtered Resolution Officers
   const filteredRos = useMemo(() => {
     let list = db.users?.ros || [];
     if (roCategoryFilter !== 'ALL') {
@@ -470,7 +470,7 @@ export const AdminDashboard = ({ onLogout }) => {
     } else if (interventionType === 'reassign') {
       const targetRo = interventionRoTarget || 'RO-01';
       await reassignIssue(issueId, targetRo);
-      showToast(`Ticket ${formatTicketNumber(interventionModalIssue)} reassigned to Senior Relationship Officer (${targetRo}).`);
+      showToast(`Ticket ${formatTicketNumber(interventionModalIssue)} reassigned to Senior Resolution Officer (${targetRo}).`);
     } else if (interventionType === 'offline_meeting') {
       const location = adminMeetingLocation || 'Principal / Senior Admin Chamber (Main Admin Block)';
       const notes = interventionDirectiveText.trim() || 'Mandatory In-Person Grievance Deliberation Hearing. Student and RO must attend in person.';
@@ -706,8 +706,8 @@ export const AdminDashboard = ({ onLogout }) => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'RO Roster');
-    XLSX.writeFile(wb, 'smart_mentorship_relationship_officers_template.xlsx');
-    showToast('Downloading the Relationship Officers roster template...');
+    XLSX.writeFile(wb, 'smart_mentorship_resolution_officers_template.xlsx');
+    showToast('Downloading the Resolution Officers roster template...');
   };
 
   const handleRoRosterSubmit = async () => {
@@ -754,14 +754,14 @@ export const AdminDashboard = ({ onLogout }) => {
         password: singleRoPassword.trim() || undefined
       };
       await addSingleRo(roPayload);
-      showToast(`Relationship Officer ${roPayload.name} (${roPayload.id}) onboarded.`);
+      showToast(`Resolution Officer ${roPayload.name} (${roPayload.id}) onboarded.`);
       setSingleRoName('');
       setSingleRoEmail('');
       setSingleRoId('');
       setSingleRoPassword('');
       setIsAddRoModalOpen(false);
     } catch (err) {
-      setSingleRoError(err.message || 'Failed to onboard Relationship Officer.');
+      setSingleRoError(err.message || 'Failed to onboard Resolution Officer.');
     } finally {
       setIsSubmittingSingleRo(false);
     }
@@ -773,7 +773,7 @@ export const AdminDashboard = ({ onLogout }) => {
     const id = roPendingDelete.id;
     await removeRo(id);
     setRoPendingDelete(null);
-    showToast(`Relationship Officer "${name}" (${id}) deactivated.`);
+    showToast(`Resolution Officer "${name}" (${id}) deactivated.`);
   };
 
   const handleDownloadReport = (reportType) => {
@@ -1006,7 +1006,7 @@ export const AdminDashboard = ({ onLogout }) => {
               className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 ${activeTab === 'ros' ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'}`}
             >
               <Briefcase size={15} />
-              <span>Relationship Officers</span>
+              <span>Resolution Officers</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-50 text-amber-800 tabular-nums font-semibold border border-amber-200">{(db.users?.ros || []).length}</span>
             </button>
             <button
@@ -1117,7 +1117,7 @@ export const AdminDashboard = ({ onLogout }) => {
                         <p className="text-[11px] text-slate-600 mt-1 line-clamp-2">{esc.description}</p>
                         <div className="mt-2 text-[11px] text-slate-500">
                           Student: <span className="text-slate-900 tabular-nums font-semibold">{esc.studentId}</span> ({esc.studentName})<br />
-                          Assigned RO: <span className="text-blue-700 font-medium">{esc.roName || esc.roId || 'Relationship Officer'}</span>
+                          Assigned RO: <span className="text-blue-700 font-medium">{esc.roName || esc.roId || 'Resolution Officer'}</span>
                         </div>
                       </div>
                       <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
@@ -1785,16 +1785,16 @@ export const AdminDashboard = ({ onLogout }) => {
           </section>
         )}
 
-        {/* ================= TAB: RELATIONSHIP OFFICERS (RO MODULE) ================= */}
+        {/* ================= TAB: RESOLUTION OFFICERS (RO MODULE) ================= */}
         {activeTab === 'ros' && (
           <section className="space-y-6">
             {/* Header & Controls */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center space-x-2">
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Relationship Officers (RO) Registry & Governance</h2>
+                  <h2 className="text-base font-bold text-slate-900 tracking-tight">Resolution Officers (RO) Registry & Governance</h2>
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">Manage institutional Relationship Officers, assign specialized domain categories, and import officer rosters</p>
+                <p className="text-xs text-slate-500 mt-0.5">Manage institutional Resolution Officers, assign specialized domain categories, and import officer rosters</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {((db.users?.ros || []).length > 0 || rosterImports.some(job => job.kind === 'ros')) && (
@@ -1830,7 +1830,7 @@ export const AdminDashboard = ({ onLogout }) => {
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-sm shadow-emerald-600/30"
                 >
                   <UserPlus size={14} />
-                  <span>Onboard Relationship Officer</span>
+                  <span>Onboard Resolution Officer</span>
                 </button>
               </div>
             </div>
@@ -1844,8 +1844,8 @@ export const AdminDashboard = ({ onLogout }) => {
                       <Briefcase size={28} />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900">Import Relationship Officers Registry (.xlsx or .csv)</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">Upload the relationship officer roster: RO ID, RO Name, Official Email, Assigned Domain Category, Initial Password.</p>
+                      <h4 className="text-sm font-bold text-slate-900">Import Resolution Officers Registry (.xlsx or .csv)</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">Upload the resolution officer roster: RO ID, RO Name, Official Email, Assigned Domain Category, Initial Password.</p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 tabular-nums mt-2">
                         <span>Max file size: 25MB</span>
                         <span>•</span>
@@ -1939,7 +1939,7 @@ export const AdminDashboard = ({ onLogout }) => {
                       </button>
                     </div>
                     <p className="text-[11px] text-emerald-700">
-                      All Relationship Officers can now authenticate using their official institutional email ID or RO-ID with standard or generated passwords.
+                      All Resolution Officers can now authenticate using their official institutional email ID or RO-ID with standard or generated passwords.
                     </p>
                   </div>
                 )}
@@ -1971,7 +1971,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 </select>
               </div>
               <span className="text-xs text-slate-500 tabular-nums">
-                Showing <strong className="text-slate-800">{filteredRos.length}</strong> of {(db.users?.ros || []).length} Relationship Officers
+                Showing <strong className="text-slate-800">{filteredRos.length}</strong> of {(db.users?.ros || []).length} Resolution Officers
               </span>
             </div>
 
@@ -2045,7 +2045,7 @@ export const AdminDashboard = ({ onLogout }) => {
                                 <button
                                   onClick={() => setRoPendingDelete(ro)}
                                   className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
-                                  title="Deactivate Relationship Officer"
+                                  title="Deactivate Resolution Officer"
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -2057,7 +2057,7 @@ export const AdminDashboard = ({ onLogout }) => {
                     ) : (
                       <tr>
                         <td colSpan={5} className="py-8 text-center text-slate-500 text-xs">
-                          No Relationship Officers found matching the search criteria.
+                          No Resolution Officers found matching the search criteria.
                         </td>
                       </tr>
                     )}
@@ -2893,7 +2893,7 @@ export const AdminDashboard = ({ onLogout }) => {
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Onboard New Faculty Mentor / Relationship Officer</h3>
+              <h3 className="text-sm font-bold text-slate-900">Onboard New Faculty Mentor / Resolution Officer</h3>
               <button onClick={() => setIsAddMentorModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
@@ -3207,7 +3207,7 @@ export const AdminDashboard = ({ onLogout }) => {
         </div>
       )}
 
-      {/* 8. ONBOARD NEW RELATIONSHIP OFFICER MODAL */}
+      {/* 8. ONBOARD NEW RESOLUTION OFFICER MODAL */}
       {isAddRoModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
@@ -3216,7 +3216,7 @@ export const AdminDashboard = ({ onLogout }) => {
                 <div className="p-2 rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
                   <Briefcase size={20} />
                 </div>
-                <h3 className="text-sm font-bold text-slate-900">Onboard Relationship Officer (RO)</h3>
+                <h3 className="text-sm font-bold text-slate-900">Onboard Resolution Officer (RO)</h3>
               </div>
               <button onClick={() => setIsAddRoModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
@@ -3313,7 +3313,7 @@ export const AdminDashboard = ({ onLogout }) => {
         </div>
       )}
 
-      {/* 9. CONFIRM REMOVE RELATIONSHIP OFFICER MODAL */}
+      {/* 9. CONFIRM REMOVE RESOLUTION OFFICER MODAL */}
       {roPendingDelete && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl p-6 space-y-4">
@@ -3322,7 +3322,7 @@ export const AdminDashboard = ({ onLogout }) => {
               <h3 className="text-base font-bold text-slate-900">Confirm RO Deactivation</h3>
             </div>
             <p className="text-xs text-slate-600">
-              Are you sure you want to deactivate Relationship Officer <strong className="text-slate-900 font-bold">{roPendingDelete.name}</strong> ({roPendingDelete.id})? Active tickets assigned to this officer will be flagged for reassignment.
+              Are you sure you want to deactivate Resolution Officer <strong className="text-slate-900 font-bold">{roPendingDelete.name}</strong> ({roPendingDelete.id})? Active tickets assigned to this officer will be flagged for reassignment.
             </p>
             <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
               <button onClick={() => setRoPendingDelete(null)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-semibold">

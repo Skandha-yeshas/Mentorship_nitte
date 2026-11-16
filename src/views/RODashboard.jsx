@@ -178,7 +178,7 @@ export const RODashboard = ({ roId }) => {
         } catch (camErr) {
           console.warn('[RO] Hardware webcam unavailable or locked by another tab, falling back to simulated stream:', camErr);
           stream = createFallbackMediaStream({
-            label: ro?.name || 'Relationship Officer',
+            label: ro?.name || 'Resolution Officer',
             role: 'RO'
           });
           setMediaPermissionError('Hardware camera unavailable or in use by another tab. Using active simulated video feed.');
@@ -187,7 +187,7 @@ export const RODashboard = ({ roId }) => {
 
       if (!stream) {
         stream = createFallbackMediaStream({
-          label: ro?.name || 'Relationship Officer',
+          label: ro?.name || 'Resolution Officer',
           role: 'RO'
         });
       }
@@ -254,7 +254,7 @@ export const RODashboard = ({ roId }) => {
         } else {
           compositeRecorderRef.current = new CompositeMeetingRecorder({
           localStream: stream,
-          localLabel: ro?.name || 'Relationship Officer',
+          localLabel: ro?.name || 'Resolution Officer',
           remoteLabel: selectedIssue ? (selectedIssue.studentName || 'Student') : 'Student',
           ticketId: formatTicketNumber(selectedIssue || targetIssueId || 'TICKET'),
           localRole: 'RO',
@@ -273,7 +273,7 @@ export const RODashboard = ({ roId }) => {
       if (activeMeetingIssueRef.current !== requestedRoom || isEndingMeetingRef.current) return;
       console.warn('RO camera/mic permission error fallback:', err);
       const fallbackStream = createFallbackMediaStream({
-        label: ro?.name || 'Relationship Officer',
+        label: ro?.name || 'Resolution Officer',
         role: 'RO'
       });
       localStreamRef.current = fallbackStream;
@@ -407,7 +407,7 @@ export const RODashboard = ({ roId }) => {
   };
 
   // Fetch current RO profile
-  const ro = (db.users?.ros || []).find(r => r.id === roId) || db.users?.ros?.[0] || { id: 'RO-01', name: 'Relationship Officer' };
+  const ro = (db.users?.ros || []).find(r => r.id === roId) || db.users?.ros?.[0] || { id: 'RO-01', name: 'Resolution Officer' };
 
   // Issues assigned to this RO
   const roIssues = sortRoIssuesByPriority((db.issues || []).filter(i => (i.roId === ro.id || i.ro_id === ro.id)));
@@ -503,7 +503,7 @@ export const RODashboard = ({ roId }) => {
     time: '11:00',
     mode: 'Online',
     location: 'In-App Online Video Call Portal',
-    notes: 'Scheduled meeting session with Relationship Officer.',
+    notes: 'Scheduled meeting session with Resolution Officer.',
     status: 'Confirmed',
     endedByRo: false
   } : null);
@@ -553,7 +553,7 @@ export const RODashboard = ({ roId }) => {
       return;
     }
     if (isReassignLimitReached) {
-      alert('RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
+      alert('RO Limit Reached: A Resolution Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
       return;
     }
     if (activeMeeting) {
@@ -841,7 +841,7 @@ export const RODashboard = ({ roId }) => {
     if (!hasFiledDiscussionMinutes) {
       alert(
         '🔒 Mandatory Institutional Requirement:\n\n' +
-        'Before escalating this issue to the Administration/Principal, the Relationship Officer MUST log the official Discussion Minutes.\n\n' +
+        'Before escalating this issue to the Administration/Principal, the Resolution Officer MUST log the official Discussion Minutes.\n\n' +
         'Please document your meeting deliberations, student interaction details, and action items first.\n\n' +
         'Opening the Log Discussion Minutes form now...'
       );
@@ -969,7 +969,7 @@ export const RODashboard = ({ roId }) => {
       return;
     }
     if (isReassignLimitReached) {
-      alert('🔒 RO Limit Reached: A Relationship Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
+      alert('🔒 RO Limit Reached: A Resolution Officer can only reschedule/reassign a meeting twice per issue (2/2 Used). If further changes are needed, please escalate the issue to the Admin Office.');
       return;
     }
     const currNow = new Date();
@@ -1068,7 +1068,7 @@ export const RODashboard = ({ roId }) => {
       if (matched) {
         targetCat = matched;
       } else {
-        alert(`⛔ Access Restricted: As Relationship Officer (${ro.name}), you can only modify YouTube solution links for your own assigned issues and categories.`);
+        alert(`⛔ Access Restricted: As Resolution Officer (${ro.name}), you can only modify YouTube solution links for your own assigned issues and categories.`);
         targetCat = myAssignedIssueCategories[0];
       }
     }
@@ -1120,7 +1120,7 @@ export const RODashboard = ({ roId }) => {
                 </h2>
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-semibold text-xs tracking-tight shadow-2xs">
                   <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                  Senior Relationship Officer (RO)
+                  Senior Resolution Officer (RO)
                 </span>
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs shadow-2xs">
                   <span className="material-symbols-outlined text-xs text-emerald-600">verified</span>
@@ -2897,7 +2897,7 @@ export const RODashboard = ({ roId }) => {
                             objectFit="contain"
                             isMicMuted={isMicMuted}
                             isCameraOff={isCameraOff}
-                            participantName={ro.name || 'Relationship Officer'}
+                            participantName={ro.name || 'Resolution Officer'}
                           />
                         </div>
                       ) : (

@@ -3,7 +3,7 @@
 /**
  * CompositeMeetingRecorder
  * 
- * Captures and records BOTH the Relationship Officer (RO) and the Student side-by-side
+ * Captures and records BOTH the Resolution Officer (RO) and the Student side-by-side
  * in a real-time 720p HD composite canvas stream with combined dual-channel audio.
  * 
  * Key Features:
@@ -17,7 +17,7 @@
 export class CompositeMeetingRecorder {
   constructor({
     localStream,
-    localLabel = 'Relationship Officer',
+    localLabel = 'Resolution Officer',
     remoteLabel = 'Student',
     ticketId = 'TICKET',
     localRole = 'RO',
@@ -279,7 +279,7 @@ export class CompositeMeetingRecorder {
     const leftX = margin;
     const rightX = margin + tileW + gap;
 
-    // 4. Render Left Tile: Relationship Officer (RO)
+    // 4. Render Left Tile: Resolution Officer (RO)
     this.renderParticipantTile({
       ctx,
       x: leftX,

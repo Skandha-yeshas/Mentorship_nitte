@@ -52,7 +52,7 @@ try {
   addSheet('Existing Mentors', mentors.map(mentor => ({ 'Mentor ID': mentor.id, 'Mentor Name': mentor.name,
     'Official Email': mentor.email, Department: mentor.dept, 'Assigned Class': mentor.class })), [18, 30, 38, 18, 40]);
   addSheet('Test Guide', [
-    { Step: 1, Instructions: 'Admin > Relationship Officers > Bulk Roster Import. Select this workbook; only the first RO Roster sheet is imported.' },
+    { Step: 1, Instructions: 'Admin > Resolution Officers > Bulk Roster Import. Select this workbook; only the first RO Roster sheet is imported.' },
     { Step: 2, Instructions: 'Import 10 RO records. Each Assigned Domain Category becomes an available student issue topic. No student grievance is created by importing ROs.' },
     { Step: 3, Instructions: 'Existing Mentors contains two real database mentors for reference only. Do not re-import them. Reference Mentor columns do not create a mentor assignment.' },
     { Step: 4, Instructions: 'Test email addresses end in .invalid. Credential emails are intentionally not sent to them. Log in using RO ID and Initial Password from the first sheet.' },

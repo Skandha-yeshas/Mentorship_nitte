@@ -56,7 +56,7 @@ test('Admin download buttons export initial passwords from completed student, me
     assert.ok(!csv.includes(`OLD-${kind}`));
     assert.ok(!csv.includes('N/A'));
   }
-  await page.getByRole('button', { name: /Relationship Officers/ }).click();
+  await page.getByRole('button', { name: /Resolution Officers/ }).click();
   const roDownloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download Initial Passwords CSV' }).first().click();
   const roDownload = await roDownloadPromise;

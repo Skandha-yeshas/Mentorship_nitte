@@ -148,7 +148,7 @@ export const generateMentorOnboardingEmailHtml = ({
                     <td style="padding: 4px 0;">🗓️ <strong>Counseling Sessions:</strong> Schedule and conduct 1-on-1 or group advisory meetings with integrated digital notes.</td>
                   </tr>
                   <tr>
-                    <td style="padding: 4px 0;">🎫 <strong>Student Concerns & Tickets:</strong> Review issues filed by your mentees, provide initial guidance, or escalate unresolved matters to Relationship Officers (RO).</td>
+                    <td style="padding: 4px 0;">🎫 <strong>Student Concerns & Tickets:</strong> Review issues filed by your mentees, provide initial guidance, or escalate unresolved matters to Resolution Officers (RO).</td>
                   </tr>
                   <tr>
                     <td style="padding: 4px 0;">📑 <strong>Session Reports:</strong> Record session attendance and interaction notes.</td>

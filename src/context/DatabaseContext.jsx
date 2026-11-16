@@ -730,7 +730,7 @@ export const DatabaseProvider = ({ children }) => {
     const effectiveStudentName = student.name || 'Student';
 
     const ro = findRoForCategory(db.users?.ros || [], category);
-    if (!ro) throw new Error('This issue category has no imported Relationship Officer. Please contact Admin.');
+    if (!ro) throw new Error('This issue category has no imported Resolution Officer. Please contact Admin.');
     const roId = ro.id;
 
     const localQuota = getGrievanceQuota({ issues: db.issues || [], studentId: effectiveStudentId });

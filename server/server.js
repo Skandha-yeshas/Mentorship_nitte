@@ -206,7 +206,7 @@ app.post('/api/admin/delete-all-mentors', async (req, res) => {
 // ADMIN BULK FACULTY MENTORS ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
 
 
-// ADMIN BULK RELATIONSHIP OFFICERS (ROS) ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
+// ADMIN BULK RESOLUTION OFFICERS (ROS) ROSTER UPLOAD & AUTOMATED GMAIL CREDENTIAL DISPATCH
 
 
 
@@ -320,7 +320,7 @@ app.put('/api/category-videos/:category', async (req, res) => {
 
       if (roCheck.rowCount === 0 && regionCheck.rowCount === 0) {
         return res.status(403).json({
-          error: `Access Denied: Relationship Officer (${roId}) is only permitted to update solution videos for their own assigned issues and categories.`
+          error: `Access Denied: Resolution Officer (${roId}) is only permitted to update solution videos for their own assigned issues and categories.`
         });
       }
     }

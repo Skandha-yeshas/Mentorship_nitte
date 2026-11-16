@@ -68,7 +68,7 @@ try {
       await page.getByRole('button', { name: 'RO', exact: true }).click();
       await page.getByPlaceholder('e.g. RO-01 or officer@nitte.edu.in').fill(officer['RO ID']);
       await page.locator('input[type="password"]').fill(officer['Initial Password']);
-      await page.getByRole('button', { name: /Sign In to Relationship Officer Portal/ }).click();
+      await page.getByRole('button', { name: /Sign In to Resolution Officer Portal/ }).click();
       await page.getByRole('button', { name: 'Change password', exact: true }).waitFor();
       const roState = await page.evaluate(async () => (await fetch('/api/db-state')).json());
       assert.equal(roState.authenticatedUser?.role, 'RO');

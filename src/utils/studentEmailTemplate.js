@@ -209,7 +209,7 @@ Smart Mentorship & Grievance Portal Support`;
 };
 
 /**
- * Generates modern, responsive institutional HTML email when a Relationship Officer (RO)
+ * Generates modern, responsive institutional HTML email when a Resolution Officer (RO)
  * schedules or reschedules a grievance meeting with a student.
  * Contains full ticket metadata, confirmed date/time, mode, venue, directives, and 1-click portal link.
  */
@@ -221,7 +221,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
   category = 'General Grievance',
   priority = 'Medium',
   description = '',
-  roName = 'Relationship Officer',
+  roName = 'Resolution Officer',
   roId = 'RO',
   roEmail = '',
   roJurisdiction = '',
@@ -263,7 +263,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
                 ${isReschedule ? '🔄 Grievance Meeting Rescheduled' : '📅 Grievance Meeting Scheduled'}
               </h1>
               <p style="margin: 8px 0 0 0; font-size: 13px; color: #93c5fd; font-weight: 400;">
-                Official Appointment with Relationship Officer &bull; Ticket #${issueId}
+                Official Appointment with Resolution Officer &bull; Ticket #${issueId}
               </p>
             </td>
           </tr>
@@ -275,7 +275,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
                 Dear <strong style="color: #1e3a8a;">${studentName}</strong>,
               </p>
               <p style="margin: 0 0 18px; font-size: 14px; color: #475569; line-height: 1.6;">
-                Your assigned Relationship Officer has <strong>${isReschedule ? 'rescheduled' : 'confirmed and scheduled'}</strong> an official resolution meeting regarding your grievance ticket <strong>#${issueId}</strong>.
+                Your assigned Resolution Officer has <strong>${isReschedule ? 'rescheduled' : 'confirmed and scheduled'}</strong> an official resolution meeting regarding your grievance ticket <strong>#${issueId}</strong>.
               </p>
 
               <!-- Meeting Details Spotlight Box -->
@@ -317,7 +317,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
                     </td>
                   </tr>
                   <tr>
-                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">👤 Relationship Officer:</td>
+                    <td style="color: #64748b; font-weight: 600; padding: 5px 0;">👤 Resolution Officer:</td>
                     <td style="padding: 5px 0;">
                       <strong>${roName}</strong> <code style="font-size: 11px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #475569;">(${roId})</code>
                     </td>
@@ -401,7 +401,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
                   Important Instructions for Mentee:
                 </h4>
                 <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: #475569; line-height: 1.6;">
-                  <li>Punctuality is mandatory. If you are unable to attend, notify your Relationship Officer via the portal in advance.</li>
+                  <li>Punctuality is mandatory. If you are unable to attend, notify your Resolution Officer via the portal in advance.</li>
                   ${isOnline ? '<li>For Online video calls, ensure you have a stable internet connection and microphone/camera access allowed in your browser.</li>' : '<li>Carry your physical University ID Card and relevant hall tickets or fee receipts.</li>'}
                   <li>Meeting discussions and action items are recorded for official grievance compliance.</li>
                 </ul>
@@ -417,7 +417,7 @@ export const generateRoMeetingScheduledEmailHtml = ({
                 Smart Mentorship &amp; Grievance Portal Support
               </p>
               <p style="margin: 0; font-size: 11px; color: #94a3b8;">
-                This institutional alert was dispatched on behalf of Relationship Officer ${roName} (${roEmail}).
+                This institutional alert was dispatched on behalf of Resolution Officer ${roName} (${roEmail}).
               </p>
             </td>
           </tr>
@@ -436,7 +436,7 @@ export const generateRoMeetingScheduledEmailText = ({
   issueId = '',
   category = 'General Grievance',
   priority = 'Medium',
-  roName = 'Relationship Officer',
+  roName = 'Resolution Officer',
   roId = 'RO',
   date = '',
   time = '',
@@ -455,7 +455,7 @@ ${isReschedule ? 'MEETING RESCHEDULED NOTICE' : 'OFFICIAL MEETING SCHEDULED NOTI
 
 Dear ${studentName},
 
-Your assigned Relationship Officer has ${isReschedule ? 'rescheduled' : 'confirmed and scheduled'} an official grievance resolution meeting.
+Your assigned Resolution Officer has ${isReschedule ? 'rescheduled' : 'confirmed and scheduled'} an official grievance resolution meeting.
 
 Meeting Details:
 - Ticket ID: #${issueId}
@@ -464,7 +464,7 @@ Meeting Details:
 - Time Slot: ${time}
 - Mode: ${mode}
 - Venue / Location: ${location || 'RO Office Desk 1 (Admin Block)'}
-- Relationship Officer: ${roName} (${roId})
+- Resolution Officer: ${roName} (${roId})
 - Officer Directives: ${notes || 'Bring student ID card and relevant documents.'}
 ${feedback ? `- Switch Feedback: ${feedback}\n` : ''}${agenda ? `- Agenda / Minutes: ${agenda}\n` : ''}
 👉 Access Student Portal & View Meeting:

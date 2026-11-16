@@ -73,8 +73,8 @@ export const LoginPage = ({ onLoginSuccess }) => {
       idLabel: 'Faculty Mentor ID / Official Email *'
     },
     RO: {
-      label: 'Relationship Officer',
-      title: 'Relationship Officer Portal',
+      label: 'Resolution Officer',
+      title: 'Resolution Officer Portal',
       subtitle: 'Sign in to manage departmental student issues and conduct 1-on-1 resolution sessions.',
       icon: Briefcase,
       color: '#d97706',
@@ -82,7 +82,7 @@ export const LoginPage = ({ onLoginSuccess }) => {
       border: '#fde68a',
       defaultId: 'RO-01',
       idPlaceholder: 'e.g. RO-01 or officer@nitte.edu.in',
-      idLabel: 'Relationship Officer ID / Email *'
+      idLabel: 'Resolution Officer ID / Email *'
     }
   };
 

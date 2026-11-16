@@ -51,7 +51,7 @@ export function createTicketActions({ getClient, createMailSender, portalUrl = '
       const quota = getGrievanceQuota({ issues: records, studentId: actor.id });
       if (quota.isLocked) throw fail(getQuotaLockMessage(quota), 429, { code: 'GRIEVANCE_QUOTA_LOCKED', quota });
       const assigned = (await query('SELECT id FROM ros WHERE LOWER(TRIM(region)) = LOWER(TRIM($1)) ORDER BY id', [category])).rows;
-      if (assigned.length !== 1) throw fail('This category must have exactly one imported Relationship Officer.');
+      if (assigned.length !== 1) throw fail('This category must have exactly one imported Resolution Officer.');
       const id = `ISS-${randomUUID()}`; const timestamp = new Date().toISOString(); const status = 'Assigned to RO';
       const event = { id: `submitted:${id}`, text: `Issue submitted by ${actor.name} and assigned to ${assigned[0].id}.`, time: timestamp };
       const inserted = await query(`INSERT INTO issues (id, student_id, student_name, category, description, priority, status, ro_id, created_at, logs)
@@ -200,7 +200,7 @@ export function createTicketActions({ getClient, createMailSender, portalUrl = '
         await query('UPDATE issues SET status=$1 WHERE id=$2', [status, row.id]); await endMeetings(row.id);
       } else if (action === 'reassign') {
         const ro = (await query('SELECT id, name FROM ros WHERE UPPER(id)=UPPER($1)', [body.newRoId])).rows[0];
-        if (!ro) throw fail('Choose an existing Relationship Officer.');
+        if (!ro) throw fail('Choose an existing Resolution Officer.');
         if (same(row.ro_id, ro.id)) return { success: true, duplicate: true };
         await query('UPDATE issues SET ro_id=$1 WHERE id=$2', [ro.id, row.id]);
         // A room started by the previous officer cannot remain joinable after transfer.
